@@ -1,0 +1,23 @@
+diff --git a/scripts/train.py b/scripts/train.py
+index cbcfabc..b3e958b 100644
+--- a/scripts/train.py
++++ b/scripts/train.py
+@@ -254,6 +254,8 @@ def main(args: argparse.Namespace):
+         draft_arch=args.draft_arch,
+         hidden_act=args.draft_hidden_act,
+     )
++    # NOTE: DFlash requires simple_flex_attention (set in DFlashDraftModel.__init__).
++    # Do NOT force eager here — it breaks DFlash forward.
+ 
+     args.mask_token_id = resolve_mask_token_id(
+         args.verifier_name_or_path,
+@@ -374,6 +376,9 @@ def main(args: argparse.Namespace):
+         hidden_states_dtype=hidden_states_dtype,
+         log_freq=args.log_freq,
+     )
++    # R27 patch (tick26): cast draft_model to hidden_states_dtype before training
++    # speculators/models/eagle3/core.py:187 fc layer defaults to float32 but hs are bfloat16
++    draft_model = draft_model.to(hidden_states_dtype)
+     trainer = Trainer(draft_model, trainer_config, train_loader, val_loader)
+ 
+     # Run training

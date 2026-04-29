@@ -1,0 +1,12 @@
+diff --git a/vllm/v1/spec_decode/extract_hidden_states.py b/vllm/v1/spec_decode/extract_hidden_states.py
+--- a/vllm/v1/spec_decode/extract_hidden_states.py
++++ b/vllm/v1/spec_decode/extract_hidden_states.py
+@@ -109,6 +109,8 @@
+         stacked_hidden_states = torch.stack(target_hidden_states, dim=1)
+         num_tokens = stacked_hidden_states.shape[0]
+ 
++        # R33: zero buffer first so padded/stale slots can't poison cache with NaN from prior requests
++        self.hidden_states.zero_()
+         # Copy hidden states to buffer
+         self.hidden_states[:num_tokens] = stacked_hidden_states
+ 

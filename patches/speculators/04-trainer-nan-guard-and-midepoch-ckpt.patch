@@ -1,0 +1,47 @@
+diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
+--- a/src/speculators/train/trainer.py
++++ b/src/speculators/train/trainer.py
+@@ -203,9 +203,13 @@
+             )
+ 
+             self.opt.zero_grad()
+-            loss.backward()
+-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+-            self.opt.step()
++            # DFLASH_R32_FIX: skip NaN/Inf loss to prevent corrupting weights
++            if torch.isnan(loss) or torch.isinf(loss):
++                root_logger.warning(f'[step {self.global_step}] NaN/Inf loss, skipping backward+step')
++            else:
++                loss.backward()
++                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
++                self.opt.step()
+ 
+             current_lr = self.opt.param_groups[0]["lr"]
+             if self.scheduler is not None:
+@@ -226,6 +230,26 @@
+                     },
+                     extra={"step": self.global_step},
+                 )
++
++            # DFLASH_R31_FIX: mid-epoch checkpointing every N steps
++            # Set MIDEPOCH_CHECKPOINT_FREQ env var (in steps); 0 disables.
++            import os as _os
++            _mef = int(_os.environ.get("MIDEPOCH_CHECKPOINT_FREQ", "0"))
++            if _mef > 0 and self.global_step > 0 and self.global_step % _mef == 0:
++                if not self.is_distributed or self.local_rank == 0:
++                    _tag = f"step{self.global_step}"
++                    _path = self.checkpointer.path / _tag
++                    root_logger.info(f"[mid-epoch] Saving checkpoint at global_step={self.global_step} to {_path}")
++                    try:
++                        self.checkpointer.save_checkpoint(self.model, self.opt, _tag)
++                        if self.scheduler is not None:
++                            self.checkpointer.save_scheduler_state_dict(self.scheduler, _tag)
++                        root_logger.info(f"[mid-epoch] Saved checkpoint to {_path}")
++                    except Exception as _e:
++                        root_logger.warning(f"[mid-epoch] checkpoint save failed: {_e}")
++                if self.is_distributed:
++                    dist.barrier()
++
+             self.global_step += 1
+ 
+     @torch.no_grad()

@@ -1,0 +1,6 @@
+*.gguf
+*.safetensors
+*.pt
+__pycache__/
+.DS_Store
+*.log
