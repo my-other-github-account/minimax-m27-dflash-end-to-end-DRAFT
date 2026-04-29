@@ -1,0 +1,112 @@
+diff --git a/src/speculators/models/eagle3/core.py b/src/speculators/models/eagle3/core.py
+index 9be847c..7a4f71c 100644
+--- a/src/speculators/models/eagle3/core.py
++++ b/src/speculators/models/eagle3/core.py
+@@ -184,7 +184,9 @@ class Eagle3DraftModel(DraftVocabMixin, SpeculatorModel):
+         self.embed_tokens.weight.requires_grad = self.config.embed_requires_grad
+ 
+         # FC LAYER
+-        self.fc = torch.nn.Linear(3 * self.hidden_size, self.hidden_size, bias=False)
++        # DFLASH_R28_FIX: explicit bfloat16 dtype to prevent torch.compile autocast upcast
++        import torch as _torch
++        self.fc = torch.nn.Linear(3 * self.hidden_size, self.hidden_size, bias=False, dtype=_torch.bfloat16)
+ 
+         # DECODER LAYERS
+         num_layers = tl_config.num_hidden_layers
+@@ -284,6 +286,8 @@ class Eagle3DraftModel(DraftVocabMixin, SpeculatorModel):
+ 
+         if self.input_norm is not None:
+             hidden_states = self.input_norm(hidden_states)
++        # DFLASH_R28_FIX: defensive cast to fc weight dtype (belt-and-suspenders)
++        hidden_states = hidden_states.to(self.fc.weight.dtype)
+         hidden_states = self.fc(hidden_states)
+         # shape: [1, total_seq_len, hidden_size]
+ 
+diff --git a/scripts/train.py b/scripts/train.py
+index cbcfabc..b3e958b 100644
+--- a/scripts/train.py
++++ b/scripts/train.py
+@@ -254,6 +254,8 @@ def main(args: argparse.Namespace):
+         draft_arch=args.draft_arch,
+         hidden_act=args.draft_hidden_act,
+     )
++    # NOTE: DFlash requires simple_flex_attention (set in DFlashDraftModel.__init__).
++    # Do NOT force eager here — it breaks DFlash forward.
+ 
+     args.mask_token_id = resolve_mask_token_id(
+         args.verifier_name_or_path,
+@@ -374,6 +376,9 @@ def main(args: argparse.Namespace):
+         hidden_states_dtype=hidden_states_dtype,
+         log_freq=args.log_freq,
+     )
++    # R27 patch (tick26): cast draft_model to hidden_states_dtype before training
++    # speculators/models/eagle3/core.py:187 fc layer defaults to float32 but hs are bfloat16
++    draft_model = draft_model.to(hidden_states_dtype)
+     trainer = Trainer(draft_model, trainer_config, train_loader, val_loader)
+ 
+     # Run training
+diff --git a/src/speculators/train/data.py b/src/speculators/train/data.py
+--- a/src/speculators/train/data.py
++++ b/src/speculators/train/data.py
+@@ -76,10 +76,12 @@
+     # }
+ 
+     return {
++        # DFLASH_R30_FIX: use correct dtypes for empty samples (int64 for input_ids,
++        # bool for loss_mask) so torch.cat in collate doesn't upcast real samples to float
+         "hidden_states": torch.empty(0, 3 * hidden_size),
+-        "input_ids": torch.empty(0),
++        "input_ids": torch.empty(0, dtype=torch.long),
+         "verifier_last_hidden_states": torch.empty(0, hidden_size),
+-        "loss_mask": torch.empty(0),
++        "loss_mask": torch.empty(0, dtype=torch.bool),
+         "lengths": torch.tensor([0], dtype=torch.long),
+         "position_ids": torch.arange(0, dtype=torch.long),
+     }
+diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
+--- a/src/speculators/train/trainer.py
++++ b/src/speculators/train/trainer.py
+@@ -203,9 +203,13 @@
+             )
+ 
+             self.opt.zero_grad()
+-            loss.backward()
+-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+-            self.opt.step()
++            # DFLASH_R32_FIX: skip NaN/Inf loss to prevent corrupting weights
++            if torch.isnan(loss) or torch.isinf(loss):
++                root_logger.warning(f'[step {self.global_step}] NaN/Inf loss, skipping backward+step')
++            else:
++                loss.backward()
++                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
++                self.opt.step()
+ 
+             current_lr = self.opt.param_groups[0]["lr"]
+             if self.scheduler is not None:
+@@ -226,6 +230,26 @@
+                     },
+                     extra={"step": self.global_step},
+                 )
++
++            # DFLASH_R31_FIX: mid-epoch checkpointing every N steps
++            # Set MIDEPOCH_CHECKPOINT_FREQ env var (in steps); 0 disables.
++            import os as _os
++            _mef = int(_os.environ.get("MIDEPOCH_CHECKPOINT_FREQ", "0"))
++            if _mef > 0 and self.global_step > 0 and self.global_step % _mef == 0:
++                if not self.is_distributed or self.local_rank == 0:
++                    _tag = f"step{self.global_step}"
++                    _path = self.checkpointer.path / _tag
++                    root_logger.info(f"[mid-epoch] Saving checkpoint at global_step={self.global_step} to {_path}")
++                    try:
++                        self.checkpointer.save_checkpoint(self.model, self.opt, _tag)
++                        if self.scheduler is not None:
++                            self.checkpointer.save_scheduler_state_dict(self.scheduler, _tag)
++                        root_logger.info(f"[mid-epoch] Saved checkpoint to {_path}")
++                    except Exception as _e:
++                        root_logger.warning(f"[mid-epoch] checkpoint save failed: {_e}")
++                if self.is_distributed:
++                    dist.barrier()
++
+             self.global_step += 1
+ 
+     @torch.no_grad()

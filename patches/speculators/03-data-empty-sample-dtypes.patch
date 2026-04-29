@@ -1,0 +1,18 @@
+diff --git a/src/speculators/train/data.py b/src/speculators/train/data.py
+--- a/src/speculators/train/data.py
++++ b/src/speculators/train/data.py
+@@ -76,10 +76,12 @@
+     # }
+ 
+     return {
++        # DFLASH_R30_FIX: use correct dtypes for empty samples (int64 for input_ids,
++        # bool for loss_mask) so torch.cat in collate doesn't upcast real samples to float
+         "hidden_states": torch.empty(0, 3 * hidden_size),
+-        "input_ids": torch.empty(0),
++        "input_ids": torch.empty(0, dtype=torch.long),
+         "verifier_last_hidden_states": torch.empty(0, hidden_size),
+-        "loss_mask": torch.empty(0),
++        "loss_mask": torch.empty(0, dtype=torch.bool),
+         "lengths": torch.tensor([0], dtype=torch.long),
+         "position_ids": torch.arange(0, dtype=torch.long),
+     }

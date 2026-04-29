@@ -1,0 +1,24 @@
+diff --git a/src/speculators/models/eagle3/core.py b/src/speculators/models/eagle3/core.py
+index 9be847c..7a4f71c 100644
+--- a/src/speculators/models/eagle3/core.py
++++ b/src/speculators/models/eagle3/core.py
+@@ -184,7 +184,9 @@ class Eagle3DraftModel(DraftVocabMixin, SpeculatorModel):
+         self.embed_tokens.weight.requires_grad = self.config.embed_requires_grad
+ 
+         # FC LAYER
+-        self.fc = torch.nn.Linear(3 * self.hidden_size, self.hidden_size, bias=False)
++        # DFLASH_R28_FIX: explicit bfloat16 dtype to prevent torch.compile autocast upcast
++        import torch as _torch
++        self.fc = torch.nn.Linear(3 * self.hidden_size, self.hidden_size, bias=False, dtype=_torch.bfloat16)
+ 
+         # DECODER LAYERS
+         num_layers = tl_config.num_hidden_layers
+@@ -284,6 +286,8 @@ class Eagle3DraftModel(DraftVocabMixin, SpeculatorModel):
+ 
+         if self.input_norm is not None:
+             hidden_states = self.input_norm(hidden_states)
++        # DFLASH_R28_FIX: defensive cast to fc weight dtype (belt-and-suspenders)
++        hidden_states = hidden_states.to(self.fc.weight.dtype)
+         hidden_states = self.fc(hidden_states)
+         # shape: [1, total_seq_len, hidden_size]
+ 

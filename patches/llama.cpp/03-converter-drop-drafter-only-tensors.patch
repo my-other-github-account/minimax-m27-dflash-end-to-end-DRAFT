@@ -1,0 +1,46 @@
+From: my-other-github-account
+Subject: [PATCH 3/3] convert_hf_to_gguf.py: drop drafter-only tensors for DFlash GGUF export
+
+The PR #22105 DFlash loader operates on a drafter GGUF that contains ONLY
+the transformer block weights, the DFlash-specific feature-fusion tensors
+(fc, hidden_norm), and the final output norm. The drafter's own:
+
+  - embed_tokens.weight  (drafter has full target vocab embeddings of its own)
+  - lm_head.weight       (drafter has draft_vocab logits head)
+  - d2t, t2d             (drafter-vocab <-> target-vocab projection tables)
+
+are NOT used at runtime: PR #22105 reuses the target's embed_tokens and
+lm_head, and feeds raw hidden states through the target's vocab projection.
+The DFLASH arch tensor whitelist in gguf-py/gguf/constants.py reflects
+this — TOKEN_EMBD and OUTPUT are absent — so the converter's
+map_tensor_name() rejects those tensors with "Can not map tensor".
+
+This patch makes the DFlashModel.modify_tensors() override drop those
+four tensor families (under both their bare names and the "model." prefix
+variant emitted by the speculators trainer).
+
+Without this patch, conversion of any speculators-trained DFlash drafter
+fails on the first non-fc/non-hidden_norm top-level tensor.
+
+---
+ convert_hf_to_gguf.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/convert_hf_to_gguf.py b/convert_hf_to_gguf.py
+index 6a5ac25..efdc865 100755
+--- a/convert_hf_to_gguf.py
++++ b/convert_hf_to_gguf.py
+@@ -4917,6 +4917,11 @@ class DFlashModel(Qwen3Model):
+             self.gguf_writer.add_uint32(f"{self.gguf_writer.arch}.mask_token_id", mask_token_id)
+ 
+     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
++        # Drop drafter-only tensors that PR #22105 does not consume
++        # (target lm_head supplies vocab projection; d2t/t2d unused in upstream loader)
++        if name in ("d2t", "t2d", "lm_head.weight", "embed_tokens.weight", "model.d2t", "model.t2d", "model.lm_head.weight", "model.embed_tokens.weight"):
++            logger.info(f"DFLASH: dropping unused tensor {name}")
++            return
+         if name == "fc.weight":
+             yield (name, data_torch)
+             return
+-- 
+2.39.5
