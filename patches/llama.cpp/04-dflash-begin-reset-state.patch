@@ -1,0 +1,53 @@
+From: my-other-github-account
+Subject: [PATCH 4/4] dflash: reset n_past + clear drafter KV on begin()
+
+PR #22105's common_speculative_state_dflash::begin() was a no-op,
+relying on `dflash_n_past = 0` only at construction time. But the
+state object lives for the entire server-slot lifetime — so on the
+SECOND request handled by the same slot, `dflash_n_past` still
+points at the end of the first request's accumulated context.
+
+When the second request's prompt is shorter than the previous
+prompt+output (e.g. a fresh user turn after a long completion),
+the draft step computes:
+
+    n_new = n - dflash_n_past   <= 0
+
+and trips:
+
+    common/speculative.cpp:781:
+    GGML_ASSERT(n_new >= 1 && "must have at least 1 new token") failed
+
+aborting the server. Symptom in production: server happily handles the
+first /v1/chat/completions call, then aborts mid-flight on the second.
+
+Fix: in begin(), reset dflash_n_past, clear accumulated_ctx, and
+clear the KV memory for both encoder and decoder drafter contexts.
+This matches the cross-request-reset pattern used by the EAGLE3-with-
+checkpoint path higher up in the same file (line 246-).
+
+---
+ common/speculative.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -763,6 +763,15 @@ struct common_speculative_state_dflash : public common_speculative_state {
+ 
+     void begin(const llama_tokens & prompt) override {
+         GGML_UNUSED(prompt);
++        // Reset cross-request state. Without this, dflash_n_past from a prior
++        // request causes n_new = n - dflash_n_past <= 0 on a new shorter
++        // prompt and trips the GGML_ASSERT(n_new >= 1) below.
++        dflash_n_past = 0;
++        accumulated_ctx.clear();
++        llama_memory_t mem_enc = llama_get_memory(ctx_dft_enc);
++        if (mem_enc) llama_memory_clear(mem_enc, false);
++        llama_memory_t mem_dec = llama_get_memory(ctx_dft_dec);
++        if (mem_dec) llama_memory_clear(mem_dec, false);
+     }
+ 
+     void draft(
+-- 
+2.39.5
