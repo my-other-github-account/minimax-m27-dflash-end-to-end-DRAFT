@@ -5,10 +5,10 @@
 # (if dataset exhausted) waits for prompt expansion.
 set -euo pipefail
 
-LOG=/home/user/dflash_minimax/logs/datagen-5L-$(date +%Y%m%d-%H%M%S).log
+LOG=${WORKSPACE}/dflash_minimax/logs/datagen-5L-$(date +%Y%m%d-%H%M%S).log
 mkdir -p "$(dirname $LOG)"
 
-source /home/user/venvs/vllm/bin/activate
+source ${WORKSPACE}/venvs/vllm/bin/activate
 
 # Wait for vLLM endpoint up to 15min
 echo "[$(date)] Waiting for /v1/models on 127.0.0.1:8000..." | tee -a "$LOG"
@@ -27,21 +27,21 @@ done
 # Also wait for hidden_states extraction service to be ready (smoketest 1 sample)
 sleep 20
 
-cd /home/user/dflash_minimax/repos/speculators
+cd ${WORKSPACE}/dflash_minimax/repos/speculators
 
 # Loop: keep driving until killed
 ITER=0
 while true; do
   ITER=$((ITER+1))
   echo "[$(date)] iteration $ITER" | tee -a "$LOG"
-  HS_POOL_DIR=/home/user/dflash_minimax/data/preprocessed_5L/hs_clean_pool \
-  HS_QUARANTINE_DIR=/home/user/dflash_minimax/data/preprocessed_5L/hs_quarantine \
+  HS_POOL_DIR=${WORKSPACE}/dflash_minimax/data/preprocessed_5L/hs_clean_pool \
+  HS_QUARANTINE_DIR=${WORKSPACE}/dflash_minimax/data/preprocessed_5L/hs_quarantine \
   HS_REDO_QUARANTINE=1 \
-  python3 /home/user/dflash_minimax/scripts/datagen_skip_existing_wrapper.py \
-      --model /home/user/models/MiniMax-M2.7-NVFP4-GB10 \
+  python3 ${WORKSPACE}/dflash_minimax/scripts/datagen_skip_existing_wrapper.py \
+      --model ${WORKSPACE}/models/MiniMax-M2.7-NVFP4-GB10 \
       --endpoint http://127.0.0.1:8000/v1 \
-      --preprocessed-data /home/user/dflash_minimax/data/preprocessed \
-      --output /home/user/dflash_minimax/data/preprocessed_5L/hs_staging \
+      --preprocessed-data ${WORKSPACE}/dflash_minimax/data/preprocessed \
+      --output ${WORKSPACE}/dflash_minimax/data/preprocessed_5L/hs_staging \
       --max-samples 12000 \
       --concurrency 2 \
       --max-consecutive-errors 50 2>&1 | tee -a "$LOG" || \

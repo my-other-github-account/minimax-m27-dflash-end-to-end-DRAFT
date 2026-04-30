@@ -39,7 +39,7 @@ print(f"[wrapper] POOL: {len(POOL_IDX)} | QUAR: {len(QUAR_IDX)} | "
       f"REDO_QUAR={REDO_QUAR} | skip_set={len(SKIP_SET)}", flush=True)
 
 # Locate the script and monkey-patch
-SCRIPT_DIR = "/home/user/dflash_minimax/repos/speculators/scripts"
+SCRIPT_DIR = "${WORKSPACE}/dflash_minimax/repos/speculators/scripts"
 sys.path.insert(0, SCRIPT_DIR)
 import data_generation_offline as dg
 

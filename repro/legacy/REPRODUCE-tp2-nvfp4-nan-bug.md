@@ -5,7 +5,7 @@ End-to-end repro of the verifier-side bug, validation that the patches fix it, a
 ## Hardware Assumed
 
 - 2 GB10-class GPU nodes connected by a fast point-to-point link (we used QSFP 200 Gbps, MTU 9000). Single GPU per node.
-- Reachable as `node-rank0` (head) and `node-rank1` (worker) over a private subnet (we used 192.168.200.2 + 192.168.200.3 on `enp1s0f1np1`).
+- Reachable as `node-rank0` (head) and `node-rank1` (worker) over a private subnet (we used <NODE2_QSFP_IP> + <NODE3_QSFP_IP> on `<QSFP_NIC>`).
 - Both nodes share an installed Python 3.12 venv with vLLM nightly + speculators (see versions above).
 - The verifier model file (~120 GB for MiniMax-M2.7-NVFP4) at `$MODEL_PATH` on **both** nodes.
 - A preprocessed dataset at `$DATA_PATH` on the rank-0 node (we used `combined_48k`, ~48k tokenized chat samples).

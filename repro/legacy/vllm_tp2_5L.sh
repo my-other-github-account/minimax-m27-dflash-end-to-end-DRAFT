@@ -8,17 +8,17 @@
 #   - R33 in extract_hidden_states.py (×1) — re-zero buffer between requests
 #   - R34 in example_hidden_states_connector.py (×1) — upcast hidden_states to fp32 before save
 #
-# Same script runs on BOTH spark-2 (rank 0) and spark-3 (rank 1). Auto-detects role.
+# Same script runs on BOTH node2 (rank 0) and node3 (rank 1). Auto-detects role.
 set -euo pipefail
 
-NODE_IP=$(ip -4 -o addr show enp1s0f1np1 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
-ETH_IF=enp1s0f1np1
-HEAD_IP=192.168.200.2
+NODE_IP=$(ip -4 -o addr show <QSFP_NIC> 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+ETH_IF=<QSFP_NIC>
+HEAD_IP=<NODE2_QSFP_IP>
 MASTER_PORT=29501
 
-MODEL=/home/user/models/MiniMax-M2.7-NVFP4-GB10
-HS_PATH=/home/user/dflash_minimax/data/preprocessed_5L/hs_staging
-LOG=/home/user/dflash_minimax/logs/vllm-tp2-5L-$(hostname)-$(date +%Y%m%d-%H%M%S).log
+MODEL=${WORKSPACE}/models/MiniMax-M2.7-NVFP4-GB10
+HS_PATH=${WORKSPACE}/dflash_minimax/data/preprocessed_5L/hs_staging
+LOG=${WORKSPACE}/dflash_minimax/logs/vllm-tp2-5L-$(hostname)-$(date +%Y%m%d-%H%M%S).log
 mkdir -p "$HS_PATH" "$(dirname $LOG)"
 
 # CRITICAL: vLLM identity (no-Ray pattern still needs this)
@@ -41,12 +41,12 @@ export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 export VLLM_NVFP4_GEMM_BACKEND=cutlass
 export HF_HUB_OFFLINE=1
 
-source /home/user/venvs/vllm/bin/activate
+source ${WORKSPACE}/venvs/vllm/bin/activate
 
 # Pre-flight: verify all 4 patch markers are in place
-PATCH_INTERFACES=$(grep -c R33 /home/user/venvs/vllm/lib/python3.12/site-packages/vllm/model_executor/models/interfaces.py)
-PATCH_EXTRACT=$(grep -c R33 /home/user/venvs/vllm/lib/python3.12/site-packages/vllm/v1/spec_decode/extract_hidden_states.py)
-PATCH_CONNECTOR=$(grep -c R34_UPCAST_HS /home/user/venvs/vllm/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/example_hidden_states_connector.py)
+PATCH_INTERFACES=$(grep -c R33 ${WORKSPACE}/venvs/vllm/lib/python3.12/site-packages/vllm/model_executor/models/interfaces.py)
+PATCH_EXTRACT=$(grep -c R33 ${WORKSPACE}/venvs/vllm/lib/python3.12/site-packages/vllm/v1/spec_decode/extract_hidden_states.py)
+PATCH_CONNECTOR=$(grep -c R34_UPCAST_HS ${WORKSPACE}/venvs/vllm/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/example_hidden_states_connector.py)
 echo "[$(date)] PATCH_CHECK: R33-interfaces=$PATCH_INTERFACES (need 2), R33-extract=$PATCH_EXTRACT (need 1), R34-connector=$PATCH_CONNECTOR (need 1)" | tee -a "$LOG"
 if [ "$PATCH_INTERFACES" -lt 2 ] || [ "$PATCH_EXTRACT" -lt 1 ] || [ "$PATCH_CONNECTOR" -lt 1 ]; then
   echo "[$(date)] FATAL: missing patches. Refuse to launch." | tee -a "$LOG"
@@ -72,7 +72,7 @@ else
     echo "[$(date)] Role: RANK 1 (worker, headless)" | tee -a "$LOG"
 fi
 
-cd /home/user/dflash_minimax/repos/speculators
+cd ${WORKSPACE}/dflash_minimax/repos/speculators
 
 echo "[$(date)] Launching: target_layer_ids=[2,16,30,45,59], hs_path=$HS_PATH" | tee -a "$LOG"
 

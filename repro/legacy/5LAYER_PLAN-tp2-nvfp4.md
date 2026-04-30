@@ -59,7 +59,7 @@ All 4 must be active on every TP rank before launching data-gen:
 ```
 
 **Cost:** ~2x disk (300KB vs 150KB per sample). For 800K samples: ~240GB total.
-Both spark-2 (2.5TB free) and spark-3 (1.4TB free) have ample headroom.
+Both node2 (2.5TB free) and node3 (1.4TB free) have ample headroom.
 
 **Benefit:** Preserves NVFP4 verifier's signal at deep layers without bf16 mantissa
 truncation. The drafter still trains in bf16 (downcast at load time), but the
@@ -72,9 +72,9 @@ fully preserving the dynamic range.
 
 ## Launch Sequence
 
-1. `vllm_tp2_5L.sh` — same script on spark-2 (rank 0) + spark-3 (rank 1).
+1. `vllm_tp2_5L.sh` — same script on node2 (rank 0) + node3 (rank 1).
    Auto-detects rank by NIC IP. Verifies all 4 patches before launch.
-   Writes to `/home/user/dflash_minimax/data/preprocessed_5L/hs_staging`.
+   Writes to `${WORKSPACE}/dflash_minimax/data/preprocessed_5L/hs_staging`.
 
 2. `validator_daemon_5L.py` — long-running process polling staging every 30s,
    moves clean→`hs_clean_pool/`, NaN→`hs_quarantine/`, dedups by hash.

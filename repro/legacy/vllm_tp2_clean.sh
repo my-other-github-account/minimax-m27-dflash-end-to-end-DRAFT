@@ -30,9 +30,9 @@ if [ -n "$GPU_USERS" ]; then
   exit 0
 fi
 
-NODE_IP=$(ip -4 -o addr show ${ETH_IF:-enp1s0f1np1} | awk '{print $4}' | cut -d/ -f1)
-ETH_IF=${ETH_IF:-enp1s0f1np1}
-HEAD_IP=${HEAD_IP:-192.168.200.2}
+NODE_IP=$(ip -4 -o addr show ${ETH_IF:-<QSFP_NIC>} | awk '{print $4}' | cut -d/ -f1)
+ETH_IF=${ETH_IF:-<QSFP_NIC>}
+HEAD_IP=${HEAD_IP:-<NODE2_QSFP_IP>}
 MASTER_PORT=29501
 
 # vLLM identity

@@ -7,9 +7,9 @@
 # speculative-decode launch pattern on the same hardware.
 set -euo pipefail
 
-LLAMA=${LLAMA:-/home/user/llama.cpp-pr22105/build/bin/llama-server}
-TARGET=${TARGET:-/home/user/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf}
-DRAFTER=${DRAFTER:-/home/user/models/r4-best-pr22105.gguf}
+LLAMA=${LLAMA:-${WORKSPACE}/llama.cpp-pr22105/build/bin/llama-server}
+TARGET=${TARGET:-${WORKSPACE}/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf}
+DRAFTER=${DRAFTER:-${WORKSPACE}/models/r4-best-pr22105.gguf}
 PORT=${PORT:-8013}
 LOG=${LOG:-/tmp/llama-dflash-server.log}
 DRAFT_MAX=${DRAFT_MAX:-7}
