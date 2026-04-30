@@ -264,7 +264,7 @@ PASS: smoke run clean — safe to proceed to full training
 
 ## 2.6 Production training run
 
-Use the launcher script under `systemd-run --user` so the run survives any SSH session disconnect or local agent restart. **Do not** use bare `bash launcher.sh` over SSH for a multi-hour run — see `references/sigh​up-gotcha.md` for the empirical reason (SIGHUP propagates through SSH and kills the wrapping bash, which kills torchrun).
+Use the launcher script under `systemd-run --user` so the run survives any SSH session disconnect or local agent restart. **Do not** use bare `bash launcher.sh` over SSH for a multi-hour run — see `references/sighup-gotcha.md` for the empirical reason (SIGHUP propagates through SSH and kills the wrapping bash, which kills torchrun).
 
 ### Launcher
 
@@ -369,16 +369,18 @@ Real evidence from a production-equivalent run on the 6515-paired-file dataset, 
 
 ### Per-epoch chained accuracies (∏ p_i)
 
-| Position | Epoch 1 | Epoch 2 | Epoch 3 | (target) Epoch ~17 |
-|---|---|---|---|---|
-| 1 | 14.00% | 18.50% | **20.50%** | ~21.8% |
-| 2 | 1.428% | 2.238% | **2.686%** | ~4.34% |
-| 3 | 0.120% | 0.208% | **0.263%** | ~0.568% |
-| 4 | 0.00876% | 0.01642% | **0.0218%** | ~0.0705% |
-| 5 | 0.000578% | 0.001157% | **0.00164%** | ~0.0085% |
-| 6 | 3.58e-07 | 7.45e-07 | **0.000113%** | ~0.001% |
-| 7 | 2.11e-08 | 4.55e-08 | **7.35e-08** | ~0.0001% |
-| **E[acc]** | 0.156 | 0.207 | **0.235** | ~0.268 |
+| Position | Epoch 1 | Epoch 2 | Epoch 3 | Epoch 4 | (target) Epoch ~17 |
+|---|---|---|---|---|---|
+| 1 | 14.000% | 18.530% | 20.490% | **21.805%** | ~21.8% |
+| 2 | 1.428% | 2.247% | 2.687% | **2.973%** | ~4.34% |
+| 3 | 0.120% | 0.209% | 0.263% | **0.298%** | ~0.568% |
+| 4 | 0.00876% | 0.01642% | 0.0218% | **0.0255%** | ~0.0705% |
+| 5 | 0.000578% | 0.001157% | 0.00164% | **0.00191%** | ~0.0085% |
+| 6 | 3.58e-07 | 7.45e-07 | 0.000113% | **0.000130%** | ~0.001% |
+| 7 | 2.11e-08 | 4.55e-08 | 7.35e-08 | **8.27e-08** | ~0.0001% |
+| **E[acc]** | 0.156 | 0.207 | 0.235 | **0.251** | ~0.268 |
+
+Note: epoch 4 hits the production-target chain-pos-1 of 21.8% **exactly**. Per-position conditional pos-1 acc reached the target 4 epochs in (vs production's 17). The 5.5× larger paired dataset is paying off as expected, and pos-2..7 chain values continue to climb toward target.
 
 ### What to track
 

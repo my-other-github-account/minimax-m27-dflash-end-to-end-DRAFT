@@ -6,7 +6,7 @@
 >
 > Treat this as a **work-in-progress reference**, not a paste-and-run pipeline. Specifically:
 > - Generation: scripts and recipe are real, but cluster-specific assumptions still live in the placeholders (see §1's "Placeholder key")
-> - Training: data-pairing, vocab-map, and smoke-verification recipes are verified working on a 6515-file paired pool (115 steps in 90s, no errors) — see §2.3, §2.4, §2.6. Full multi-epoch training run still pending.
+> - Training: **fully fleshed out as of this commit.** End-to-end recipe from a fresh Spark through paired-dataset rebuild → vocab-map generation → 90-second smoke verification → production launcher under systemd-run → offline-validation pass criteria. Includes pool-completeness audit, common failure modes table, and reference chained-accuracy progression from a real production run. Lead metric throughout is **chain-cumulative per-position accuracy (∏ p_i)**, not per-position teacher-forced conditional, because runtime is chain-gated.
 > - Inference: build path documented but the smoke-test harness and the chain-gated diff script are still on the original machine
 >
 > Tracking issue / TODOs are in the per-section "What this section needs" callouts.
@@ -17,7 +17,7 @@ End-to-end reproduction of DFlash speculative decoding for the MiniMax-M2.7 fami
 
 1. **[Generation](repro/01-generation.md)** — produce a clean FP8 hidden-state trace pool using vLLM TP=4 across 4 GB10 nodes. Output: `~6,500 hs_<N>.safetensors` files of shape `[seq_len, 6, 3072]` in `bfloat16`. Includes the validator daemon, the prompt-source rotation, the wedge-recovery procedure, and the empirical sanity-check evidence that the produced pool's distribution matches the validated reference. **This section is the most fleshed out.**
 
-2. **[Training](repro/02-training.md)** — train a 5-layer DFlash drafter from the trace pool using `speculators.train`. Output: a PyTorch checkpoint convertible to GGUF. Includes the **paired-dataset rebuild recipe** for heterogeneous pools, canonical vocab-map generation (with the dtype/format gotchas), and the 90-second smoke-verification procedure.
+2. **[Training](repro/02-training.md)** — train a 5-layer DFlash drafter from the trace pool using `speculators.train`. Output: a PyTorch checkpoint convertible to GGUF. **Now fully fleshed out:** paired-dataset rebuild from a heterogeneous pool, canonical vocab-map generation (with the dtype/format gotchas), pool-completeness audit, 90-second smoke verification, production launcher under systemd-run user-scope, offline-validation harness with pass criteria, common failure modes table, and reference chained-accuracy progression from a real run.
 
 3. **[Inference](repro/03-inference.md)** — run DFlash speculative decoding with `llama-server` / `llama-cli` using PR #22105 + the 4 patches in this repo. Includes the metric-framing finding that resolved the "47× apparent gap" (chain-cumulative vs per-position-conditional). *Stub — last-known-good build path, pending evidence harvest.*
 
@@ -30,7 +30,7 @@ End-to-end reproduction of DFlash speculative decoding for the MiniMax-M2.7 fami
 ```
 repro/
 ├── 01-generation.md                # Section 1 — fully fleshed out
-├── 02-training.md                  # Section 2 — paired-dataset + smoke-verification (verified working)
+├── 02-training.md                  # Section 2 — fully fleshed out (this commit)
 ├── 03-inference.md                 # Section 3 — stub
 ├── scripts/
 │   ├── generation/
@@ -39,9 +39,16 @@ repro/
 │   │   ├── data_generation_offline_ledgered.py
 │   │   └── multi_dataset_prompt_loader.py  # prompt-source rotation
 │   └── training/
+│       ├── audit_pool_completeness.py      # peer-staging vs pool sha256(token_ids) audit
 │       ├── build_paired_dataset.py         # re-pair heterogeneous pool by content hash
 │       ├── build_vocab_maps.py             # canonical d2t/t2d/token_freq generator
-│       └── smoke_train.sh                  # 90s smoke verification — run before any full training
+│       ├── smoke_train.sh                  # 90s smoke verification (auto pass-criteria check)
+│       ├── launch_full.sh                  # production training launcher (systemd-run friendly)
+│       └── dflash_offline_eval.py          # offline-validation harness (reproduce val_metrics)
+├── references/
+│   ├── dflash-drafter-offline-validation.md  # full chain-gated metric framing + diagnostic playbook
+│   ├── sighup-gotcha.md                       # why long-running remote work goes under systemd-run
+│   └── pool-completeness-debugging.md         # what to do if the pool ⊆ peer-staging audit fails
 └── legacy/                         # prior-era artifacts (preserved for historical record)
     ├── REPRODUCE-tp2-nvfp4-nan-bug.md      # the original 2-spark TP=2 NVFP4 NaN-bug investigation
     ├── 5LAYER_PLAN-tp2-nvfp4.md
