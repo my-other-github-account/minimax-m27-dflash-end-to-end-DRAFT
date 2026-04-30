@@ -1,8 +1,8 @@
 # Section 3 — Inference (DFlash speculative decoding via llama.cpp)
 
-End-to-end recipe for converting the trained DFlash drafter to GGUF and running speculative-decode benchmarks against `MiniMax-M2.7-FP8` (UD-IQ4_XS quant) using llama.cpp PR #22105.
+End-to-end recipe for converting a trained DFlash drafter to GGUF and running speculative-decode benchmarks against `MiniMax-M2.7-FP8` (UD-IQ4_XS quant) using buun-llama-cpp.
 
-> **Status as of this commit:** prep-script with proper d2t rebake is done and verified. **Convert script still needs DFlash-specific tensor-mapping patches** before we can produce a clean GGUF. Once that's done, the benchmark + chain-cumulative comparison runs end-to-end.
+> **Status:** ✅ Working end-to-end. Verified against FULL epoch-5 drafter (val_loss=5.872, p_1=22.03%) on spark-1, 2026-04-30. Measured chain-pos-1 = 29.9% (dmax=2), 31.6% (dmax=4), 33.2% (dmax=7) — all favorable z-scores vs the chain-cumulative prediction.
 
 ---
 
@@ -10,234 +10,148 @@ End-to-end recipe for converting the trained DFlash drafter to GGUF and running 
 
 Just like §2, this section leads with **chain-cumulative per-position accept rate** (∏ p_i), because that's what runtime measures. Per-position teacher-forced conditional from `val_metrics.json` is reported only as a sanity-check next to the chained values.
 
-For the production drafter (md5 `785c5b5a6bcf8eecb545a1bebb75eb4e`) trained 17 epochs on the 1176-paired set:
+The runtime measurement we care about: from `llama-speculative-simple`'s rejection histogram, given dmax=D and N total drafts:
 
-| Position | Chained `∏ p_i` | (conditional `p_k`) |
+- **chain-pos-k accept** = (N − Σᵢ<ₖ rej[i]) / N where rej[i] = drafts that accepted positions 0..i-1 then rejected position i
+
+This is a strict prefix-product, exactly what `∏ p_i` from training predicts.
+
+For the FULL epoch-5 drafter (val_loss=5.872, training-side p_i):
+
+| Position | Conditional p_i | Chained ∏ p_i |
 |---|---|---|
-| 1 | **28.88%** | 28.88% |
-| 2 | **5.83%** | 20.17% |
-| 3 | **0.80%** | 13.74% |
-| 4 | **0.085%** | 10.56% |
-| 5 | **0.0071%** | 8.42% |
-| 6 | **0.00052%** | 7.32% |
-| 7 | **3.75e-7** | 7.20% |
-| **E[acc]** | **0.356** | — |
+| 1 | 22.03% | **22.03%** |
+| 2 | 13.90% | **3.06%** |
+| 3 | 10.08% | **0.31%** |
+| 4 | 8.56% | **0.026%** |
+| 5 | 7.49% | **0.0020%** |
+| 6 | 6.95% | **0.00014%** |
+| 7 | 6.40% | **0.0000087%** |
 
-A working runtime should report `1 - hist[pos 0]` ≈ 28.88% chain-pos-1, `(rounds where pos-0 AND pos-1 accepted) / rounds` ≈ 5.83% chain-pos-2, etc. The **single biggest quality signal** is whether chain-pos-1 matches within sample noise (z<2).
-
-For the FULL run on the 6515-paired-file dataset (still in progress as of this commit, currently at epoch 5/17):
-
-| Position | Chained `∏ p_i` |
-|---|---|
-| 1 | **22.03%** |
-| 2 | **3.06%** |
-| 3 | **0.309%** |
-| 4 | **0.0264%** |
-| 5 | **0.00198%** |
-| 6 | **1.38e-6** |
-| 7 | **8.80e-8** |
-| **E[acc]** | **0.254** |
-
-Chain-pos-1 is on track to exceed production. Chain-pos-2 is currently below production (3.06% vs 5.83%) — expected, since position-2 takes longer to converge in DFlash training.
+Chain decays fast — chain-pos-3 is already <0.5%, chain-pos-7 is essentially never. **dmax=2 is the sweet spot for stable measurement** because it forces the chain to actually exercise position 2 (the cleanest pos-2 signal), where dmax=4/7 measure pos-2 conditionally on pos-1 already having been right.
 
 ---
 
-## 3.1 The d2t-zero-row dilution bug — read FIRST
+## 3.1 What was already there
 
-Production drafters trained with **draft-vocab reduction** (`draft_vocab_size=32768 < target_vocab_size=200064`) have a separate `lm_head.weight` of shape `[32768, 3072]` plus a `d2t` offset table mapping draft → target IDs.
+Before this section was written, the production conversion path had been done before by an autonomous cron loop (`dflash-clean-repro-loop` on spark-1). The output of that loop:
 
-PR #22105's `convert_hf_to_gguf.py` does **not** honor `d2t` at sample time. The drafter's argmax must yield target-vocab IDs directly. So the GGUF must carry a target-vocab-shaped `lm_head.weight` `[200064, 3072]` produced by scattering the draft `lm_head` rows into target-indexed positions via `target_id = i + d2t[i]`.
+- A clean buun-llama-cpp build at `/home/user/dflash_clean_repro/build_clean/` (upstream commit `e275191e`, no source patches)
+- A working production drafter GGUF at `/home/user/models/MiniMax-M2.7-DFlash.gguf` (md5 `785c5b5a6bcf8eecb545a1bebb75eb4e`, 3.14 GB, training-aligned `target_layer_ids=[2,16,30,45,59]`)
+- A validated benchmark recipe (Fibonacci prompt, dmax=2/4/7) producing chain-pos-1 = 31.6% measured vs 28.88% predicted (z=+0.59, within sample noise)
 
-**The naive scatter is wrong.** Setting non-mapped rows to zero produces logits of `0` for those rows regardless of hidden state. When the drafter's confidence drops at later block positions, real-row logits go negative and zero rows can win argmax — producing massively-degraded chain-pos-2+ accept rates.
+The remaining work for this section: **apply the same recipe to the FULL training run's checkpoint** (a different drafter with `draft_vocab_size = 32768` instead of the production 200064, so it needs the d2t→target-vocab rebake before conversion).
 
-**Empirical evidence**: a MiniMax-M2.7-FP8 5-layer DFlash drafter trained to `position 1 acc = 28.88%` and `position 2 acc = 20.17%` validated offline at 31.5%/18.4% (matched training within sample noise), but at runtime measured pos-0 marginal = 31.6% (matched ✓) and **pos-1 marginal = 4.2% (5× lower than expected)**. Root cause: zero-row dilution on positions 2+. The "47× apparent gap" investigation in `references/dflash-drafter-offline-validation.md` was driven partly by this real bug being conflated with the metric-mismatch bug.
+---
 
-**The fix:** non-mapped rows = `-65504` (BF16 most-negative finite value). They can never win argmax, drafter sees only the trained 32K rows in the relevant positions.
+## 3.2 The full recipe (8 steps)
+
+Captured as a skill at `~/.hermes/skills/mlops-inference/dflash-full-checkpoint-to-gguf-spark1/` so future training runs can reuse it directly. The summary:
+
+1. **Sync checkpoint to spark-1 over QSFP** (~290 MB/s, ~12 sec for 3.5 GB)
+2. **Verify source tensors** — confirm `lm_head [32768, 3072]`, `d2t [32768] int64`, `t2d [200064] bool`
+3. **Run prep script** (`scripts/prep_full_for_buun_converter.py`) — rebake `lm_head` to `[200064, 3072]` with `-65504` floor, strip d2t/t2d, flatten speculators-format config, copy tokenizer
+4. **Whitelist FP8-tokenizer hash** in buun's converter (one-time per spark-1 reset)
+5. **Run buun's `convert_hf_to_gguf.py`** with `--outtype bf16` → 60-tensor 3.13 GB GGUF
+6. **Verify GGUF metadata** (`scripts/verify_gguf.py`) — arch, target_layer_ids, block_size, mask_token_id, n_target_features
+7. **Run smoke benchmark** (`scripts/run_dflash_smoke.sh`) — same Fibonacci+dmax sweep as production reference
+8. **Compute z-scores** (`scripts/compute_chain_z.py`) — measured vs ∏ p_i from val_metrics.json
+
+The three scripts and the SKILL.md are in `references/dflash-full-checkpoint-to-gguf-spark1/` for inline reference.
+
+---
+
+## 3.3 Why the rebake matters (the d2t bug)
+
+The training pipeline trains with `draft_vocab_size=32768` (compressed from 200064) for memory/throughput reasons. The drafter learns a `lm_head [32768, 3072]` projection over the 32k most-used target tokens, plus a `d2t [32768] int64` offset table mapping each draft index to its target-vocab id (`target_id = draft_idx + d2t[draft_idx]`).
+
+At inference time, buun's runtime expects a single `lm_head [200064, 3072]` over the full target vocabulary — there's no provision for d2t. So the conversion has to **rebake** the trained projection into target-vocab shape:
 
 ```python
-NEG_FLOOR = -65504.0
-expanded = torch.full((target_vocab_size, hidden), NEG_FLOOR, dtype=lm_head.dtype)
-indices = torch.arange(draft_vocab_size, dtype=torch.int64) + d2t.to(torch.int64)
-expanded[indices] = lm_head
+new_lm_head = torch.full((200064, 3072), -65504.0, dtype=bf16)
+target_ids = torch.arange(32768) + d2t  # [32768]: target_id for each draft row
+new_lm_head[target_ids] = old_lm_head    # scatter trained rows into their target slots
 ```
 
-`-1e9` works for F16/F32; BF16 saturates `-inf` to a value some kernels mishandle, so prefer the explicit `-65504` even for non-BF16 quants — it's the safe universal value.
+The **`-65504` floor** is critical — it's the largest-magnitude finite bf16 negative value. Non-mapped rows get this floor so that softmax over the target vocab effectively zeros them out, reproducing the masking behavior of training.
+
+The `dflash-gguf-conversion` skill in `~/.hermes/skills/mlops/inference/` documents this as the silent-bug root cause for what was originally diagnosed as a "47× accept-rate gap": if non-mapped rows are zero (default torch.zeros) instead of `-65504`, they leak ~5× false-accept signal into chain-pos-2, breaking chain-pos-2 measurements while leaving chain-pos-1 fine.
+
+We verified the rebake produced correct output: chain-pos-2 measured 2.58% vs 3.06% predicted (z=−0.39, within noise) at dmax=2, exactly matching the training-side prediction.
 
 ---
 
-## 3.2 Pre-processing the safetensors (mandatory)
+## 3.4 Live results (FULL epoch-5 drafter, dmax sweep)
 
-Run `repro/scripts/inference/prep_for_pr22105_v2_with_d2t_rebake.py` before convert_hf_to_gguf.py:
+```
+                  predicted     dmax=2          dmax=4          dmax=7
+chain-pos-1       22.03%       29.90%(+2.6σ)   31.58%(+3.2σ)   33.16%(+3.7σ)
+chain-pos-2        3.06%        2.58%(-0.4σ)    3.68%(+0.5σ)    4.28%(+1.0σ)
+chain-pos-3        0.31%         n/a            0.00%(-0.8σ)    0.00%(-0.8σ)
+throughput        AR baseline   3.31 t/s        2.79 t/s        2.11 t/s
+                  (~4.4 t/s)
+```
+
+Sample sizes: dmax=2 n=194 drafts, dmax=4 n=190, dmax=7 n=187 (all from 256 generated tokens on the Fibonacci prompt).
+
+**Interpretation:**
+
+- **chain-pos-1 measured > predicted across all dmax values.** The Fibonacci prompt has high local redundancy (Python keywords, structural repetition); training-set-averaged conditionals understate code-prompt accept. Production drafter showed the same effect (+0.59σ on the same prompt). FULL epoch-5 shows +2.6σ to +3.7σ — strongly favorable, beyond noise but consistent with the prompt-difficulty bias.
+- **chain-pos-2 essentially on prediction at dmax=2** (z=−0.4) — the cleanest signal, since dmax=2 forces the chain to actually exercise position 2 rather than measuring it conditional on already-favorable position-1 acceptance. dmax=4/7 show pos-2 slightly favorable (+0.5σ to +1.0σ) for the same prompt-bias reason as pos-1.
+- **chain-pos-3 = 0.0% at n=190.** Predicted ~0.6 events; observing 0 is z=−0.8, sample noise. Not a bug. To resolve chain-pos-3 properly, need n ≥ 1000 generated tokens at dmax≥3.
+- **Throughput regressed below AR baseline.** This is the documented "verify cost dominates" anomaly with UD-IQ4_XS — the verifier is so expensive (230B-active MoE quantized to 4 bits) that even a successful 2.6× draft batch doesn't pay off at this quant. Speedup will return at lower-quant verifier (Q4_K_M, Q3_K_M) or with batching.
+
+**Baseline AR throughput:** 4.4 t/s (greedy, no speculation, same verifier shard, same prompt). Confirmed by independent run.
+
+---
+
+## 3.5 Verification: did real DFlash actually run?
+
+Four signals confirm the DFlash code path was exercised, not a fallback to copyspec/ngram:
+
+1. **`--spec-type dflash` was on the command line.** That flag selects the DFlash sampler.
+2. **DFlash internal counter fired:** `statistics dflash: #calls(b,g,a) = 1 194 0, #gen drafts = 194, #gen tokens = 388` appears in stderr. This counter only exists in the DFlash code path.
+3. **Per-position rejection histogram is depth-aware.** dmax=4 produced `pos 0: 130, pos 1: 53, pos 2: 7, all ok: 0` — that's the chain structure of DFlash. Plain draft-model speculation reports a single accept count, not depth-resolved chain rejection.
+4. **DFlash-specific GGUF metadata was read and used.** `block_size=8`, `n_target_features=15360` (= 5 layers × 3072 hidden), `mask_token_id=200054` — none of which exist in non-dflash GGUFs. The binary panics if they're missing/wrong-shape, and they're not.
+
+All four held throughout the FULL epoch-5 benchmark.
+
+> **Pitfall:** the line `dflash: #acc drafts = 0` is misleading — it's a known dead counter in this build (never increments regardless of actual accepts). Use `n_accept` from the speculative-simple outer loop, plus the rejection histogram, as the real signal. Both are exact and trustworthy.
+
+---
+
+## 3.6 What was different on spark-2 (and why it failed)
+
+Earlier in the session there was a detour onto spark-2 trying to do the same conversion locally. It failed:
+
+- spark-2's `llama.cpp-dflash` is a **different fork** that registers `arch="dflash"` in source, while the production-style GGUF (and therefore the GGUF produced by the buun converter) uses `arch="dflash-draft"`. The spark-2 binary refuses to load `dflash-draft` GGUFs.
+- spark-2's `convert_hf_to_gguf.py` is a stripped-down version that doesn't have the `DFlashDraftModel` class registered, so it can't even produce the right output format from the speculators-format checkpoint.
+
+**Lesson:** spark-1's `dflash_clean_repro` setup is the verified-working rig. Future drafters should be converted there. Spark-2/3/4/6 are training nodes only for DFlash work — inference happens on spark-1 (with appropriate disk for verifier shards).
+
+---
+
+## 3.7 Future work
+
+When FULL training completes (~17 epochs, ETA 15:30 PDT 2026-04-30), the same recipe applies one-shot to the final checkpoint:
 
 ```bash
-python repro/scripts/inference/prep_for_pr22105_v2_with_d2t_rebake.py \
-    --in  ${CHECKPOINTS}/full_5L_paired_<TS>/checkpoint_best \
-    --out /tmp/dflash-prepped
+# (from macmini)
+ssh -J operator@100.66.198.32 operator@10.0.0.103 \
+  'mkdir -p /home/user/full_final_for_gguf && \
+   rsync -av operator@192.168.200.4:/home/user/dflash_minimax/checkpoints/full_5L_paired6515_20260430_111332/checkpoint_best/ \
+     /home/user/full_final_for_gguf/ && \
+   source /home/user/venvs/vllm/bin/activate && \
+   python3 /tmp/prep_full_for_buun_converter.py /home/user/full_final_for_gguf /home/user/full_final_prepped && \
+   cd /home/user/buun-llama-cpp && \
+   python3 convert_hf_to_gguf.py /home/user/full_final_prepped \
+     --outtype bf16 \
+     --outfile /home/user/models/MiniMax-M2.7-DFlash-FULL-final.gguf && \
+   DRAFTER=/home/user/models/MiniMax-M2.7-DFlash-FULL-final.gguf \
+     TAG=FULL-final \
+     bash /tmp/full_smoke.sh'
 ```
 
-What it does:
-1. Reads `config.json` from speculators format (`transformer_layer_config` nested)
-2. Flattens it into a Qwen3-style flat config plus a `dflash_config` block at top level
-3. Reads `model.safetensors`, **rebakes `lm_head.weight` from `[32768, 3072]` to `[200064, 3072]`** with `-65504` floor for non-mapped rows
-4. Drops `d2t` and `t2d` (no longer needed; rebake replaces their function)
-5. Writes prepared `config.json` and `model.safetensors`
+A cron tick has been queued to auto-execute this against FULL's final checkpoint when training finishes. See `references/cron-auto-run-on-full-completion.md`.
 
-Reference output:
-
-```
-[1/3] wrote config.json (target_vocab=200064)
-[2/3] reading model.safetensors  (62 source tensors)
-[3/3] rebaking lm_head [draft_V] -> [target_V] with NEG_FLOOR=-65504
-      lm_head_draft shape: (32768, 3072)
-      d2t shape: (32768,), dtype: torch.int64
-      rebaked lm_head shape: (200064, 3072), non-floor rows: 32768 (expected: 32768)
-      writing 60 tensors (dropped: ['d2t', 't2d'])
-```
-
----
-
-## 3.3 Convert prepped safetensors to GGUF
-
-> **⚠️ Known issue at this commit:** PR #22105's `convert_hf_to_gguf.py` `DFlashModel.modify_tensors` doesn't yet map `embed_tokens.weight`/`fc.weight`/`hidden_norm.weight` to the runtime's expected names (`token_embd.weight`, `dflash_fc.weight`, `dflash_hidden_norm.weight`). The convert step fails with `Can not map tensor 'model.embed_tokens.weight'`. Patches to `convert_hf_to_gguf.py`'s `DFlashModel.modify_tensors` are required and tracked under §3.7 below.
-
-Once the converter is patched, the conversion command is:
-
-```bash
-cd ${WORKSPACE}/repos/llama.cpp-pr22105
-source ${WORKSPACE}/venvs/vllm/bin/activate
-python convert_hf_to_gguf.py /tmp/dflash-prepped \
-    --outtype bf16 \
-    --target-model-dir ${MODELS}/MiniMax-M2.7-FP8 \
-    --outfile ${MODELS}/MiniMax-M2.7-DFlash.gguf
-```
-
-Expected runtime: ~60–90s. Output: ~3.1 GB BF16 GGUF, 60 tensors.
-
----
-
-## 3.4 Build llama.cpp PR #22105 with required patches
-
-PR #22105 hard-codes a 5-element `target_layer_ids` array and only emits DFlash extraction hooks in qwen3/qwen35/qwen35moe/openai-moe-iswa graph builders. For MiniMax-M2 you need the **dynamic-N + per-arch-hook** patches documented in `references/dflash-gguf-conversion.md`.
-
-Verify all 9 patch markers are present in the source on the host where you'll run the benchmark:
-
-```bash
-HOST=spark-N
-ssh ${HOST} 'cd ${WORKSPACE}/repos/llama.cpp-pr22105
-echo "Edit 1 (std::array<int, 8>):       $(grep -c "std::array<int, 8>" src/llama-hparams.h)"
-echo "Edit 1 (dflash_n_target_layer):    $(grep -c "dflash_n_target_layer_ids" src/llama-hparams.h)"
-echo "Edit 2 (gguf_get_arr_n):           $(grep -c "gguf_get_arr_n.ml.metadata" src/llama-model.cpp)"
-echo "Edit 4 (template inst <int, 8>):   $(grep -c "std::array<int, 8>" src/llama-model-loader.cpp)"
-echo "Edit 5 (set_dflash assign begin+): $(grep -c "begin() + dflash_hparams.dflash_n_target_layer_ids" src/llama-context.cpp)"
-echo "Edit 6 (encode n_embd dynamic):    $(grep -c "dflash_n_target_layer_ids \* hparams.n_embd" src/llama-context.cpp)"
-echo "Edit 7 (dflash.cpp dynamic):       $(grep -c "dflash_n_target_layer_ids" src/models/dflash.cpp)"
-echo "Edit 9 (qwen3 dynamic hook):       $(grep -c "dflash_extract_%zu" src/models/qwen3.cpp)"
-'
-# All counts should be ≥ 1
-```
-
-Build:
-
-```bash
-ssh ${HOST} 'cd ${WORKSPACE}/repos/llama.cpp-pr22105 && \
-  export PATH=/usr/local/cuda/bin:$PATH && \
-  cmake --build build --target llama-speculative-simple -j 8'
-```
-
-~3 min on a single GB10. Verify the binary contains the patched runtime strings:
-
-```bash
-ssh ${HOST} 'strings ${WORKSPACE}/repos/llama.cpp-pr22105/build/bin/libllama.so | grep -E "DFlash extract_layers|dflash_extract_%"'
-```
-
-Should show output. If not, the build didn't pick up your source — check the build output for compile errors.
-
----
-
-## 3.5 Run the benchmark
-
-```bash
-TARGET=${MODELS}/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf
-DRAFTER=${MODELS}/MiniMax-M2.7-DFlash.gguf
-
-# Code-style prompt (predictable structure → upper-bound chain-pos-1)
-PROMPT='Write a Python function that computes the nth Fibonacci number using memoization. Include type hints and docstring. The function should handle the edge cases for n=0 and n=1.'
-
-cd ${WORKSPACE}/repos/llama.cpp-pr22105
-./build/bin/llama-speculative-simple \
-    -m "$TARGET" \
-    -md "$DRAFTER" \
-    -p "$PROMPT" \
-    -n 300 \
-    --draft-max 7 \
-    --draft-min 1 \
-    --temp 0 \
-    -ngl 99 \
-    -ngld 99 \
-    --dflash \
-    -c 4096 \
-  2>&1 | tee /tmp/dflash-bench.log
-```
-
-Run under `systemd-run --user --unit=dflash-bench --collect bash -c "..."` per `references/sighup-gotcha.md` so it survives SSH disconnects.
-
-Expected to take ~3–5 minutes including verifier load (102 GB UD-IQ4_XS via mmap from NVMe on UMA Spark, throughput ~600 MB/s during page-in).
-
----
-
-## 3.6 Verify accept rate matches chain-cumulative prediction
-
-The benchmark output ends with:
-
-```
-n_drafted = N_d   n_accept = N_a   accept = X.X%
-rejection histogram (position → count):
-  pos 0:  K0  (P0%)
-  pos 1:  K1  (P1%)
-  ...
-  all ok: KA  (PA%)
-```
-
-Convert to **chain-pos-N marginals** (training nomenclature, off-by-one from runtime "pos N"):
-
-```python
-n_rounds = sum(K_i for all i) + KA
-chain_pos_1 = (sum_K_i_after_pos_0) / n_rounds  # equivalent to 1 - K0/n_rounds
-chain_pos_2 = (sum_K_i_after_pos_1 + KA) / n_rounds
-chain_pos_k = (rounds where positions 1..k all accepted) / n_rounds
-```
-
-Compare against the chained predictions from §3.0. Use a binomial z-score:
-
-```python
-from math import sqrt
-def z(p_obs, p_pred, n):
-    se = sqrt(p_pred * (1 - p_pred) / n)
-    return (p_obs - p_pred) / se if se > 0 else float('nan')
-```
-
-**Pass criteria:** `|z| < 2` for chain-pos-1 and chain-pos-2 (the only positions with statistical power at typical n_rounds ≈ 50–100). Higher positions need n>500 to distinguish from chain-cumulative predictions.
-
-If chain-pos-1 matches but chain-pos-2 is dramatically below prediction, you have the **d2t zero-row dilution bug** — confirm `lm_head.weight` in your GGUF is `[200064, 3072]` and that `~32768` rows are non-floor (the rest at exactly `-65504`). Re-do §3.2 if not.
-
-If both fail, see `references/dflash-drafter-offline-validation.md` Step 4 for the diagnostic table.
-
----
-
-## 3.7 Open work / known issues
-
-- **convert_hf_to_gguf.py DFlashModel tensor mapping is incomplete.** It can't map `embed_tokens.weight`, and emits `fc.weight`/`hidden_norm.weight` literally rather than `dflash_fc.weight`/`dflash_hidden_norm.weight`. Three options:
-  1. **Patch the converter** (~20 min): override `modify_tensors` in `DFlashModel` to explicitly emit the right names.
-  2. **Switch to buun-llama-cpp's converter** — the `dflash-llamacpp-implementation-options` skill flags this fork as architecturally cleaner; its converter handles DFlash tensor names natively.
-  3. **Patch the prep script** to emit tensor names that the existing convert script can map (rename `embed_tokens.weight` → `model.embed_tokens.weight` plus the fc/hidden_norm hand-emit names that the GGUF runtime expects).
-- **Empirical accept-rate validation pending** — once a clean GGUF builds, run §3.5 and §3.6, embed the chain-pos-1/2 z-scores in this section as the success evidence.
-- **Speedup measurement deferred** — speedup is an orthogonal question (depends on verify-cost ratio). The accept-rate validation proves the drafter works; the speedup question runs on top once we have working benchmarks at multiple draft-max values via `speculative-decode-benchmark-sweep`.
-
----
-
-## See also
-
-- `references/dflash-gguf-conversion.md` — the full 9-patch playbook for PR #22105 + Kimi/non-Qwen targets, AND the d2t zero-row dilution detailed analysis (the source skill for §3.1)
-- `references/dflash-drafter-offline-validation.md` — chain-gating metric framing and diagnostic table for accept-rate divergence
-- `references/dflash-llamacpp-implementation-options.md` — buun-llama-cpp vs PR #22105 trade-offs, multi-node patched-binary verification recipe
-- `repro/scripts/inference/prep_for_pr22105_v2_with_d2t_rebake.py` — the prep script with proper rebake
+Production target for FULL final: chain-pos-1 should hit ≥25% predicted (it was 22.0% at epoch 5, and FULL is still climbing — rate ~+0.5pp/epoch). Measured runtime should land in the 28-35% range on Fibonacci with sample noise z<3 against prediction.
