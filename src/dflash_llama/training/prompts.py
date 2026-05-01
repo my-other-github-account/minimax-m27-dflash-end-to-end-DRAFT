@@ -84,9 +84,11 @@ def assemble_prompts_arrow(
         except ValueError:
             src_row_idx = _stem_index(path)
 
+        ids_list = list(input_ids)
         rows.append({
-            "input_ids": list(input_ids),
+            "input_ids": ids_list,
             "loss_mask": [bool(x) for x in loss_mask],
+            "seq_len": len(ids_list),
             "source_name": src_name,
             "source_row_idx": src_row_idx,
         })
@@ -113,6 +115,14 @@ def assemble_prompts_arrow(
             f"(skipped={len(skipped)}); first few skips: {skipped[:5]}"
         )
     ds = Dataset.from_list(rows)
+    # Persist a torch format on the columns speculators reads as tensors.
+    # This is preserved through save_to_disk -> load_from_disk so downstream
+    # trainers get torch.Tensor for input_ids / loss_mask without surprises.
+    try:
+        ds.set_format(type="torch", columns=["input_ids", "loss_mask"], output_all_columns=True)
+    except Exception:
+        # Older datasets versions might not accept output_all_columns; fall back.
+        ds.set_format(type="torch", columns=["input_ids", "loss_mask"])
     if prompts_dir.exists():
         # remove old shard files so save_to_disk doesn't choke
         import shutil

@@ -21,6 +21,27 @@ from .vocab_maps import build_vocab_maps
 from .smoke import run_smoke_test, SmokeResult
 
 
+def _resolve_torchrun() -> str:
+    """Locate torchrun next to sys.executable, then PATH, then bare name.
+
+    subprocess.run() with a bare "torchrun" only works when torchrun is on the
+    caller's PATH, which is unreliable when DFlashTrainer is invoked from a
+    script that didn't source the venv. We look in the venv's bin/ first,
+    then shutil.which, then fall back to the bare name so the user gets a
+    clean FileNotFoundError if nothing exists.
+    """
+    import shutil
+    import sys
+    cand = Path(sys.executable).parent / "torchrun"
+    if cand.exists():
+        return str(cand)
+    found = shutil.which("torchrun")
+    if found:
+        return found
+    return "torchrun"
+
+
+
 class DFlashTrainer:
     """End-to-end DFlash training driver.
 
@@ -57,8 +78,16 @@ class DFlashTrainer:
 
     # -----------------------------------------------------------------
     def prepare(self, *, force: bool = False) -> dict:
-        """Build the paired prompts arrow + vocab maps."""
+        """Build the paired prompts arrow + vocab maps + hidden_states symlink farm.
+
+        Speculators' ArrowDataset expects hidden states named
+        ``hs_<dataset_position>.safetensors`` aligned with arrow row order, but
+        v3 traces are keyed by prompt-row index. We build a symlink farm in
+        ``paired_dir/hidden_states/`` mapping each dataset position to the
+        underlying source trace file.
+        """
         prompts_dir = self.paired_dir / "prompts"
+        self.paired_dir.mkdir(parents=True, exist_ok=True)
         report = {}
         if force or not prompts_dir.exists():
             report["assemble"] = assemble_prompts_arrow(
@@ -75,8 +104,53 @@ class DFlashTrainer:
             )
         else:
             report["vocab_maps"] = {"skipped": True, "reason": "t2d.npy already exists"}
+        # Build hs_<dataset_position>.safetensors symlink farm aligned with the arrow.
+        report["hs_symlinks"] = self._build_hs_symlink_farm()
         self._prepared = True
         return report
+
+
+    # -----------------------------------------------------------------
+    def _build_hs_symlink_farm(self) -> dict:
+        """Materialise paired_dir/hidden_states/hs_<i>.safetensors -> traces_dir/<source>.
+
+        Reads the freshly built arrow's source_row_idx column to build a
+        deterministic mapping aligned with dataset row order.
+        """
+        from datasets import load_from_disk
+        prompts_dir = self.paired_dir / "prompts"
+        hs_dir = self.paired_dir / "hidden_states"
+        if hs_dir.exists() and hs_dir.is_symlink():
+            hs_dir.unlink()
+        hs_dir.mkdir(parents=True, exist_ok=True)
+
+        ds = load_from_disk(str(prompts_dir))
+        if "source_row_idx" not in ds.column_names:
+            return {"skipped": True, "reason": "arrow missing source_row_idx column"}
+
+        n_linked = 0
+        n_missing = 0
+        missing_examples: list[str] = []
+        for dataset_position, source_row_idx in enumerate(ds["source_row_idx"]):
+            src_file = self.traces_dir / f"hs_{int(source_row_idx)}.safetensors"
+            link = hs_dir / f"hs_{dataset_position}.safetensors"
+            if link.exists() or link.is_symlink():
+                link.unlink()
+            if not src_file.exists():
+                n_missing += 1
+                if len(missing_examples) < 5:
+                    missing_examples.append(str(src_file))
+                continue
+            link.symlink_to(src_file.resolve())
+            n_linked += 1
+
+        return {
+            "hidden_states_dir": str(hs_dir),
+            "n_linked": n_linked,
+            "n_missing": n_missing,
+            "missing_first_5": missing_examples,
+            "n_rows": len(ds),
+        }
 
     # -----------------------------------------------------------------
     def _build_train_cmd(
@@ -98,8 +172,9 @@ class DFlashTrainer:
             os.path.expanduser("~/repos/speculators/scripts/train.py"),
         )
         target_layer_ids = self.verifier.trainer_target_layer_ids()
+        torchrun_bin = _resolve_torchrun()
         cmd = [
-            "torchrun",
+            torchrun_bin,
             f"--master_port={port}",
             "--nproc-per-node=1",
             train_script,
