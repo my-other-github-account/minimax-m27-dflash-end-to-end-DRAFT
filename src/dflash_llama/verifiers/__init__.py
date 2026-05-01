@@ -53,14 +53,61 @@ def load_verifier(
     *,
     hf_path: Optional[str] = None,
     gguf_path: Optional[str] = None,
+    hf_repo: Optional[str] = None,
+    gguf_repo: Optional[str] = None,
+    gguf_quant: Optional[str] = None,
+    revision: Optional[str] = None,
     **overrides,
 ) -> BaseVerifier:
-    """Load a verifier by name or auto-detect from an HF config.
+    """Load a verifier by name, with optional Hub-slug auto-resolution.
 
-    If ``name`` is None, ``hf_path`` must be set; we'll inspect its config.json.
-    Any ``overrides`` are passed through to the factory (useful for the generic
-    ``qwen3`` family which needs hidden_size + num_hidden_layers).
+    Three ways to point at the underlying model:
+
+    1. **Local paths** — pass ``hf_path=/path/to/dir`` and/or
+       ``gguf_path=/path/to/file.gguf``. Useful when you already have files
+       on disk (e.g. on a Spark cluster).
+
+    2. **Hub slugs** — pass ``hf_repo="MiniMaxAI/MiniMax-M2"`` and/or
+       ``gguf_repo="unsloth/MiniMax-M2-GGUF"`` (with optional ``gguf_quant``
+       to pick the quant subdir). The library downloads to its cache and
+       returns the local path. Re-runs are no-ops.
+
+    3. **Auto-detect** — pass only ``name=None`` plus ``hf_path=`` (or
+       ``hf_repo=``) and we'll inspect ``config.json`` to pick a registry
+       entry.
+
+    Examples::
+
+        # Local files (e.g. on a cluster where weights are pre-staged)
+        v = load_verifier(
+            "minimax-m2.7-iq4-xs",
+            gguf_path="/data/models/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf",
+            hf_path="/data/models/MiniMax-M2.7-FP8",
+        )
+
+        # Hub slugs — auto-download
+        v = load_verifier(
+            "minimax-m2.7-iq4-xs",
+            hf_repo="MiniMaxAI/MiniMax-M2",
+            gguf_repo="unsloth/MiniMax-M2-GGUF",
+            gguf_quant="UD-IQ4_XS",
+        )
+
+        # Hub slug for the small files only — bring your own GGUF
+        v = load_verifier(
+            "minimax-m2.7-iq4-xs",
+            hf_repo="MiniMaxAI/MiniMax-M2",
+            gguf_path="./models/UD-IQ4_XS/shard-00001.gguf",
+        )
     """
+    # Resolve Hub slugs to local paths (cached). Only download what's needed.
+    if hf_repo and not hf_path:
+        from ..hub import resolve_hf_repo
+        hf_path = resolve_hf_repo(hf_repo, revision=revision)
+    if gguf_repo and not gguf_path:
+        from ..hub import resolve_gguf_repo
+        gguf_path = resolve_gguf_repo(gguf_repo, quant=gguf_quant, revision=revision)
+
     if name is None:
         return autodetect_verifier(hf_path=hf_path, gguf_path=gguf_path)
     name = name.lower()

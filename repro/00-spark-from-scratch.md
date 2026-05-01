@@ -4,114 +4,100 @@ End-to-end bringup on a fresh DGX Spark (or any single Linux node with an NVIDIA
 
 > **Tested on:** NVIDIA GB10 (DGX Spark), Ubuntu 22.04, Python 3.12, torch 2.10. Should work on any compute capability ≥ 8.0 GPU with bf16 + fp8 storage.
 
----
-
-## Prerequisites
-
-You need:
-
-1. **A llama.cpp build with the `llama-dump-hiddens` patch** (the trace-extraction binary). We use [our buun fork](https://github.com/my-other-github-account/buun-llama-cpp).
-2. **A GGUF of the verifier model.** This walkthrough uses MiniMax-M2.7 quantized to UD-IQ4_XS (~109 GB). Substitute your own.
-3. **The HF model directory of the same verifier** — only `config.json`, `tokenizer.json`, and `model.safetensors.index.json` are strictly required, but the trainer is happiest if you give it a stub `model.safetensors` containing just `lm_head.weight`, `model.embed_tokens.weight`, `model.norm.weight`. See [the verifier_meta stub recipe](#step-3-build-the-verifier_meta-stub).
-4. **A prompts dataset** as an HF Dataset on disk with at least an `input_ids` column. We use a tokenized slice of `allenai/tulu-3-sft-mixture`.
-5. **The [speculators](https://github.com/neuralmagic/speculators) repo cloned locally** (commit `67bafe6` or later, with the 4 NaN-handling patches in `patches/speculators/` applied if you need them).
+**All paths in this doc are relative to the repo root.** Run every command from the directory you cloned the repo into.
 
 ---
 
-## Step 1: clone + install
+## Step 1: clone, install, smoke-test
 
 ```bash
-ssh you@spark-1
-cd ~
-
-# clone this library
 git clone https://github.com/my-other-github-account/minimax-m27-dflash-end-to-end-DRAFT.git dflash-llama
 cd dflash-llama
 
-# create a venv with python ≥ 3.10 (3.12 recommended — speculators uses py3.12 features)
-python3.12 -m venv ~/venvs/dflash
-source ~/venvs/dflash/bin/activate
-
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install --upgrade pip
 pip install -e .
-pip install pytest                       # for the test suite
-pytest tests/ -q                         # 36 passed in ~10s
+pip install pytest
+
+pytest tests/ -q                      # 45 passed in ~0.5s
 ```
 
-If you cannot install in the venv (no pip, locked-down system), the library also runs from `PYTHONPATH`:
+If your venv lacks `pip` (some locked-down systems), the library also runs from `PYTHONPATH`:
 
 ```bash
-export PYTHONPATH=$HOME/dflash-llama/src:$PYTHONPATH
+export PYTHONPATH=$(pwd)/src:$PYTHONPATH
 python3 -c "import dflash_llama; print(dflash_llama.__version__)"
 ```
 
 ---
 
-## Step 2: build `llama-dump-hiddens`
+## Step 2: build `llama-dump-hiddens` (reproducibly)
 
 ```bash
-cd ~
-git clone https://github.com/my-other-github-account/buun-llama-cpp.git
-cd buun-llama-cpp
-mkdir -p build && cd build
-cmake .. -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build . --target llama-dump-hiddens -j$(nproc)
-
-# verify
-./bin/llama-dump-hiddens --help 2>&1 | head -5
+bash scripts/build_llama_dump_hiddens.sh
 ```
 
-Resulting binary path: `~/buun-llama-cpp/build/bin/llama-dump-hiddens`. We will refer to it as `LLAMA_DUMP_BIN` below.
+What this does:
+
+1. Clones [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) at a **pinned tag** (default `master-fff0e0e`) into `build/llama.cpp-dflash/`.
+2. Drops our vendored [`vendor/dump-hiddens/`](../vendor/dump-hiddens/) source files into `build/llama.cpp-dflash/examples/dump-hiddens/`.
+3. Wires it into the cmake graph (idempotent — appends one `add_subdirectory(...)` line if not already there).
+4. Builds with CUDA + Release.
+
+Output: `build/llama.cpp-dflash/build/bin/llama-dump-hiddens`. The script prints this path on stdout for piping:
+
+```bash
+LLAMA_DUMP_BIN=$(bash scripts/build_llama_dump_hiddens.sh | tail -1)
+```
+
+Knobs (all optional, env vars):
+
+| var | default | meaning |
+|---|---|---|
+| `LLAMACPP_PIN` | `master-fff0e0e` | upstream tag/commit |
+| `BUILD_CUDA` | `1` | `0` for CPU-only build |
+| `JOBS` | `nproc` | parallel build jobs |
+
+Re-running the script is safe — it skips the clone if the directory exists and just rebuilds.
 
 ---
 
-## Step 3: build the `verifier_meta` stub
+## Step 3: pick a verifier (no on-disk fiddling)
 
-The speculators trainer reads `model.safetensors.index.json` and tries to load every shard listed in `weight_map`. For a 130-shard model this would download / read 200 GB of weights it doesn't actually use — only `lm_head.weight`, `model.embed_tokens.weight`, and `model.norm.weight` are actually consumed by the DFlash trainer.
+The library accepts model **slugs** — both for the HF config and for GGUF weights. It downloads to a per-user cache (`~/.cache/dflash-llama/`, configurable via `DFLASH_LLAMA_HOME`) on first use and reuses on subsequent runs.
 
-We build a one-shard stub:
+```python
+from dflash_llama import load_verifier
 
-```bash
-mkdir -p ~/verifier_meta
-cd ~/verifier_meta
-
-# 1. copy the small files from the original HF model dir
-HF_MODEL_DIR=/path/to/MiniMax-M2.7-FP8
-cp $HF_MODEL_DIR/config.json .
-cp $HF_MODEL_DIR/tokenizer*.json .
-cp $HF_MODEL_DIR/chat_template.jinja .       # if present
-cp $HF_MODEL_DIR/configuration_*.py .         # MiniMax-specific
-cp $HF_MODEL_DIR/modeling_*.py .              # MiniMax-specific
-
-# 2. extract the 3 needed tensors from the GGUF and write them as one safetensors shard
-#    (this script lives in scripts/build_verifier_meta_stub.py — see below)
-python3 scripts/build_verifier_meta_stub.py \
-    --gguf /path/to/MiniMax-M2.7-UD-IQ4_XS-00002-of-00004.gguf \
-    --out  ~/verifier_meta/model.safetensors
-```
-
-The script `scripts/build_verifier_meta_stub.py` reads the GGUF, dequantizes `token_embd.weight (Q8_0) → model.embed_tokens.weight`, `output.weight (Q6_K) → lm_head.weight`, `output_norm.weight (F32) → model.norm.weight`, and writes them all to one bf16 safetensors file (~2.4 GB for MiniMax-M2.7).
-
-Then write a matching `model.safetensors.index.json`:
-
-```bash
-python3 -c "
-import json
-total = 0
-import safetensors.torch as st
-loaded = st.load_file('/root/verifier_meta/model.safetensors')
-for k, v in loaded.items():
-    total += v.numel() * v.element_size()
-weight_map = {k: 'model.safetensors' for k in loaded.keys()}
-json.dump(
-    {'metadata': {'total_size': total}, 'weight_map': weight_map},
-    open('/root/verifier_meta/model.safetensors.index.json', 'w'),
-    indent=2,
+verifier = load_verifier(
+    "minimax-m2.7-iq4-xs",
+    hf_repo="MiniMaxAI/MiniMax-M2",
+    gguf_repo="unsloth/MiniMax-M2-GGUF",
+    gguf_quant="UD-IQ4_XS",
 )
-"
 ```
 
-> **Cluster shortcut:** if you've already built `verifier_meta` on one host, don't redo it — `rsync -a host1:/path/to/verifier_meta/ host2:/path/to/verifier_meta/` over QSFP. 2.4 GB ships in ~8 seconds at 322 MB/s.
+That's the entire model-loading recipe. No `/path/to/...`, no manual `cp` of `config.json` and tokenizer files, no shard-counting. The library:
+
+- Downloads the small files (`config.json`, `tokenizer.json`, `chat_template.jinja`, `model.safetensors.index.json`, plus the `configuration_*.py` / `modeling_*.py` for trust-remote-code models) from `MiniMaxAI/MiniMax-M2` — but **not** the multi-hundred-GB weights, which the trainer doesn't need.
+- Downloads only the `UD-IQ4_XS/*` GGUF shards from `unsloth/MiniMax-M2-GGUF`.
+- Returns a `BaseVerifier` with `hf_path` and `gguf_path` already set to the cached locations.
+
+Mix-and-match:
+
+```python
+# Hub for the small files, local GGUF (e.g. you pre-staged it on a cluster)
+load_verifier("minimax-m2.7-iq4-xs", hf_repo="MiniMaxAI/MiniMax-M2",
+              gguf_path="./models/iq4/shard-00001.gguf")
+
+# Local for both (no network access)
+load_verifier("minimax-m2.7-iq4-xs",
+              hf_path="./hf-cache/MiniMax-M2",
+              gguf_path="./models/iq4/shard-00001.gguf")
+```
+
+A `verifier_meta` stub is **not required** if you give the trainer either `hf_repo` or `hf_path` — speculators reads only `lm_head.weight`, `model.embed_tokens.weight`, and `model.norm.weight`, all of which are in the HF safetensors index for the public weights. (See [§stub recipe](#optional-stub-verifier_meta-when-you-cant-download-weights) at the bottom for the air-gapped fallback.)
 
 ---
 
@@ -119,69 +105,82 @@ json.dump(
 
 You need an HF Dataset on disk with at least an `input_ids` column (Sequence of int). Optionally include `loss_mask` (Sequence of bool).
 
-```python
-# scripts/build_prompts_arrow.py
+```bash
+python3 - <<'PY'
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer
 
-tok = AutoTokenizer.from_pretrained("/path/to/MiniMax-M2.7-FP8")
+tok = AutoTokenizer.from_pretrained("MiniMaxAI/MiniMax-M2", trust_remote_code=True)
 src = load_dataset("allenai/tulu-3-sft-mixture", split="train")
 
 rows = []
-for example in src.select(range(800_000)):                 # take ~800K prompts
+for example in src.select(range(800_000)):
     msgs = example["messages"]
     ids = tok.apply_chat_template(msgs, tokenize=True, add_generation_prompt=False)
     if 16 < len(ids) < 2048:
         rows.append({"input_ids": ids})
 
-Dataset.from_list(rows).save_to_disk("~/prompts_tulu3")
+Dataset.from_list(rows).save_to_disk("data/prompts_tulu3")
+print(f"wrote {len(rows)} prompts to data/prompts_tulu3")
+PY
 ```
 
-Save to `~/prompts_tulu3/`. Workers will index into it by row number (e.g. `--rows 576034:626034`).
+Output: `data/prompts_tulu3/`. Workers index into this by row number.
 
 ---
 
 ## Step 5: install speculators
 
-```bash
-cd ~
-git clone https://github.com/neuralmagic/speculators
-cd speculators
-git checkout 67bafe6                                # or latest with the patches
-pip install -e .
-
-# apply the 4 NaN-handling patches if you have them (optional — only matters
-# for legacy fp8 traces; the v3 self-describing format never has NaN)
-for p in ~/dflash-llama/patches/speculators/*.patch; do git apply "$p"; done
-```
-
-After this, `~/speculators/scripts/train.py` exists. The library finds it via the `SPECULATORS_TRAIN_SCRIPT` env var (or the default `~/repos/speculators/scripts/train.py`):
+The DFlash training step shells out to the [speculators](https://github.com/neuralmagic/speculators) trainer.
 
 ```bash
-export SPECULATORS_TRAIN_SCRIPT=$HOME/speculators/scripts/train.py
+pip install speculators                              # if a release covers your needs
+# OR pinned to a known-good commit:
+pip install git+https://github.com/neuralmagic/speculators.git@67bafe6
+
+# Optionally apply the four NaN-handling patches (only matters for legacy
+# fp8 traces — the v3 self-describing format never has NaN):
+SPECULATORS_DIR=$(python3 -c "import speculators, pathlib; print(pathlib.Path(speculators.__file__).parent.parent)")
+for p in patches/speculators/*.patch; do
+    git -C "$SPECULATORS_DIR" apply "$p" || echo "  (skipped, already applied)"
+done
 ```
+
+After this, set the env var pointing at speculators' `train.py` (the DFlashTrainer reads this; there's no hard-coded path):
+
+```bash
+export SPECULATORS_TRAIN_SCRIPT=$(python3 -c "
+import speculators, pathlib
+p = pathlib.Path(speculators.__file__).parent.parent / 'scripts' / 'train.py'
+print(p)
+")
+```
+
+> If you cloned speculators manually, set `SPECULATORS_TRAIN_SCRIPT` to whatever the path is on your system. The library uses this env var as the only way to find the trainer entry point — no more brittle defaults.
 
 ---
 
 ## Step 6: generate traces (single host)
 
 ```bash
-mkdir -p ~/traces ~/state ~/logs
+mkdir -p data/traces data/state data/logs
+LLAMA_DUMP_BIN=$(bash scripts/build_llama_dump_hiddens.sh | tail -1)
 
-PYTHONPATH=$HOME/dflash-llama/src \
 python3 -m dflash_llama.cli generate \
     --verifier minimax-m2.7-iq4-xs \
-    --gguf-path /path/to/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf \
-    --prompts $HOME/prompts_tulu3 \
+    --hf-repo MiniMaxAI/MiniMax-M2 \
+    --gguf-repo unsloth/MiniMax-M2-GGUF \
+    --gguf-quant UD-IQ4_XS \
+    --binary "$LLAMA_DUMP_BIN" \
+    --prompts data/prompts_tulu3 \
     --rows 0:6500 \
-    --out $HOME/traces \
-    --state $HOME/state/gen_state.json \
-    --binary $HOME/buun-llama-cpp/build/bin/llama-dump-hiddens \
+    --out data/traces \
+    --state data/state/gen_state.json \
     --max-seq-len 2048 \
-    2>&1 | tee $HOME/logs/gen.log
+    2>&1 | tee data/logs/gen.log
 ```
 
-You should see `[gen] completed=10 skipped=0 failed=0` lines streaming. ~2-3 seconds per trace on a single GB10. **Resumable** — re-running skips existing files.
+You should see `[gen] completed=10 skipped=0 failed=0` lines streaming. ~2-3 seconds per trace on a single GB10. Resumable — re-running skips existing files.
 
 The Python API equivalent (used internally by the CLI):
 
@@ -190,22 +189,24 @@ from dflash_llama import TraceGenerator, load_verifier
 
 verifier = load_verifier(
     "minimax-m2.7-iq4-xs",
-    gguf_path="/path/to/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf",
+    hf_repo="MiniMaxAI/MiniMax-M2",
+    gguf_repo="unsloth/MiniMax-M2-GGUF",
+    gguf_quant="UD-IQ4_XS",
 )
 gen = TraceGenerator(
     verifier=verifier,
     storage="fp8_per_tensor_scale",
     backend="llamacpp_gguf",
     backend_kwargs={
-        "binary": "/path/to/llama-dump-hiddens",
+        "binary": "build/llama.cpp-dflash/build/bin/llama-dump-hiddens",
         "timeout": 600,
     },
 )
 gen.generate(
-    prompts="~/prompts_tulu3",
-    output_dir="~/traces",
+    prompts="data/prompts_tulu3",
+    output_dir="data/traces",
     rows=range(0, 6500),
-    state_path="~/state/gen_state.json",
+    state_path="data/state/gen_state.json",
 )
 ```
 
@@ -217,85 +218,86 @@ For N hosts, partition the row range into disjoint shards. Each host runs a work
 
 Example for 4 hosts, 200K total prompts:
 
-| host    | shard | rows                | tmux session         | state file               |
-|---------|-------|---------------------|----------------------|--------------------------|
-| spark-1 | D     | `0:50000`           | `dflash_v3_api_D`    | `state_worker_D.json`    |
-| spark-2 | B     | `50000:100000`      | `dflash_v3_api_B`    | `state_worker_B.json`    |
-| spark-3 | A     | `100000:150000`     | `dflash_v3_api_A`    | `state_worker_A.json`    |
-| spark-4 | C     | `150000:200000`     | `dflash_v3_api_C`    | `state_worker_C.json`    |
+| host    | shard | rows                | tmux session         |
+|---------|-------|---------------------|----------------------|
+| spark-1 | D     | `0:50000`           | `dflash_v3_api_D`    |
+| spark-2 | B     | `50000:100000`      | `dflash_v3_api_B`    |
+| spark-3 | A     | `100000:150000`     | `dflash_v3_api_A`    |
+| spark-4 | C     | `150000:200000`     | `dflash_v3_api_C`    |
 
 The library API worker `scripts/worker_api_v3.py` (in this repo) wraps `TraceGenerator.generate()` with arg parsing. Launch in tmux:
 
 ```bash
 HOST=spark-1; SHARD=D; LO=0; HI=50000
 
-ssh $HOST "tmux new-session -d -s dflash_v3_api_${SHARD} '
-    PYTHONPATH=$HOME/dflash-llama/src \
-    python3 $HOME/dflash-llama/scripts/worker_api_v3.py \
-        --shard-id $SHARD \
+ssh "$HOST" bash -lc "tmux new-session -d -s dflash_v3_api_${SHARD} '
+    cd ~/dflash-llama && source .venv/bin/activate && \
+    python3 scripts/worker_api_v3.py \
+        --shard-id ${SHARD} \
         --rows ${LO}:${HI} \
-        --out $HOME/traces \
-        --state $HOME/state/state_worker_${SHARD}.json \
-        --prompts $HOME/prompts_tulu3 \
-        --gguf-path /path/to/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf \
-        --binary $HOME/buun-llama-cpp/build/bin/llama-dump-hiddens \
-        2>&1 | tee $HOME/logs/api_worker_${SHARD}_\$(date +%Y%m%d_%H%M%S).log;
-    sleep 600
+        --out data/traces \
+        --state data/state/state_worker_${SHARD}.json \
+        --prompts data/prompts_tulu3 \
+        --verifier-name minimax-m2.7-iq4-xs \
+        --hf-repo MiniMaxAI/MiniMax-M2 \
+        --gguf-repo unsloth/MiniMax-M2-GGUF \
+        --gguf-quant UD-IQ4_XS \
+        --binary build/llama.cpp-dflash/build/bin/llama-dump-hiddens \
+        2>&1 | tee data/logs/api_worker_${SHARD}_\$(date +%Y%m%d_%H%M%S).log
 '"
 ```
 
-Every trace file is named `hs_<global_row_idx>.safetensors`. Because shards are disjoint, you can safely rsync all hosts' `~/traces/` directories into one place without collision:
+Every trace file is named `hs_<global_row_idx>.safetensors`. Because shards are disjoint, all hosts' `data/traces/` directories rsync into one place without collision:
 
 ```bash
-mkdir -p ~/traces_consolidated
+mkdir -p data/traces_consolidated
 for h in spark-1 spark-2 spark-3 spark-4; do
-    rsync -a $h:~/traces/ ~/traces_consolidated/
+    rsync -a "$h:dflash-llama/data/traces/" data/traces_consolidated/
 done
 ```
 
-> **Use QSFP IPs for inter-host transfers.** WiFi hostnames are ~10 MB/s; QSFP fabric is ~322 MB/s.
+> **Use QSFP IPs for inter-host transfers.** WiFi hostnames are ~10 MB/s; QSFP fabric is ~322 MB/s. Map your host alias to the QSFP IP in `~/.ssh/config`.
 
 ---
 
 ## Step 8: train
 
 ```bash
-export SPECULATORS_TRAIN_SCRIPT=$HOME/speculators/scripts/train.py
+export SPECULATORS_TRAIN_SCRIPT=$(python3 -c "
+import speculators, pathlib
+print(pathlib.Path(speculators.__file__).parent.parent / 'scripts' / 'train.py')
+")
 
-PYTHONPATH=$HOME/dflash-llama/src \
 python3 - <<'PY'
 from dflash_llama import DFlashTrainer, load_verifier
 
 verifier = load_verifier(
     "minimax-m2.7-iq4-xs",
-    hf_path="/root/verifier_meta",         # the stub from step 3
+    hf_repo="MiniMaxAI/MiniMax-M2",          # <-- no path needed
 )
 
 trainer = DFlashTrainer(
-    traces_dir="~/traces_consolidated",
+    traces_dir="data/traces_consolidated",
     verifier=verifier,
-    paired_dir="~/paired",
+    paired_dir="data/paired",
     num_layers=5,
     draft_vocab_size=32768,
 )
 
-# Step A — build the paired-arrow + vocab maps + hidden_states symlink farm
 prep_report = trainer.prepare(force=True)
 print("prepare:", prep_report)
 
-# Step B — 90s smoke (rc=124 from `timeout` is the expected success exit)
 smoke = trainer.smoke(
     timeout_sec=90,
-    save_path="~/smoke_ckpt",
-    log_path="~/smoke.log",
+    save_path="data/smoke_ckpt",
+    log_path="data/smoke.log",
     port=29503,
 )
-assert smoke.ok, f"smoke failed: {smoke}"
-print("smoke OK; first_loss=", smoke.first_loss, "last_loss=", smoke.last_loss)
+print(f"smoke ok={smoke.ok}  first_loss={smoke.first_loss}  last_loss={smoke.last_loss}")
+assert smoke.ok, "smoke failed — see data/smoke.log"
 
-# Step C — real training (epochs=17 is the canonical recipe)
 result = trainer.train(
-    save_to="~/ckpt",
+    save_to="data/ckpt",
     epochs=17,
     lr=3e-5,
     max_anchors=512,
@@ -306,17 +308,16 @@ result = trainer.train(
     port=29504,
 )
 assert result["rc"] == 0
-print("train rc=0; saved to ~/ckpt")
+print(f"train rc=0  log={result['log_path']}  save={result['save_path']}")
 
-# Step D — optional offline eval
-trainer.offline_eval(checkpoint="~/ckpt/checkpoint_best", max_batches=60)
+trainer.offline_eval(checkpoint="data/ckpt/0", max_batches=60)
 PY
 ```
 
-Expected runtime on a single GB10 with ~5K traces: smoke=90s, train ~3 hours for 17 epochs at `--num-workers 1`. Output checkpoint:
+Expected runtime on a single GB10 with ~5K traces: smoke=90s, train ~3 hours for 17 epochs at `--num-workers 1`. Output:
 
 ```
-~/ckpt/
+data/ckpt/
 ├── 0/                       # best checkpoint
 │   ├── model.safetensors    # ~2.1 GB DFlash drafter
 │   ├── config.json
@@ -333,14 +334,12 @@ Round-trip a freshly produced trace through the library to confirm zero NaN:
 ```python
 from dflash_llama import load_trace
 import torch
-t = load_trace("~/traces/hs_0.safetensors")
+t = load_trace("data/traces/hs_0.safetensors")
 print("shape  :", t["hidden_states"].shape)            # (seq_len, n_layers, hidden_size)
 print("dtype  :", t["hidden_states"].dtype)            # torch.bfloat16 (decoded from fp8)
 print("any NaN:", torch.isnan(t["hidden_states"]).any().item())   # False
 print("abs_max:", t["hidden_states"].abs().max().item())          # may be > 448 — that's fine
 ```
-
-If `any NaN` is `False` and `abs_max` is reasonable (typical: 500-3000 for MiniMax-M2.7), you're done.
 
 ---
 
@@ -348,18 +347,39 @@ If `any NaN` is `False` and `abs_max` is reasonable (typical: 500-3000 for MiniM
 
 | symptom | cause | fix |
 |---|---|---|
-| `FileNotFoundError: 'torchrun'` | venv not on PATH | The library auto-resolves torchrun next to `sys.executable`; if you still hit this, ensure `python3 -c "import torch.distributed.run"` works in your venv. |
-| `Column 'seq_len' doesn't exist` | old paired arrow without `seq_len` | Re-run `trainer.prepare(force=True)` — current library writes `seq_len`. |
-| `torch.equal(): must be Tensor, not list` | paired arrow saved without `set_format("torch")` | Re-run `trainer.prepare(force=True)` — current library sets the format. |
-| `Expected local file missing: model-00000-of-00130.safetensors` | speculators trying to read full sharded weights | Build the `verifier_meta` stub (Step 3); pass that path as `hf_path=` to `load_verifier`. |
-| smoke `rc != 124` and no loss lines | training crashed before first log | Check `~/smoke.log` for the actual rank0 traceback. |
-| `[gen] row N failed: timed out after 600s` | one prompt too long or model fell back to CPU | normal at the < 1% level; raise `--per-trace-timeout` if persistent. |
+| `FileNotFoundError: 'torchrun'` | venv not on PATH | Library auto-resolves torchrun next to `sys.executable`; if you still hit this, ensure `python3 -c "import torch.distributed.run"` works in your venv. |
+| `Column 'seq_len' doesn't exist` | old paired arrow | Re-run `trainer.prepare(force=True)`. |
+| `torch.equal(): must be Tensor, not list` | paired arrow saved without torch format | Re-run `trainer.prepare(force=True)`. |
+| `Expected local file missing: model-00000-of-00130.safetensors` | speculators trying to read full sharded weights | The library ships HF-only configs — make sure you're passing `hf_repo` or a path to a directory containing `model.safetensors.index.json` whose weight_map references only the bridge tensors (or the full safetensors shards if disk allows). |
+| smoke `rc != 124` and no loss lines | training crashed before first log | Check `data/smoke.log` for the actual rank0 traceback. |
+| `[gen] row N failed: timed out after 600s` | one prompt too long or model fell back to CPU | Normal at the < 1% level; raise `--per-trace-timeout` if persistent. |
+
+---
+
+## Optional: stub `verifier_meta` (when you can't download weights)
+
+If you're on an air-gapped cluster and can't pull the safetensors shards, you can extract the 3 tensors speculators actually reads (`lm_head.weight`, `model.embed_tokens.weight`, `model.norm.weight`) from a GGUF you already have:
+
+```bash
+python3 scripts/build_verifier_meta_stub.py \
+    --gguf data/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00002-of-00004.gguf \
+    --out  data/verifier_meta/model.safetensors \
+    --also-write-index
+```
+
+Then point the verifier at the local stub:
+
+```python
+v = load_verifier("minimax-m2.7-iq4-xs", hf_path="data/verifier_meta", gguf_path=".../shard-00001.gguf")
+```
+
+The stub is ~2.4 GB for MiniMax-M2.7. Cluster shortcut: build once on one host, `rsync -a` over QSFP (~8s at 322 MB/s).
 
 ---
 
 ## What you have at the end
 
-- `~/traces/` — `hs_<i>.safetensors` files, self-describing fp8 (zero NaN by construction)
-- `~/paired/prompts/` — HF Dataset (input_ids, loss_mask, seq_len, source_name, source_row_idx) + `t2d.npy`, `d2t.npy`, `token_freq.pt`
-- `~/paired/hidden_states/` — symlink farm `hs_0.safetensors` → real trace, aligned with arrow row order
-- `~/ckpt/0/model.safetensors` — trained DFlash drafter, ready for `~/dflash_minimax/repos/speculators/scripts/eval_offline.py` or vLLM speculative decoding (with the `dflash` speculator type).
+- `data/traces/` — `hs_<i>.safetensors` files, self-describing fp8 (zero NaN by construction)
+- `data/paired/prompts/` — HF Dataset (input_ids, loss_mask, seq_len, source_name, source_row_idx) + `t2d.npy`, `d2t.npy`, `token_freq.pt`
+- `data/paired/hidden_states/` — symlink farm aligned with arrow row order
+- `data/ckpt/0/model.safetensors` — trained DFlash drafter, ready for vLLM speculative decoding (with the `dflash` speculator type)
