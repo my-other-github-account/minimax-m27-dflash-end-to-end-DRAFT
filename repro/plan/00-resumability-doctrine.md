@@ -1,5 +1,8 @@
 # Resumability is a hard requirement (project doctrine)
 
+> **🚨 OPERATIONAL HARD RULE (PROJECT-WIDE): NEVER TOUCH SPARK-5.**
+> spark-5 is jumphost-only for spark-1 SSH (since spark-1's Tailscale has been offline 22d+). Do NOT evict processes on, run workloads on, or modify state on spark-5 under any circumstance. This rule is older and more important than every other rule in this document. Any work that would land there must instead go to spark-2/3/4/6 or be queued for later.
+
 > Effective immediately. Applies to every long-running pipeline, batch job, training run, trace generation, conversion, sync, and cron loop in this project.
 
 ## The rule
