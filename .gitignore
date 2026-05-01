@@ -4,3 +4,10 @@
 __pycache__/
 .DS_Store
 *.log
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
