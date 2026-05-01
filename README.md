@@ -4,6 +4,16 @@ Self-describing fp8 trace generation and DFlash drafter training for llama-famil
 
 This library replaces a fragile shell-script pipeline with a clean Python API. It is the canonical way to train DFlash speculative-decoding drafters in this repo.
 
+> **🚀 First time on a Spark? Start here:** [`repro/00-spark-from-scratch.md`](repro/00-spark-from-scratch.md) — full bringup from a bare machine, including the `llama-dump-hiddens` build, the `verifier_meta` stub, the prompts arrow, the speculators install, and the multi-host shard plan. Tested end-to-end on a 4× DGX Spark cluster.
+
+Three other walkthroughs:
+
+| topic | doc |
+|---|---|
+| Generate traces (single host or multi-host) | [`repro/01-generation.md`](repro/01-generation.md) |
+| Train a DFlash drafter | [`repro/02-training.md`](repro/02-training.md) |
+| Run inference with the trained drafter | [`repro/03-inference.md`](repro/03-inference.md) |
+
 ## What you get
 
 - **Self-describing fp8 traces** — every `hs_<i>.safetensors` carries `hidden_states` (saturating fp8 + per-tensor scale, **never NaN**), `token_ids`, `input_ids`, `loss_mask`, plus full provenance metadata (`schema_version`, `source_name`, `source_row_idx`, `gen_timestamp`, `layer_ids`). No more post-hoc sha256 pairing.
