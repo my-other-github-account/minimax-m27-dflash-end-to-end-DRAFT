@@ -1,127 +1,27 @@
-# MiniMax-M2.7 DFlash Speculative Decoding — End-to-End (DRAFT)
+# dflash-llama
 
-> **🚨 OPERATIONAL HARD RULE: NEVER TOUCH SPARK-5.**
-> spark-5 is jumphost-only for SSH proxy to spark-1. Do not run workloads on it, do not evict processes on it, do not modify state on it. See `repro/plan/00-NEVER-touch-spark-5.md` for the full rule.
+Self-describing fp8 trace generation and DFlash drafter training for llama-family verifiers (MiniMax-M2, Kimi-K2.5, Qwen3, …).
 
-> # ⚠️ THIS REPO IS A DRAFT — NOT WORKING END-TO-END YET
->
-> The Generation section produced a real, validated trace pool that trained a working drafter on the original cluster, but the *reproduction recipe documented here has not been re-walked from scratch on a clean machine*. The Training and Inference sections are stubs reflecting last-known-good config rather than fully harvested evidence.
->
-> Treat this as a **work-in-progress reference**, not a paste-and-run pipeline. Specifically:
-> - Generation: scripts and recipe are real, but cluster-specific assumptions still live in the placeholders (see §1's "Placeholder key")
-> - Training: **fully fleshed out as of this commit.** End-to-end recipe from a fresh Spark through paired-dataset rebuild → vocab-map generation → 90-second smoke verification → production launcher under systemd-run → offline-validation pass criteria. Includes pool-completeness audit, common failure modes table, and reference chained-accuracy progression from a real production run. Lead metric throughout is **chain-cumulative per-position accuracy (∏ p_i)**, not per-position teacher-forced conditional, because runtime is chain-gated.
-> - Inference: build path documented but the smoke-test harness and the chain-gated diff script are still on the original machine
->
-> Tracking issue / TODOs are in the per-section "What this section needs" callouts.
+## Quickstart (3 lines)
 
----
-
-End-to-end reproduction of DFlash speculative decoding for the MiniMax-M2.7 family on GB10-class hardware, organized into **three independently-runnable sections**:
-
-1. **[Generation](repro/01-generation.md)** — produce a clean FP8 hidden-state trace pool using vLLM TP=4 across 4 GB10 nodes. Output: `~6,500 hs_<N>.safetensors` files of shape `[seq_len, 6, 3072]` in `bfloat16`. Includes the validator daemon, the prompt-source rotation, the wedge-recovery procedure, and the empirical sanity-check evidence that the produced pool's distribution matches the validated reference. **This section is the most fleshed out.**
-
-2. **[Training](repro/02-training.md)** — train a 5-layer DFlash drafter from the trace pool using `speculators.train`. Output: a PyTorch checkpoint convertible to GGUF. **Now fully fleshed out:** paired-dataset rebuild from a heterogeneous pool, canonical vocab-map generation (with the dtype/format gotchas), pool-completeness audit, 90-second smoke verification, production launcher under systemd-run user-scope, offline-validation harness with pass criteria, common failure modes table, and reference chained-accuracy progression from a real run.
-
-3. **[Inference](repro/03-inference.md)** — run DFlash speculative decoding with `llama-server` / `llama-cli` using PR #22105 + the 4 patches in this repo. Includes the metric-framing finding that resolved the "47× apparent gap" (chain-cumulative vs per-position-conditional). *Stub — last-known-good build path, pending evidence harvest.*
-
----
-
-## What this repo contains
-
-### Section bundle (`repro/`)
-
-```
-repro/
-├── 01-generation.md                # Section 1 — fully fleshed out
-├── 02-training.md                  # Section 2 — fully fleshed out (this commit)
-├── 03-inference.md                 # Section 3 — stub
-├── scripts/
-│   ├── generation/
-│   │   ├── vllm_tp4_5L_FP8_CLEAN.sh        # 4-rank vLLM TP=4 launcher (current production)
-│   │   ├── validator_daemon_5L.py          # R62 zero-rate gate + R64 extended validation
-│   │   ├── data_generation_offline_ledgered.py
-│   │   └── multi_dataset_prompt_loader.py  # prompt-source rotation
-│   └── training/
-│       ├── audit_pool_completeness.py      # peer-staging vs pool sha256(token_ids) audit
-│       ├── build_paired_dataset.py         # re-pair heterogeneous pool by content hash
-│       ├── build_vocab_maps.py             # canonical d2t/t2d/token_freq generator
-│       ├── smoke_train.sh                  # 90s smoke verification (auto pass-criteria check)
-│       ├── launch_full.sh                  # production training launcher (systemd-run friendly)
-│       └── dflash_offline_eval.py          # offline-validation harness (reproduce val_metrics)
-├── references/
-│   ├── dflash-drafter-offline-validation.md  # full chain-gated metric framing + diagnostic playbook
-│   ├── sighup-gotcha.md                       # why long-running remote work goes under systemd-run
-│   └── pool-completeness-debugging.md         # what to do if the pool ⊆ peer-staging audit fails
-└── legacy/                         # prior-era artifacts (preserved for historical record)
-    ├── REPRODUCE-tp2-nvfp4-nan-bug.md      # the original 2-spark TP=2 NVFP4 NaN-bug investigation
-    ├── 5LAYER_PLAN-tp2-nvfp4.md
-    ├── vllm_tp2_clean.sh           # earlier TP=2 launcher (NVFP4 era)
-    ├── vllm_tp2_5L.sh
-    ├── data_gen.sh / datagen_5L_loop.sh / datagen_skip_existing_wrapper.py
-    ├── validator_daemon.py         # earlier validator without R62 gate
-    ├── deep_audit.py
-    ├── prep_for_pr22105_converter.py       # speculators-ckpt → GGUF-converter input
-    └── start_dflash_server.sh
+```bash
+pip install -e .
+dflash-llama generate --verifier minimax-m2.7-iq4-xs --gguf-path /path/to/UD-IQ4_XS --prompts /path/to/prompts_arrow --rows 0:1000 --out ./traces
+dflash-llama train --traces ./traces --verifier minimax-m2.7-iq4-xs --output ./checkpoint
 ```
 
-### Patch bundle (`patches/`)
+See `repro/01-generation.md` and `repro/02-training.md` for end-to-end walkthroughs.
 
-The patches in `patches/vllm/` and `patches/speculators/` originated from the earlier 2-spark TP=2 NVFP4 NaN-bug investigation. **The vLLM patches were eventually reverted** in the current production recipe — see [Section 1 §1.4](repro/01-generation.md#14-the-we-flailed-for-days-lesson--read-first). They remain in the repo because:
-- The speculators patches (R27/R28/R29/R30/R31/R32) are still load-bearing for trainer dtype/NaN issues
-- The vLLM patches are kept as historical record (and may be useful for diagnosing similar bugs on different model + quantization combinations)
+## What this library is for
 
-```
-patches/
-├── vllm/                                    # all REVERTED in current production — kept for history
-│   ├── 01-interfaces-aux-overflow-fix.patch
-│   ├── 02-extract-hidden-states-buffer-zero.patch
-│   └── r34_upcast_hs.py
-├── speculators/                             # still required for training
-│   ├── 01-eagle3-core-dtype-fixes.patch
-│   ├── 02-train-script-dtype-cast.patch
-│   ├── 03-data-empty-sample-dtypes.patch
-│   └── 04-trainer-nan-guard-and-midepoch-ckpt.patch
-└── llama.cpp/                               # required for inference (Section 3)
-    ├── 01-minimax-m2-cb-hooks.patch
-    ├── 02-variable-length-target-layer-ids.patch
-    ├── 03-converter-drop-drafter-only-tensors.patch
-    └── 04-dflash-begin-reset-state.patch
-```
+- **Generate self-describing fp8 traces** — every safetensor file contains hidden states (saturating fp8 + per-tensor scale, never NaN), token_ids, input_ids, loss_mask, plus full provenance metadata (source name, source row index, generation timestamp, schema version). No more post-hoc sha256 pairing.
+- **Train DFlash drafters end-to-end** — wraps the [speculators](https://github.com/neuralmagic/speculators) trainer, but does the prep (prompts arrow assembly, vocab maps) inside the library instead of in a fragile shell-script chain.
+- **Model-family abstractions** — `BaseVerifier` configs encode `hidden_size`, `vocab_size`, `mask_token_id`, layer taps, etc. Picking a new family means adding one ~30-line config file.
 
-`all-vllm.patch` and `all-speculators.patch` are concatenated convenience bundles — also primarily of historical interest now.
+## Design contract
 
----
+- Saturating fp8 cast is the **only** supported fp8 path. Direct `bf16 → fp8_e4m3fn` casts produce NaN for any value > ±448 — this library never emits NaN.
+- Self-describing trace files mean pairing-by-hash is gone. The trainer reads metadata directly off the safetensor.
+- The training shell-out goes through `torchrun … speculators/scripts/train.py` and is intentionally pragmatic — when the speculators in-process API stabilises we will swap to a programmatic invocation.
 
-## Tested environment
-
-### Generation (Section 1) — current production
-
-| Component | Value |
-|---|---|
-| Hardware | 4 × DGX Spark GB10, QSFP 200 Gbps interconnect, MTU 9000 |
-| CUDA | 13.x (Blackwell SM 12.1a) |
-| vLLM | `0.20.1rc1.dev23+gde3da0b97` (nightly main, late April 2026) — **vanilla, no patches** |
-| Speculators | main @ `67bafe6` ("Dflash verifier targets" PR #477) |
-| Verifier | `MiniMax-M2.7-FP8` (62 layers, 200 064 vocab, FP8 quant, 3072 hidden) |
-| Topology | TP=4 across 4 nodes, no Ray, plain TCP NCCL over QSFP |
-| Output pool | 6515 files / 127 GB at the time of the §1 evidence snapshot |
-
-### Training & Inference (Sections 2 & 3) — last-known-good
-
-| Component | Value |
-|---|---|
-| Speculators training | same speculators commit, applies patches in `patches/speculators/` |
-| Inference base | PR #22105 tip @ `67cb0d507` (`ruixiang63/llama.cpp@dflash`) |
-| Inference fork | `my-other-github-account/llama.cpp@dflash-minimax-m2` @ `2c32f36fc` |
-| Inference target | `MiniMax-M2.7-GGUF/UD-IQ4_XS` (4 shards) |
-| Drafter GGUF | `MiniMax-M2.7-DFlash.gguf` (3.14 GB, MD5 `785c5b5a6bcf8eecb545a1bebb75eb4e`) |
-
----
-
-## History
-
-This repository started as a patch bundle for two compounding bugs in vLLM that produced silent NaN-poisoning at deep layers (60+) of MiniMax-M2.7 in NVFP4 quantization, plus 4 patches against PR #22105 to enable DFlash inference for MiniMax-M2 family targets. Both ends still work.
-
-In the months since, the trace-generation pipeline migrated from TP=2 / NVFP4 / 4-layer to **TP=4 / FP8 / 6-layer**, and the multi-day patch saga in `vllm/...interfaces.py` and `extract_hidden_states.py` was eventually unwound — the bf16-overflow problem turned out to be better handled by quarantining bad files at the validator (`R62 zero-rate gate`) than by trying to patch the extraction. Files generated by the naive zero-fallback (R33) trained the drafter to ignore deep layers, which then catastrophically failed at inference. The current production recipe (Section 1) is the one that actually trained the working drafter.
-
-The earlier-era artifacts are preserved under `repro/legacy/` for historical record. The current recipe is in `repro/01-generation.md` + `repro/scripts/generation/`.
+See `src/dflash_llama/` for the package source and `tests/` for full coverage.
