@@ -23,6 +23,31 @@ def list_verifiers() -> list[str]:
     return sorted(_REGISTRY.keys())
 
 
+def register_verifier(name: str, factory) -> None:
+    """Register a custom verifier factory under ``name``.
+
+    The factory is any callable matching the signature of the built-in
+    factories (e.g. ``minimax_m27``): it takes ``hf_path``, ``gguf_path``,
+    and arbitrary kwargs, and returns a ``BaseVerifier`` instance.
+
+    Use this from a downstream package or notebook to register a new
+    verifier without modifying the library:
+
+        from dflash_llama import register_verifier, BaseVerifier
+
+        def my_model_8b(*, hf_path=None, gguf_path=None, **kw):
+            return BaseVerifier(
+                name="my-model-8b",
+                hidden_size=4096, num_hidden_layers=32,
+                vocab_size=131072, mask_token_id=131071,
+                layer_ids=[2, 8, 16, 24, 30, 31],
+                hf_path=hf_path, gguf_path=gguf_path, **kw,
+            )
+        register_verifier("my-model-8b", my_model_8b)
+    """
+    _REGISTRY[name.lower()] = factory
+
+
 def load_verifier(
     name: Optional[str] = None,
     *,
@@ -54,6 +79,7 @@ __all__ = [
     "BaseVerifier",
     "load_verifier",
     "list_verifiers",
+    "register_verifier",
     "autodetect_verifier",
     "minimax_m27",
     "minimax_m27_iq4_xs",

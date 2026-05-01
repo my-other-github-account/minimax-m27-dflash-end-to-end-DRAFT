@@ -87,3 +87,50 @@ def test_to_dict_serialisable():
     d = v.to_dict()
     assert d["hidden_size"] == 3072
     assert isinstance(d["layer_ids"], list)
+
+
+def test_register_verifier_roundtrip():
+    """register_verifier adds a custom factory that load_verifier can find."""
+    from dflash_llama import (
+        BaseVerifier,
+        list_verifiers,
+        load_verifier,
+        register_verifier,
+    )
+
+    name = "test-rt-verifier-9b"
+
+    def factory(*, hf_path=None, gguf_path=None, **kw):
+        return BaseVerifier(
+            name=name,
+            hidden_size=4096,
+            num_hidden_layers=32,
+            vocab_size=131072,
+            mask_token_id=131071,
+            layer_ids=[2, 8, 16, 24, 30, 31],
+            hf_path=hf_path,
+            gguf_path=gguf_path,
+            **kw,
+        )
+
+    register_verifier(name, factory)
+    assert name in list_verifiers()
+    v = load_verifier(name)
+    assert v.name == name
+    assert v.hidden_size == 4096
+
+
+def test_top_level_public_api_exports():
+    """All advertised public names import from the dflash_llama root."""
+    import dflash_llama
+
+    expected = {
+        "TraceGenerator", "DFlashTrainer", "SelfDescribingTraceDataset",
+        "load_verifier", "list_verifiers", "register_verifier", "BaseVerifier",
+        "save_trace", "load_trace", "saturating_fp8_cast",
+        "assemble_prompts_arrow", "build_vocab_maps",
+        "__version__", "SCHEMA_VERSION",
+    }
+    for n in expected:
+        assert hasattr(dflash_llama, n), f"missing top-level export: {n}"
+        assert n in dflash_llama.__all__, f"{n} not in __all__"
