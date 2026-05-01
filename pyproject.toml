@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dflash-llama"
+version = "0.1.0"
+description = "Self-describing fp8 trace generation and DFlash drafter training for llama-family verifiers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{name = "DFlash Team"}]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "torch>=2.1",
+    "numpy>=1.24",
+    "datasets>=2.14",
+    "safetensors>=0.4",
+    "pyarrow>=14",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-cov",
+]
+speculators = [
+    # Optional. The training shell-out talks to a system-installed speculators
+    # checkout via torchrun; importing speculators in-process is best-effort.
+    "speculators",
+]
+
+[project.scripts]
+dflash-llama = "dflash_llama.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dflash_llama*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
