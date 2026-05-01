@@ -57,6 +57,20 @@ class SmokeResult:
         }
 
 
+
+def _resolve_torchrun_smoke() -> str:
+    """Locate torchrun next to sys.executable, then PATH, then bare name."""
+    import shutil
+    import sys
+    cand = Path(sys.executable).parent / "torchrun"
+    if cand.exists():
+        return str(cand)
+    found = shutil.which("torchrun")
+    if found:
+        return found
+    return "torchrun"
+
+
 def run_smoke_test(
     *,
     paired_dir: str,
@@ -84,7 +98,7 @@ def run_smoke_test(
 
     target_layer_ids = verifier.trainer_target_layer_ids()
     cmd = [
-        "torchrun",
+        _resolve_torchrun_smoke(),
         f"--master_port={port}",
         "--nproc-per-node=1",
         train_script,
