@@ -13,7 +13,11 @@ Forward-looking notes: doctrine, current state, what's plateaued, what to try ne
 
 - **`2026-04-30-full-plateau-and-iq4-pivot.md`** — diagnosis of the FULL training plateau at p_1 ≈ 22.9% (final epoch 13/17) vs production's 28.88% on the same recipe, with the conclusion that data quality (not capacity, not config) is the bottleneck. Documents the IQ4-llama.cpp single-machine trace-gen pivot as a candidate replacement for the FP8 4-machine pipeline.
 - **`2026-04-30-iq4-worker-orchestration.md`** — orchestration recipe for parallel trace-gen workers across spark-2/3/4 (NEVER spark-5). Includes status check, stop, resume, add-new-worker, verify-non-overlapping, pool-for-training. Active range plan: workers A/B/C cover `[0, 6515)` with no overlap.
-- **`2026-04-30-iq4-gguf-only-end-to-end.md`** — full GGUF-only training pipeline working end-to-end on spark-1. Covers the bridge-tensor extraction from GGUF (Q8_0/Q6_K/F32 → bf16), the train/val split shuffle bug fix, results comparison vs FP8 SMOKE baseline (v2 epoch 4: p_1=13.0% > FP8 SMOKE 9.7%), and the spark-1 disk cleanup that ripped non-genomics data → spark-6 over QSFP. **Pipeline status: working.**
+- **`2026-04-30-iq4-gguf-only-end-to-end.md`** — full GGUF-only training pipeline working end-to-end on spark-1. Covers the bridge-tensor extraction from GGUF (Q8_0/Q6_K/F32 → bf16), the train/val split shuffle bug fix, results comparison vs FP8 SMOKE baseline (v2 epoch 4: p_1=13.0% > FP8 SMOKE 9.7%), and the spark-1 disk cleanup that ripped non-genomics data → spark-6 over QSFP. **Pipeline status: working.** This is the path documented in `repro/01-generation.md` (active) and `repro/02-training.md`.
+
+## Legacy
+
+- **`../legacy/01-generation-vllm-fp8-tp4.md`** — the previous active generation path (vLLM TP=4 / MiniMax-M2.7-FP8 / 4-node cluster). Preserved as the canonical record of the run that produced the original 6515-file FP8 trace pool used to train the FULL drafter (p_1=22.9% plateau). No longer recommended for new runs — see the file's banner for why.
 
 ## Conventions
 
