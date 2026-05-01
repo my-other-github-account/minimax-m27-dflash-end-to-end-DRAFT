@@ -1,6 +1,13 @@
 """dflash_llama — self-describing fp8 trace generation + DFlash drafter training."""
 from .version import __version__, SCHEMA_VERSION
-from .verifiers import load_verifier, list_verifiers, register_verifier, BaseVerifier
+from .verifiers import (
+    load_verifier,
+    list_verifiers,
+    register_verifier,
+    BaseVerifier,
+    generic_verifier,
+    auto_layer_ids,
+)
 from .hub import cache_root, resolve_hf_repo, resolve_gguf_repo
 from .generation import TraceGenerator
 from .generation.format import load_trace, save_trace, saturating_fp8_cast
@@ -17,6 +24,8 @@ __all__ = [
     "list_verifiers",
     "register_verifier",
     "BaseVerifier",
+    "generic_verifier",
+    "auto_layer_ids",
     # hub / model slug resolution
     "cache_root",
     "resolve_hf_repo",

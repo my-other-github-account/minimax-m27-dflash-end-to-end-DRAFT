@@ -29,7 +29,26 @@ def _parse_rows(spec: Optional[str]) -> Optional[range]:
     return range(0, int(spec))
 
 
+def _parse_layer_ids_arg(s: Optional[str]) -> Optional[list]:
+    """Parse '2,16,30,45,59,61' → [2,16,30,45,59,61]; pass through None."""
+    if s is None:
+        return None
+    return [int(x.strip()) for x in s.split(",") if x.strip()]
+
+
 def _build_verifier(args) -> "BaseVerifier":  # noqa: F821
+    overrides = {}
+    layer_ids = _parse_layer_ids_arg(getattr(args, "layer_ids", None))
+    if layer_ids is not None:
+        overrides["layer_ids"] = layer_ids
+    for k in (
+        "num_layer_taps", "hidden_size", "num_hidden_layers",
+        "vocab_size", "mask_token_id", "block_size",
+        "drafter_arch", "drafter_hidden_act", "family", "name_override",
+    ):
+        v = getattr(args, k, None)
+        if v is not None:
+            overrides[k] = v
     return load_verifier(
         args.verifier,
         gguf_path=getattr(args, "gguf_path", None),
@@ -38,6 +57,7 @@ def _build_verifier(args) -> "BaseVerifier":  # noqa: F821
         hf_repo=getattr(args, "hf_repo", None),
         gguf_quant=getattr(args, "gguf_quant", None),
         revision=getattr(args, "revision", None),
+        **overrides,
     )
 
 
@@ -168,13 +188,47 @@ def build_parser() -> argparse.ArgumentParser:
 
     # common verifier args
     def add_verifier_args(sp):
-        sp.add_argument("--verifier", required=True, help="verifier name (e.g. minimax-m2.7-iq4-xs). Use 'dflash-llama info' to list.")
+        sp.add_argument("--verifier", required=True,
+            help="verifier name (e.g. 'minimax-m2.7-iq4-xs', 'kimi-k2.5', 'qwen3-14b'). "
+                 "Use 'generic' to describe a custom model via shape kwargs. "
+                 "Run 'dflash-llama info' to list registered names.")
         sp.add_argument("--gguf-path", default=None, help="local path to a GGUF shard (mutually exclusive with --gguf-repo)")
         sp.add_argument("--hf-path", default=None, help="local path to an HF model directory (mutually exclusive with --hf-repo)")
         sp.add_argument("--gguf-repo", default=None, help="HF Hub slug for GGUF weights, e.g. 'unsloth/MiniMax-M2-GGUF'")
         sp.add_argument("--hf-repo", default=None, help="HF Hub slug for the model config + tokenizer, e.g. 'MiniMaxAI/MiniMax-M2'")
         sp.add_argument("--gguf-quant", default=None, help="quant subdir within --gguf-repo, e.g. 'UD-IQ4_XS'")
         sp.add_argument("--revision", default=None, help="optional Hub revision (branch, tag, or commit)")
+
+        # Verifier shape overrides — work for ANY --verifier value. Use these to
+        # adapt the library to a new model without writing a Python factory.
+        shape = sp.add_argument_group(
+            "verifier shape overrides",
+            "Override which layers DFlash taps and the verifier shape. "
+            "Required (combined) when --verifier=generic.")
+        shape.add_argument("--layer-ids", default=None,
+            help="comma-separated layer indices to tap, e.g. '2,16,30,45,59,61'. "
+                 "Overrides the factory default. Required for --verifier=generic.")
+        shape.add_argument("--num-layer-taps", type=int, default=None,
+            help="if --layer-ids is omitted, ask the library to spread N taps via auto_layer_ids "
+                 "(final residual is always included)")
+        shape.add_argument("--hidden-size", type=int, default=None,
+            help="override hidden_size (required for --verifier=generic)")
+        shape.add_argument("--num-hidden-layers", type=int, default=None,
+            help="override num_hidden_layers (required for --verifier=generic)")
+        shape.add_argument("--vocab-size", type=int, default=None,
+            help="override vocab_size (required for --verifier=generic)")
+        shape.add_argument("--mask-token-id", type=int, default=None,
+            help="override mask_token_id (required for --verifier=generic)")
+        shape.add_argument("--block-size", type=int, default=None,
+            help="DFlash block_size (default 8)")
+        shape.add_argument("--drafter-arch", default=None,
+            help="drafter architecture name (default 'qwen3')")
+        shape.add_argument("--drafter-hidden-act", default=None,
+            help="drafter hidden activation (default 'silu')")
+        shape.add_argument("--family", default=None,
+            help="family tag for the verifier (informational)")
+        shape.add_argument("--name-override", default=None,
+            help="override the verifier 'name' field (mostly relevant for --verifier=generic)")
 
     # generate
     sg = sub.add_parser("generate", help="generate self-describing fp8 traces")
