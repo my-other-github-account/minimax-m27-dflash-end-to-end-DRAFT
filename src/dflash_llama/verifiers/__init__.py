@@ -6,6 +6,8 @@ from .base import BaseVerifier
 from .minimax_m2 import minimax_m27, minimax_m27_iq4_xs
 from .kimi_k25 import kimi_k25
 from .qwen3 import qwen3, qwen3_4b, qwen3_14b
+from .deepseek_v4 import deepseek_v4_flash, deepseek_v4_pro
+from .nemotron3 import nemotron3_super_120b, nemotron3_nano_30b_a3b
 from .generic import generic_verifier, auto_layer_ids
 from .auto import autodetect_verifier
 
@@ -14,6 +16,10 @@ _REGISTRY = {
     "minimax-m2.7": minimax_m27,
     "minimax-m2.7-iq4-xs": minimax_m27_iq4_xs,
     "kimi-k2.5": kimi_k25,
+    "deepseek-v4-flash": deepseek_v4_flash,
+    "deepseek-v4-pro": deepseek_v4_pro,
+    "nemotron3-super-120b": nemotron3_super_120b,
+    "nemotron3-nano-30b-a3b": nemotron3_nano_30b_a3b,
     "qwen3-4b": qwen3_4b,
     "qwen3-14b": qwen3_14b,
 }
@@ -257,6 +263,10 @@ __all__ = [
     "minimax_m27",
     "minimax_m27_iq4_xs",
     "kimi_k25",
+    "deepseek_v4_flash",
+    "deepseek_v4_pro",
+    "nemotron3_super_120b",
+    "nemotron3_nano_30b_a3b",
     "qwen3",
     "qwen3_4b",
     "qwen3_14b",

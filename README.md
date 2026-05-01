@@ -148,8 +148,18 @@ End-to-end documentation (with troubleshooting and reference numbers) lives in [
 | `minimax-m2.7` | MiniMax-M2.7 (FP8) | hidden=3072, layers=`[2,16,30,45,59,61]`, vocab=200064, mask=200054 |
 | `minimax-m2.7-iq4-xs` | MiniMax-M2.7 (UD-IQ4_XS GGUF) | same as above; uses `llamacpp_gguf` backend |
 | `kimi-k2.5` | Kimi-K2.5 | hidden=7168, layers=`[1,12,24,35,47,58]`, vocab=163840, mask=163838 |
+| `deepseek-v4-flash` | DeepSeek-V4-Flash | hidden=4096, layers=`[2,11,21,32,41,42]`, vocab=129280, mask=1 (EOS) |
+| `deepseek-v4-pro` | DeepSeek-V4-Pro | same shape as Flash |
+| `nemotron3-super-120b` | Nemotron-3-Super-120B-A12B | hidden=4096, layers=`[3,22,44,66,86,87]`, vocab=131072, mask=0 (PAD) ⚠️ hybrid Mamba arch |
+| `nemotron3-nano-30b-a3b` | Nemotron-3-Nano-30B-A3B | hidden=2688, layers=`[2,13,26,39,50,51]`, vocab=131072, mask=0 (PAD) ⚠️ hybrid Mamba arch |
 | `qwen3-4b`, `qwen3-14b` | Qwen3 family | reference small-model targets |
 | `generic` | **any model** | shape entirely from CLI/Python kwargs — see below |
+
+> ⚠️ The Nemotron-3 family is **hybrid Mamba+MLP+Attention** (per-layer
+> `hybrid_override_pattern` in HF config). DFlash speculative decoding has
+> historically been validated on pure-transformer verifiers; treat the
+> Nemotron factories as starting points and verify your loss curve before
+> assuming the canonical tap schedule works.
 
 ## Adapting to a new model
 

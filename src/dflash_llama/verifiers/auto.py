@@ -38,9 +38,26 @@ def autodetect_verifier(
         mt = (cfg.get("model_type") or "").lower()
         if mt == "minimax_m2":
             return minimax_m27(hf_path=hf_path, gguf_path=gguf_path)
-        if "kimi" in mt or mt == "deepseek_v3":
+        if mt == "deepseek_v3" or "kimi" in mt:
             # K2.5 uses the deepseek_v3 model_type in HF config
             return kimi_k25(hf_path=hf_path, gguf_path=gguf_path)
+        if mt == "deepseek_v4":
+            from .deepseek_v4 import deepseek_v4_flash
+            return deepseek_v4_flash(hf_path=hf_path, gguf_path=gguf_path)
+        if mt == "nemotron_h":
+            # Pick the right factory based on hidden_size; both share the
+            # ``nemotron_h`` model_type.
+            from .nemotron3 import nemotron3_super_120b, nemotron3_nano_30b_a3b
+            try:
+                hs = int(cfg.get("hidden_size", 0))
+            except (TypeError, ValueError):
+                hs = 0
+            if hs == 4096:
+                return nemotron3_super_120b(hf_path=hf_path, gguf_path=gguf_path)
+            if hs == 2688:
+                return nemotron3_nano_30b_a3b(hf_path=hf_path, gguf_path=gguf_path)
+            # Unknown Nemotron-3 variant — fall through to generic with the
+            # config's actual numbers rather than guessing the wrong factory.
         if "qwen3" in mt:
             return qwen3(
                 hidden_size=int(cfg["hidden_size"]),
