@@ -149,8 +149,75 @@ End-to-end documentation (with troubleshooting and reference numbers) lives in [
 | `minimax-m2.7-iq4-xs` | MiniMax-M2.7 (UD-IQ4_XS GGUF) | same as above; uses `llamacpp_gguf` backend |
 | `kimi-k2.5` | Kimi-K2.5 | hidden=7168, layers=`[1,12,24,35,47,58]`, vocab=163840, mask=163838 |
 | `qwen3-4b`, `qwen3-14b` | Qwen3 family | reference small-model targets |
+| `generic` | **any model** | shape entirely from CLI/Python kwargs — see below |
 
-To add a new verifier without modifying the library:
+## Adapting to a new model
+
+Three escalating levels of customization:
+
+### 1. Override layer taps for an existing family
+
+The factory defaults reflect what we trained against, but you can pick any
+schedule:
+
+```python
+v = load_verifier(
+    "minimax-m2.7-iq4-xs",
+    hf_path=..., gguf_path=...,
+    layer_ids=[1, 8, 20, 35, 50, 61],   # custom tap schedule
+)
+```
+
+CLI:
+
+```bash
+dflash-llama generate --verifier minimax-m2.7-iq4-xs \
+  --hf-repo MiniMaxAI/MiniMax-M2 --gguf-repo unsloth/MiniMax-M2-GGUF --gguf-quant UD-IQ4_XS \
+  --layer-ids "1,8,20,35,50,61" \
+  --prompts data/prompts_tulu3 --out data/traces ...
+```
+
+Per-shape overrides (`--hidden-size`, `--num-hidden-layers`, `--vocab-size`,
+`--mask-token-id`, `--block-size`, `--drafter-arch`, `--drafter-hidden-act`)
+work the same way.
+
+### 2. Build a fully-custom verifier inline (no Python file)
+
+Use `--verifier generic` (or `name="generic"`) plus the four required shape
+kwargs. Layer taps are mandatory unless you ask for `--num-layer-taps N`.
+
+```python
+v = load_verifier(
+    "generic",
+    name_override="llama-3.1-8b",
+    hf_path=..., gguf_path=...,
+    hidden_size=4096,
+    num_hidden_layers=32,
+    vocab_size=128256,
+    mask_token_id=128255,
+    layer_ids=[2, 8, 16, 24, 30, 31],
+)
+```
+
+```bash
+dflash-llama generate --verifier generic \
+  --name-override llama-3.1-8b \
+  --hf-repo meta-llama/Llama-3.1-8B \
+  --gguf-repo bartowski/Llama-3.1-8B-GGUF --gguf-quant Q4_K_M \
+  --hidden-size 4096 --num-hidden-layers 32 \
+  --vocab-size 128256 --mask-token-id 128255 \
+  --layer-ids "2,8,16,24,30,31" \
+  --prompts data/prompts_tulu3 --out data/traces ...
+```
+
+If you don't have a known-good schedule, omit `--layer-ids` and pass
+`--num-layer-taps 6` — `auto_layer_ids` will spread taps across the network
+and always include the final residual. **Verify your loss curve looks sane;
+auto-spread is a starting point, not gospel.**
+
+### 3. Register a Python factory (only if you want a stable name)
+
+For one-line reuse across scripts/tests/teammates, use `register_verifier`:
 
 ```python
 from dflash_llama import BaseVerifier, register_verifier
