@@ -34,6 +34,10 @@ def _build_verifier(args) -> "BaseVerifier":  # noqa: F821
         args.verifier,
         gguf_path=getattr(args, "gguf_path", None),
         hf_path=getattr(args, "hf_path", None),
+        gguf_repo=getattr(args, "gguf_repo", None),
+        hf_repo=getattr(args, "hf_repo", None),
+        gguf_quant=getattr(args, "gguf_quant", None),
+        revision=getattr(args, "revision", None),
     )
 
 
@@ -164,9 +168,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     # common verifier args
     def add_verifier_args(sp):
-        sp.add_argument("--verifier", required=True, help="verifier name (e.g. minimax-m2.7-iq4-xs)")
-        sp.add_argument("--gguf-path", default=None)
-        sp.add_argument("--hf-path", default=None)
+        sp.add_argument("--verifier", required=True, help="verifier name (e.g. minimax-m2.7-iq4-xs). Use 'dflash-llama info' to list.")
+        sp.add_argument("--gguf-path", default=None, help="local path to a GGUF shard (mutually exclusive with --gguf-repo)")
+        sp.add_argument("--hf-path", default=None, help="local path to an HF model directory (mutually exclusive with --hf-repo)")
+        sp.add_argument("--gguf-repo", default=None, help="HF Hub slug for GGUF weights, e.g. 'unsloth/MiniMax-M2-GGUF'")
+        sp.add_argument("--hf-repo", default=None, help="HF Hub slug for the model config + tokenizer, e.g. 'MiniMaxAI/MiniMax-M2'")
+        sp.add_argument("--gguf-quant", default=None, help="quant subdir within --gguf-repo, e.g. 'UD-IQ4_XS'")
+        sp.add_argument("--revision", default=None, help="optional Hub revision (branch, tag, or commit)")
 
     # generate
     sg = sub.add_parser("generate", help="generate self-describing fp8 traces")

@@ -1,6 +1,7 @@
 """dflash_llama — self-describing fp8 trace generation + DFlash drafter training."""
 from .version import __version__, SCHEMA_VERSION
 from .verifiers import load_verifier, list_verifiers, register_verifier, BaseVerifier
+from .hub import cache_root, resolve_hf_repo, resolve_gguf_repo
 from .generation import TraceGenerator
 from .generation.format import load_trace, save_trace, saturating_fp8_cast
 from .training import DFlashTrainer, SelfDescribingTraceDataset
@@ -16,6 +17,10 @@ __all__ = [
     "list_verifiers",
     "register_verifier",
     "BaseVerifier",
+    # hub / model slug resolution
+    "cache_root",
+    "resolve_hf_repo",
+    "resolve_gguf_repo",
     # generation
     "TraceGenerator",
     "save_trace",

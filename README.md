@@ -24,23 +24,32 @@ Three other walkthroughs:
 ## Install
 
 ```bash
-git clone <this repo>
-cd <this repo>
+git clone https://github.com/my-other-github-account/minimax-m27-dflash-end-to-end-DRAFT.git dflash-llama
+cd dflash-llama
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e .
-# optional: pip install -e .[dev]   # for tests + lint
+pytest tests/ -q                       # 45 passed in <1s
 ```
 
-Speculators is required for `trainer.smoke()` and `trainer.train()` (the actual training shell-out). For trace generation alone, only torch + safetensors + datasets are needed.
+Then build `llama-dump-hiddens` reproducibly from a pinned upstream `llama.cpp` commit + our vendored example:
+
+```bash
+bash scripts/build_llama_dump_hiddens.sh           # outputs binary path on stdout
+```
+
+Speculators is required for `trainer.smoke()` and `trainer.train()` — install via `pip install speculators` or pin to a specific commit (see [`repro/00-spark-from-scratch.md`](repro/00-spark-from-scratch.md) §5). For trace generation alone, only torch + safetensors + datasets are needed.
 
 ## Python API quickstart
 
 ```python
 from dflash_llama import DFlashTrainer, TraceGenerator, load_verifier
 
+# Hub slugs — library downloads to ~/.cache/dflash-llama/ on first use
 verifier = load_verifier(
     "minimax-m2.7-iq4-xs",
-    gguf_path="/path/to/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf",
-    hf_path="/path/to/MiniMax-M2.7-FP8",  # for the trainer's tokenizer
+    hf_repo="MiniMaxAI/MiniMax-M2",
+    gguf_repo="unsloth/MiniMax-M2-GGUF",
+    gguf_quant="UD-IQ4_XS",
 )
 
 # 1. Generate traces (one safetensors file per prompt)
@@ -48,27 +57,37 @@ gen = TraceGenerator(
     verifier=verifier,
     storage="fp8_per_tensor_scale",
     backend="llamacpp_gguf",
-    backend_kwargs={"binary": "/path/to/buun-llama-cpp/build/bin/llama-dump-hiddens"},
+    backend_kwargs={"binary": "build/llama.cpp-dflash/build/bin/llama-dump-hiddens"},
 )
 gen.generate(
-    prompts="/path/to/prompts_arrow_dir",
-    output_dir="./traces",
+    prompts="data/prompts_tulu3",
+    output_dir="data/traces",
     rows=range(0, 6500),
-    state_path="./gen_state.json",
+    state_path="data/gen_state.json",
 )
 
 # 2. Train (no separate "build paired dataset" step — trainer.prepare() does it)
 trainer = DFlashTrainer(
-    traces_dir="./traces",
+    traces_dir="data/traces",
     verifier=verifier,
     num_layers=5,
     draft_vocab_size=32768,
-    paired_dir="./paired",
+    paired_dir="data/paired",
 )
-trainer.prepare()                                      # arrow + vocab maps
-trainer.smoke(timeout_sec=90, save_to="./smoke_ckpt")  # 90s plumbing check
-trainer.train(save_to="./ckpt", epochs=17)             # ~4 hours on one GB10
-trainer.offline_eval(checkpoint="./ckpt/checkpoint_best", max_batches=60)
+trainer.prepare()                                          # arrow + vocab maps + hs symlinks
+trainer.smoke(timeout_sec=90, save_path="data/smoke_ckpt") # 90s plumbing check
+trainer.train(save_to="data/ckpt", epochs=17)              # ~3 hours on one GB10
+trainer.offline_eval(checkpoint="data/ckpt/0", max_batches=60)
+```
+
+Local-path mode is also supported when you already have files staged (e.g. on a cluster):
+
+```python
+verifier = load_verifier(
+    "minimax-m2.7-iq4-xs",
+    hf_path="data/hf-cache/MiniMax-M2",
+    gguf_path="data/models/UD-IQ4_XS/shard-00001.gguf",
+)
 ```
 
 ## CLI quickstart
@@ -77,31 +96,34 @@ trainer.offline_eval(checkpoint="./ckpt/checkpoint_best", max_batches=60)
 # list registered verifiers
 dflash-llama info
 
-# generate
+# generate (Hub-slug mode — auto-downloads to ~/.cache/dflash-llama/)
 dflash-llama generate \
   --verifier minimax-m2.7-iq4-xs \
-  --gguf-path /path/to/UD-IQ4_XS-00001-of-N.gguf \
-  --binary /path/to/llama-dump-hiddens \
-  --prompts /path/to/prompts_arrow_dir \
+  --hf-repo MiniMaxAI/MiniMax-M2 \
+  --gguf-repo unsloth/MiniMax-M2-GGUF --gguf-quant UD-IQ4_XS \
+  --binary build/llama.cpp-dflash/build/bin/llama-dump-hiddens \
+  --prompts data/prompts_tulu3 \
   --rows 0:6500 \
-  --out ./traces \
-  --state ./gen_state.json
+  --out data/traces \
+  --state data/gen_state.json
 
 # 90-second smoke
 dflash-llama smoke \
   --verifier minimax-m2.7-iq4-xs \
-  --hf-path /path/to/MiniMax-M2.7-FP8 \
-  --traces ./traces \
+  --hf-repo MiniMaxAI/MiniMax-M2 \
+  --traces data/traces \
   --timeout 90
 
 # full training run
 dflash-llama train \
   --verifier minimax-m2.7-iq4-xs \
-  --hf-path /path/to/MiniMax-M2.7-FP8 \
-  --traces ./traces \
-  --output ./ckpt \
+  --hf-repo MiniMaxAI/MiniMax-M2 \
+  --traces data/traces \
+  --output data/ckpt \
   --epochs 17 --lr 3e-5 --max-anchors 512
 ```
+
+You can substitute `--hf-path` / `--gguf-path` for the `--*-repo` flags when files are already on disk.
 
 ## Examples
 
