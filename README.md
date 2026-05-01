@@ -1,5 +1,8 @@
 # MiniMax-M2.7 DFlash Speculative Decoding — End-to-End (DRAFT)
 
+> **🚨 OPERATIONAL HARD RULE: NEVER TOUCH SPARK-5.**
+> spark-5 is jumphost-only for SSH proxy to spark-1. Do not run workloads on it, do not evict processes on it, do not modify state on it. See `repro/plan/00-NEVER-touch-spark-5.md` for the full rule.
+
 > # ⚠️ THIS REPO IS A DRAFT — NOT WORKING END-TO-END YET
 >
 > The Generation section produced a real, validated trace pool that trained a working drafter on the original cluster, but the *reproduction recipe documented here has not been re-walked from scratch on a clean machine*. The Training and Inference sections are stubs reflecting last-known-good config rather than fully harvested evidence.

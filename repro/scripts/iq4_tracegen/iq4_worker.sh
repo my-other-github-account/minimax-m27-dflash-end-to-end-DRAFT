@@ -1,5 +1,9 @@
 #!/bin/bash
 # IQ4 trace generation worker — runs on any spark with the IQ4 verifier + buun build.
+#
+# 🚨 HARD RULE: NEVER RUN ON SPARK-5. spark-5 is jumphost-only for spark-1 SSH.
+#                                   This script self-aborts if hostname is spark-5.
+#
 # Per repro/plan/00-resumability-doctrine.md: line-buffered, atomic, skip-existing,
 # state.json with FM27 hash-verify, SIGTERM-safe (current trace finishes, exits clean).
 #
@@ -17,6 +21,16 @@
 # Resume: just re-run with the same WORKER_ID/START/END.
 
 set -e
+
+# 🚨 SPARK-5 GUARD
+HOSTNAME=$(hostname)
+case "$HOSTNAME" in
+    spark-5|spark5|*spark-5*|*spark5*)
+        echo "[FATAL] iq4_worker.sh refuses to run on spark-5 (hostname=$HOSTNAME)." >&2
+        echo "[FATAL] spark-5 is jumphost-only. See repro/plan/00-NEVER-touch-spark-5.md" >&2
+        exit 99
+        ;;
+esac
 WORKER_ID=${WORKER_ID:?"set WORKER_ID (e.g. A, B, C)"}
 START=${START:?"set START (lower bound, inclusive)"}
 END=${END:?"set END (upper bound, exclusive)"}
