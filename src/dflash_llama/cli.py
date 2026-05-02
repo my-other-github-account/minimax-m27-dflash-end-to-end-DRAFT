@@ -181,6 +181,91 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_export_gguf(args) -> int:
+    from .inference import export_to_gguf, verify_gguf_metadata
+
+    out = export_to_gguf(
+        checkpoint=args.checkpoint,
+        output_path=args.output,
+        verifier_meta_dir=args.verifier_meta_dir,
+        buun_repo=args.buun_repo,
+        venv_python=args.venv_python,
+        outtype=args.outtype,
+        rebake_floor=args.rebake_floor,
+        prepped_dir=args.prepped_dir,
+        register_tokenizer_hash=not args.no_register_hash,
+    )
+    if args.verify:
+        meta = verify_gguf_metadata(out)
+        print(json.dumps(meta, indent=2))
+    return 0
+
+
+def cmd_serve(args) -> int:
+    import time
+    from .inference import LlamaServer
+
+    server = LlamaServer(
+        verifier_gguf=args.verifier,
+        drafter_gguf=args.drafter,
+        spec_type=args.spec_type if args.drafter else None,
+        draft_max=args.draft_max,
+        host=args.host,
+        port=args.port,
+        ctx=args.ctx,
+        n_gpu_layers=args.ngl,
+        n_gpu_layers_draft=args.ngld,
+        override_tensor=args.override_tensor,
+        draft_device=args.device_draft,
+        binary=args.binary,
+        parallel=args.parallel,
+        log_path=args.log,
+    )
+    server.start()
+    print(f"DFlash llama-server up: {server.url}")
+    print("Endpoints: /v1/chat/completions, /v1/completions, /v1/models")
+    print("Press Ctrl-C to stop.")
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        print("\nstopping...")
+    finally:
+        server.stop()
+    return 0
+
+
+def cmd_benchmark(args) -> int:
+    from .inference import benchmark
+
+    report = benchmark(
+        verifier_gguf=args.verifier,
+        drafter_gguf=args.drafter,
+        val_metrics=args.val_metrics,
+        prompt=args.prompt,
+        dmax_sweep=[int(x) for x in args.dmax.split(",")],
+        n_tokens=args.n_tokens,
+        ctx=args.ctx,
+        temperature=args.temperature,
+        n_gpu_layers=args.ngl,
+        n_gpu_layers_draft=args.ngld,
+        override_tensor=args.override_tensor,
+        draft_device=args.device_draft,
+        binary=args.binary,
+        log_dir=args.log_dir,
+        drafter_label=args.label,
+        progress=not args.no_progress,
+    )
+    if args.json:
+        print(report.to_json())
+    else:
+        print(report.markdown())
+    if args.json_out:
+        report.to_json(args.json_out)
+        print(f"\n[saved JSON to {args.json_out}]")
+    return 0
+
+
 # ----- arg-parser -----
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dflash-llama", description=__doc__)
@@ -306,6 +391,78 @@ def build_parser() -> argparse.ArgumentParser:
     # info
     si = sub.add_parser("info", help="list registered verifiers")
     si.set_defaults(func=cmd_info)
+
+    # export-gguf
+    sx = sub.add_parser("export-gguf",
+                        help="convert a DFlash drafter checkpoint to a buun-loadable GGUF")
+    sx.add_argument("--checkpoint", required=True,
+                    help="speculators-format checkpoint dir (config.json + model.safetensors)")
+    sx.add_argument("--output", required=True, help="path to write the GGUF")
+    sx.add_argument("--verifier-meta-dir", default=None,
+                    help="directory holding tokenizer.json etc (default: read from config)")
+    sx.add_argument("--buun-repo", default="/home/user/buun-llama-cpp",
+                    help="buun-llama-cpp checkout containing convert_hf_to_gguf.py")
+    sx.add_argument("--venv-python", default=None,
+                    help="python interpreter to invoke buun's converter (default: autodetect)")
+    sx.add_argument("--outtype", default="bf16", choices=["bf16", "f16", "f32"])
+    sx.add_argument("--rebake-floor", type=float, default=-65504.0,
+                    help="floor for non-mapped rows in rebaked lm_head (default: -65504)")
+    sx.add_argument("--prepped-dir", default=None,
+                    help="staging dir for the prepped checkpoint (default: <output>.prep)")
+    sx.add_argument("--no-register-hash", action="store_true",
+                    help="don't auto-whitelist the FP8 tokenizer hash in buun")
+    sx.add_argument("--verify", action="store_true",
+                    help="after conversion, print GGUF metadata sanity-check")
+    sx.set_defaults(func=cmd_export_gguf)
+
+    # serve (OpenAI-compat)
+    ss = sub.add_parser("serve",
+                        help="run llama-server with optional DFlash spec decoding (OAI-compat)")
+    ss.add_argument("--verifier", required=True, help="verifier GGUF path")
+    ss.add_argument("--drafter", default=None, help="drafter GGUF path (DFlash)")
+    ss.add_argument("--spec-type", default="dflash", choices=["dflash", "draft"])
+    ss.add_argument("--draft-max", type=int, default=7)
+    ss.add_argument("--host", default="0.0.0.0")
+    ss.add_argument("--port", type=int, default=8080)
+    ss.add_argument("--ctx", type=int, default=8192)
+    ss.add_argument("--ngl", type=int, default=99)
+    ss.add_argument("--ngld", type=int, default=99)
+    ss.add_argument("--override-tensor", default="exps=CPU",
+                    help="--override-tensor (-ot). Default 'exps=CPU' for IQ4_XS MoE.")
+    ss.add_argument("--device-draft", default="CUDA0")
+    ss.add_argument("--parallel", type=int, default=1)
+    ss.add_argument("--binary", default=None)
+    ss.add_argument("--log", default=None, help="optional log file path")
+    ss.set_defaults(func=cmd_serve)
+
+    # benchmark (speculative-decode sweep)
+    sb = sub.add_parser("benchmark",
+                        help="sweep --draft-max in llama-speculative-simple, "
+                             "compute per-position + chain-cumulative accept rates")
+    sb.add_argument("--verifier", required=True, help="verifier GGUF")
+    sb.add_argument("--drafter", required=True, help="drafter GGUF")
+    sb.add_argument("--val-metrics", default=None,
+                    help="training val_metrics.json for z-score baseline")
+    sb.add_argument("--prompt", default=None,
+                    help="benchmark prompt (default: built-in Fibonacci spec)")
+    sb.add_argument("--dmax", default="2,4,7", help="comma-separated draft-max values")
+    sb.add_argument("--n-tokens", type=int, default=384)
+    sb.add_argument("--ctx", type=int, default=8192)
+    sb.add_argument("--temperature", type=float, default=0.0)
+    sb.add_argument("--ngl", type=int, default=99)
+    sb.add_argument("--ngld", type=int, default=99)
+    sb.add_argument("--override-tensor", default="exps=CPU")
+    sb.add_argument("--device-draft", default="CUDA0")
+    sb.add_argument("--binary", default=None)
+    sb.add_argument("--log-dir", default="/tmp/dflash_bench")
+    sb.add_argument("--label", default=None,
+                    help="report label (default: drafter GGUF stem)")
+    sb.add_argument("--no-progress", action="store_true",
+                    help="disable tqdm progress bar")
+    sb.add_argument("--json", action="store_true",
+                    help="emit machine-readable JSON instead of markdown")
+    sb.add_argument("--json-out", default=None, help="also write JSON to file")
+    sb.set_defaults(func=cmd_benchmark)
 
     return p
 

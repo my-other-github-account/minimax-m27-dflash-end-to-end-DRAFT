@@ -13,7 +13,9 @@
 # and just rebuild. To start fresh, delete build/llama.cpp-dflash/.
 #
 # Knobs (env vars):
-#   LLAMACPP_PIN     upstream commit/tag to pin to (default: master-fff0e0e)
+#   LLAMACPP_PIN     upstream commit/tag to pin to (default: current master HEAD
+#                    at time-of-write; pin to a SHA for reproducibility, or set
+#                    to a tag like 'b1234' for a release build)
 #   BUILD_CUDA       1 (default) or 0 for CPU-only
 #   JOBS             parallel build jobs (default: nproc)
 #
@@ -27,7 +29,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-LLAMACPP_PIN="${LLAMACPP_PIN:-master-fff0e0e}"
+LLAMACPP_PIN="${LLAMACPP_PIN:-b97ebdc98f6053604a19d861c08d8087601b96e0}"
 BUILD_CUDA="${BUILD_CUDA:-1}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
@@ -42,10 +44,16 @@ echo "[build] build_dir         : $BUILD_DIR"
 
 # 1. clone (if needed)
 if [ ! -d "$BUILD_DIR/.git" ]; then
-    echo "[build] cloning ggml-org/llama.cpp pinned to $LLAMACPP_PIN"
+    echo "[build] cloning ggml-org/llama.cpp and checking out $LLAMACPP_PIN"
     mkdir -p "$(dirname "$BUILD_DIR")"
-    git clone --depth 1 --branch "$LLAMACPP_PIN" \
-        https://github.com/ggml-org/llama.cpp.git "$BUILD_DIR"
+    # Try shallow-by-branch first (works for tags); on failure, fall back to
+    # full clone + checkout (works for arbitrary commit SHAs).
+    if ! git clone --depth 1 --branch "$LLAMACPP_PIN" \
+            https://github.com/ggml-org/llama.cpp.git "$BUILD_DIR" 2>/dev/null; then
+        echo "[build] shallow-branch clone failed; falling back to full clone"
+        git clone https://github.com/ggml-org/llama.cpp.git "$BUILD_DIR"
+        ( cd "$BUILD_DIR" && git checkout "$LLAMACPP_PIN" )
+    fi
 fi
 
 cd "$BUILD_DIR"

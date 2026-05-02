@@ -44,7 +44,65 @@ The remaining work for this section: **apply the same recipe to the FULL trainin
 
 ---
 
-## 3.2 The full recipe (8 steps)
+## 3.2 Recipe: API + CLI
+
+The whole pipeline is now exposed via the library. The 8-step manual
+recipe is preserved below for reference, but for new runs use the API:
+
+### Python (3 lines, plus imports)
+
+```python
+from dflash_llama import export_to_gguf, LlamaServer, benchmark
+
+# Step 1: trained ckpt → buun-loadable GGUF (~10s convert + ~5s prep)
+gguf = export_to_gguf(
+    checkpoint="/home/user/<run>/checkpoint_best",
+    output_path="/home/user/models/<run>.gguf",
+    verifier_meta_dir="/home/user/iq4_full_run/verifier_meta",
+)
+
+# Step 2: bench it (~10 min for dmax=2,4,7 sweep w/ tqdm progress)
+report = benchmark(
+    verifier_gguf=".../MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf",
+    drafter_gguf=gguf,
+    val_metrics="/home/user/<run>/checkpoint_best/val_metrics.json",
+)
+print(report.markdown())  # per-position p_k + chain ∏p_i + z-scores
+
+# Step 3 (optional): serve it as an OpenAI-compat endpoint
+with LlamaServer(verifier_gguf=..., drafter_gguf=gguf, port=8080) as srv:
+    print(f"OAI endpoint: {srv.url}")  # → http://localhost:8080/v1
+```
+
+Full runnable examples in ``repro/examples/03_*.py``.
+
+### CLI (mirrors the Python API)
+
+```bash
+# Convert
+dflash-llama export-gguf \
+  --checkpoint /home/user/<run>/checkpoint_best \
+  --output /home/user/models/<run>.gguf \
+  --verifier-meta-dir /home/user/iq4_full_run/verifier_meta \
+  --verify
+
+# Bench
+dflash-llama benchmark \
+  --verifier .../MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf \
+  --drafter  /home/user/models/<run>.gguf \
+  --val-metrics /home/user/<run>/checkpoint_best/val_metrics.json \
+  --dmax 2,4,7
+
+# Serve (OpenAI-compat at http://0.0.0.0:8080/v1)
+dflash-llama serve \
+  --verifier .../MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf \
+  --drafter  /home/user/models/<run>.gguf \
+  --port 8080
+```
+
+---
+
+## 3.2-legacy The full manual recipe (for reference)
 
 Captured as a skill at `~/.hermes/skills/mlops-inference/dflash-full-checkpoint-to-gguf-spark1/` so future training runs can reuse it directly. The summary:
 
