@@ -25,7 +25,7 @@ A second factory ``nemotron3_nano_30b_a3b`` is provided for the smaller
 """
 from __future__ import annotations
 from typing import Optional, Sequence
-from .base import BaseVerifier
+from ..base import BaseVerifier
 
 # --- Nemotron-3 Super 120B-A12B (BF16 reference) ---
 _N3S_HIDDEN_SIZE = 4096

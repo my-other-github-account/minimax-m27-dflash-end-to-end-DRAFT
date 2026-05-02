@@ -42,8 +42,13 @@ To use a different verifier:
 
 ```bash
 dflash-llama info  # list registered verifier names
-# ... or pass arbitrary qwen3 shapes:
-dflash-llama generate --verifier qwen3 --hf-path /models/qwen3-4b ...
+# ... or describe an arbitrary model with --verifier generic:
+dflash-llama generate --verifier generic \
+  --name-override my-model-8b \
+  --hf-path /models/my-model --gguf-path /models/my-model.gguf \
+  --hidden-size 4096 --num-hidden-layers 32 \
+  --vocab-size 128256 --mask-token-id 128255 \
+  --layer-ids "2,8,16,24,30,31" ...
 ```
 
 ## Python API quickstart
@@ -69,13 +74,16 @@ gen.generate(
 )
 ```
 
-## Verifier-specific defaults
+## Verifier-specific defaults (validated families)
 
 | verifier | hidden | n_layers | layer_ids | vocab | mask |
 |---|---|---|---|---|---|
 | `minimax-m2.7` / `…-iq4-xs` | 3072 | 62 | `[2, 16, 30, 45, 59, 61]` | 200064 | 200054 |
-| `kimi-k2.5` | 7168 | 61 | `[1, 12, 24, 35, 47, 58]` | 163840 | 163838 |
-| `qwen3-4b` | 2560 | 36 | `[2, 8, 16, 24, 32, 35]` | 151936 | 151643 |
+
+For experimental factories (`kimi_k25`, `qwen3*`, `deepseek_v4_*`,
+`nemotron3_*`) see `dflash_llama.verifiers.experimental`. They have
+plausible shape metadata but have NOT been end-to-end validated by this
+library — opt in explicitly with `register_verifier(...)`.
 
 The `layer_ids` list is what the generator passes to `llama-dump-hiddens`. The trainer auto-appends a final tap, so the speculators `--target-layer-ids` flag receives `layer_ids[:-1]`.
 

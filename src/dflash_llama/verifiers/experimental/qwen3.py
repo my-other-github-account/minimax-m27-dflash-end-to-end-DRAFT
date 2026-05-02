@@ -6,7 +6,7 @@ unless one of the named factories matches their setup.
 """
 from __future__ import annotations
 from typing import Optional, Sequence
-from .base import BaseVerifier
+from ..base import BaseVerifier
 
 
 def qwen3(

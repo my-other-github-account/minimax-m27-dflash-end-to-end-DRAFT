@@ -1,7 +1,7 @@
 """Kimi-K2.5 family verifier config (DFlash drafter reference from z-lab)."""
 from __future__ import annotations
 from typing import Optional, Sequence
-from .base import BaseVerifier
+from ..base import BaseVerifier
 
 _K25_HIDDEN_SIZE = 7168
 _K25_VOCAB_SIZE = 163840

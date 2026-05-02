@@ -5,13 +5,31 @@ import pytest
 
 from dflash_llama import (
     BaseVerifier,
-    deepseek_v4_flash,
-    deepseek_v4_pro,
     list_verifiers,
     load_verifier,
+    register_verifier,
+)
+from dflash_llama.verifiers.experimental import (
+    deepseek_v4_flash,
+    deepseek_v4_pro,
     nemotron3_nano_30b_a3b,
     nemotron3_super_120b,
 )
+
+
+@pytest.fixture(autouse=False)
+def _register_experimental_dsv4_nemo3():
+    """Opt-in fixture — register experimental factories under their
+    canonical names for the duration of a test, then restore."""
+    from dflash_llama.verifiers import _REGISTRY
+    snapshot = dict(_REGISTRY)
+    register_verifier("deepseek-v4-flash", deepseek_v4_flash)
+    register_verifier("deepseek-v4-pro", deepseek_v4_pro)
+    register_verifier("nemotron3-super-120b", nemotron3_super_120b)
+    register_verifier("nemotron3-nano-30b-a3b", nemotron3_nano_30b_a3b)
+    yield
+    _REGISTRY.clear()
+    _REGISTRY.update(snapshot)
 
 
 # ----- DeepSeek-V4-Flash --------------------------------------------------
@@ -29,7 +47,7 @@ def test_deepseek_v4_flash_defaults():
     assert v.gguf_path == "/fake.gguf"
 
 
-def test_deepseek_v4_flash_layer_ids_override():
+def test_deepseek_v4_flash_layer_ids_override(_register_experimental_dsv4_nemo3):
     v = load_verifier(
         "deepseek-v4-flash",
         gguf_path="/x",
@@ -39,7 +57,7 @@ def test_deepseek_v4_flash_layer_ids_override():
     assert v.hidden_size == 4096  # other defaults intact
 
 
-def test_deepseek_v4_flash_full_shape_override():
+def test_deepseek_v4_flash_full_shape_override(_register_experimental_dsv4_nemo3):
     v = load_verifier(
         "deepseek-v4-flash",
         gguf_path="/x",
@@ -88,7 +106,7 @@ def test_nemotron3_nano_30b_a3b_defaults():
     assert tuple(v.layer_ids) == (2, 13, 26, 39, 50, 51)
 
 
-def test_nemotron3_super_layer_override():
+def test_nemotron3_super_layer_override(_register_experimental_dsv4_nemo3):
     v = load_verifier(
         "nemotron3-super-120b",
         hf_path="/x",
@@ -100,12 +118,19 @@ def test_nemotron3_super_layer_override():
 
 # ----- Registry membership ------------------------------------------------
 
-def test_new_verifiers_in_registry():
-    names = list_verifiers()
-    assert "deepseek-v4-flash" in names
-    assert "deepseek-v4-pro" in names
-    assert "nemotron3-super-120b" in names
-    assert "nemotron3-nano-30b-a3b" in names
+def test_experimental_factories_listed_in_experimental_namespace():
+    """Moved factories must be visible via list_experimental_verifiers(),
+    NOT the default list_verifiers()."""
+    from dflash_llama import list_experimental_verifiers
+    exp = list_experimental_verifiers()
+    for name in ("deepseek_v4_flash", "deepseek_v4_pro",
+                 "nemotron3_super_120b", "nemotron3_nano_30b_a3b"):
+        assert name in exp
+    # Default registry keeps these out
+    default = list_verifiers()
+    for forbidden in ("deepseek-v4-flash", "deepseek-v4-pro",
+                      "nemotron3-super-120b", "nemotron3-nano-30b-a3b"):
+        assert forbidden not in default
 
 
 # ----- Autodetect ---------------------------------------------------------
