@@ -1,4 +1,15 @@
-"""Auto-detect a verifier from an HF config.json or a GGUF file's metadata."""
+"""Auto-detect a verifier from an HF config.json or GGUF file's metadata.
+
+Only validated families autodetect to their named factory. Unknown
+``model_type`` values fall back to the ``generic`` adapter with shape
+parameters read from ``config.json`` — this is best-effort: callers
+should verify that ``layer_ids`` (auto-spread by the generic factory) is
+sensible for their model and pass an override otherwise.
+
+Experimental factories (``kimi_k25``, ``qwen3``, ``deepseek_v4_*``,
+``nemotron3_*``) are NOT autodetected. To use them by name, opt in
+explicitly via :func:`dflash_llama.register_verifier`.
+"""
 from __future__ import annotations
 
 import json
@@ -7,8 +18,6 @@ from typing import Optional
 
 from .base import BaseVerifier
 from .minimax_m2 import minimax_m27, minimax_m27_iq4_xs
-from .kimi_k25 import kimi_k25
-from .qwen3 import qwen3
 
 
 def _read_hf_config(hf_path: str) -> Optional[dict]:
@@ -26,10 +35,18 @@ def autodetect_verifier(
     hf_path: Optional[str] = None,
     gguf_path: Optional[str] = None,
 ) -> BaseVerifier:
-    """Try to detect the verifier family from on-disk metadata.
+    """Detect the verifier family from on-disk metadata.
 
-    Currently only the HF config.json path is supported; GGUF metadata
-    detection requires gguf_reader and is left as a TODO.
+    Currently only the HF ``config.json`` path is supported; GGUF metadata
+    detection requires ``gguf_reader`` and is left as a TODO.
+
+    Validated families autodetect to their named factory:
+
+    - ``minimax_m2`` → :func:`minimax_m27`
+    - ``minimax_m2`` w/ IQ4_XS GGUF → :func:`minimax_m27_iq4_xs`
+
+    Anything else falls back to :func:`generic_verifier` with shape
+    parameters from ``config.json``.
     """
     cfg = _read_hf_config(hf_path) if hf_path else None
     if cfg is None and gguf_path is None:
@@ -37,39 +54,16 @@ def autodetect_verifier(
     if cfg is not None:
         mt = (cfg.get("model_type") or "").lower()
         if mt == "minimax_m2":
+            # Pick IQ4_XS variant if the GGUF path mentions it; otherwise
+            # the FP8/general factory.
+            if gguf_path and "iq4" in gguf_path.lower():
+                return minimax_m27_iq4_xs(hf_path=hf_path, gguf_path=gguf_path)
             return minimax_m27(hf_path=hf_path, gguf_path=gguf_path)
-        if mt == "deepseek_v3" or "kimi" in mt:
-            # K2.5 uses the deepseek_v3 model_type in HF config
-            return kimi_k25(hf_path=hf_path, gguf_path=gguf_path)
-        if mt == "deepseek_v4":
-            from .deepseek_v4 import deepseek_v4_flash
-            return deepseek_v4_flash(hf_path=hf_path, gguf_path=gguf_path)
-        if mt == "nemotron_h":
-            # Pick the right factory based on hidden_size; both share the
-            # ``nemotron_h`` model_type.
-            from .nemotron3 import nemotron3_super_120b, nemotron3_nano_30b_a3b
-            try:
-                hs = int(cfg.get("hidden_size", 0))
-            except (TypeError, ValueError):
-                hs = 0
-            if hs == 4096:
-                return nemotron3_super_120b(hf_path=hf_path, gguf_path=gguf_path)
-            if hs == 2688:
-                return nemotron3_nano_30b_a3b(hf_path=hf_path, gguf_path=gguf_path)
-            # Unknown Nemotron-3 variant — fall through to generic with the
-            # config's actual numbers rather than guessing the wrong factory.
-        if "qwen3" in mt:
-            return qwen3(
-                hidden_size=int(cfg["hidden_size"]),
-                num_hidden_layers=int(cfg["num_hidden_layers"]),
-                vocab_size=int(cfg.get("vocab_size", 151936)),
-                hf_path=hf_path,
-                gguf_path=gguf_path,
-            )
-        # Unknown family — fall back to the generic adapter if we can read
-        # enough shape from the config. This is best-effort: callers should
-        # double-check ``layer_ids`` and pass an explicit override if the
-        # auto-spread isn't right for their model.
+
+        # Unknown / experimental family — fall back to generic adapter
+        # using shape from config.json. This is best-effort: callers
+        # should verify ``layer_ids`` (auto-spread by the generic factory)
+        # is sensible for their model.
         from .generic import generic_verifier
         try:
             hidden_size = int(cfg["hidden_size"])
@@ -83,10 +77,12 @@ def autodetect_verifier(
             )
         except (KeyError, TypeError, ValueError):
             raise ValueError(
-                f"autodetect_verifier: model_type={mt!r} is not a known DFlash "
-                f"family and config.json is missing the shape fields needed to "
-                f"build a generic verifier. Pass an explicit "
-                f"load_verifier(name='generic', ...) call instead."
+                f"autodetect_verifier: model_type={mt!r} is not a "
+                f"validated DFlash family and config.json is missing the "
+                f"shape fields needed to build a generic verifier. Pass "
+                f"an explicit load_verifier(name='generic', ...) call "
+                f"instead, or opt into an experimental factory: see "
+                f"dflash_llama.verifiers.experimental."
             )
         return generic_verifier(
             name=f"autodetected-{mt or 'unknown'}",
@@ -99,7 +95,8 @@ def autodetect_verifier(
             gguf_path=gguf_path,
         )
     raise ValueError(
-        f"could not autodetect verifier from hf_path={hf_path} gguf_path={gguf_path}; "
-        "use load_verifier(name=...) with an explicit family name, or "
-        "load_verifier(name='generic', hidden_size=..., num_hidden_layers=...)"
+        f"could not autodetect verifier from hf_path={hf_path} "
+        f"gguf_path={gguf_path}; use load_verifier(name=...) with an "
+        "explicit family name, or load_verifier(name='generic', "
+        "hidden_size=..., num_hidden_layers=...)"
     )

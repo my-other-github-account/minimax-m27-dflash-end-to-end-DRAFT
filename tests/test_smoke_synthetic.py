@@ -54,7 +54,8 @@ def test_assemble_prompts_emits_valid_arrow(synthetic_trace_dir, tmp_path):
 
 def test_full_prepare_then_dryrun_train(synthetic_trace_dir, tmp_path):
     verifier = load_verifier(
-        "qwen3", hidden_size=64, num_hidden_layers=6,
+        "generic", name_override="synthetic-qwen3-tiny",
+        hidden_size=64, num_hidden_layers=6,
         vocab_size=2048, mask_token_id=0,
         layer_ids=(0, 1, 2, 3, 4, 5),
         hf_path="/dummy/hf",
@@ -100,7 +101,8 @@ def test_full_prepare_then_dryrun_train(synthetic_trace_dir, tmp_path):
 
 def test_smoke_dryrun(synthetic_trace_dir, tmp_path):
     verifier = load_verifier(
-        "qwen3", hidden_size=64, num_hidden_layers=6,
+        "generic", name_override="synthetic-qwen3-tiny",
+        hidden_size=64, num_hidden_layers=6,
         vocab_size=2048, mask_token_id=0,
         layer_ids=(0, 1, 2, 3, 4, 5),
         hf_path="/dummy/hf",

@@ -3,20 +3,13 @@ from .version import __version__, SCHEMA_VERSION
 from .verifiers import (
     load_verifier,
     list_verifiers,
+    list_experimental_verifiers,
     register_verifier,
     BaseVerifier,
     generic_verifier,
     auto_layer_ids,
     minimax_m27,
     minimax_m27_iq4_xs,
-    kimi_k25,
-    deepseek_v4_flash,
-    deepseek_v4_pro,
-    nemotron3_super_120b,
-    nemotron3_nano_30b_a3b,
-    qwen3,
-    qwen3_4b,
-    qwen3_14b,
 )
 from .hub import cache_root, resolve_hf_repo, resolve_gguf_repo
 from .generation import TraceGenerator
@@ -40,20 +33,13 @@ __all__ = [
     # verifier registry
     "load_verifier",
     "list_verifiers",
+    "list_experimental_verifiers",
     "register_verifier",
     "BaseVerifier",
     "generic_verifier",
     "auto_layer_ids",
     "minimax_m27",
     "minimax_m27_iq4_xs",
-    "kimi_k25",
-    "deepseek_v4_flash",
-    "deepseek_v4_pro",
-    "nemotron3_super_120b",
-    "nemotron3_nano_30b_a3b",
-    "qwen3",
-    "qwen3_4b",
-    "qwen3_14b",
     # hub / model slug resolution
     "cache_root",
     "resolve_hf_repo",

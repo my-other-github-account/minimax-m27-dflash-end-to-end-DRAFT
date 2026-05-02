@@ -274,7 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
     # common verifier args
     def add_verifier_args(sp):
         sp.add_argument("--verifier", required=True,
-            help="verifier name (e.g. 'minimax-m2.7-iq4-xs', 'kimi-k2.5', 'qwen3-14b'). "
+            help="verifier name (e.g. 'minimax-m2.7-iq4-xs'). "
                  "Use 'generic' to describe a custom model via shape kwargs. "
                  "Run 'dflash-llama info' to list registered names.")
         sp.add_argument("--gguf-path", default=None, help="local path to a GGUF shard (mutually exclusive with --gguf-repo)")

@@ -11,7 +11,7 @@ your training experiments call for a different schedule.
 """
 from __future__ import annotations
 from typing import Optional, Sequence
-from .base import BaseVerifier
+from ..base import BaseVerifier
 
 _DSV4F_HIDDEN_SIZE = 4096
 _DSV4F_VOCAB_SIZE = 129280

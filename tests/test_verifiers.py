@@ -6,8 +6,29 @@ import pytest
 from dflash_llama.verifiers import (
     BaseVerifier,
     list_verifiers,
+    list_experimental_verifiers,
     load_verifier,
+    register_verifier,
 )
+
+
+@pytest.fixture(autouse=False)
+def _register_experimental():
+    """Opt-in fixture — register the experimental factories under their
+    canonical names for the duration of a test, then restore.
+    Snapshots the registry so leakage is impossible."""
+    from dflash_llama.verifiers import _REGISTRY
+    from dflash_llama.verifiers.experimental import (
+        kimi_k25, qwen3, qwen3_4b, qwen3_14b,
+    )
+    snapshot = dict(_REGISTRY)
+    register_verifier("kimi-k2.5", kimi_k25)
+    register_verifier("qwen3", qwen3)
+    register_verifier("qwen3-4b", qwen3_4b)
+    register_verifier("qwen3-14b", qwen3_14b)
+    yield
+    _REGISTRY.clear()
+    _REGISTRY.update(snapshot)
 
 
 def test_minimax_m27_shape():
@@ -30,7 +51,7 @@ def test_minimax_m27_iq4_xs_alias():
     assert v.name == "minimax-m2.7-iq4-xs"
 
 
-def test_kimi_k25_shape():
+def test_kimi_k25_shape(_register_experimental):
     v = load_verifier("kimi-k2.5", hf_path="/dummy")
     assert v.family == "kimi_k25"
     assert v.hidden_size == 7168
@@ -40,7 +61,7 @@ def test_kimi_k25_shape():
     assert tuple(v.layer_ids) == (1, 12, 24, 35, 47, 58)
 
 
-def test_qwen3_4b_and_14b():
+def test_qwen3_4b_and_14b(_register_experimental):
     a = load_verifier("qwen3-4b")
     assert a.family == "qwen3"
     assert a.hidden_size == 2560
@@ -51,7 +72,7 @@ def test_qwen3_4b_and_14b():
     assert b.num_hidden_layers == 48
 
 
-def test_generic_qwen3_with_overrides():
+def test_generic_qwen3_with_overrides(_register_experimental):
     v = load_verifier("qwen3", hidden_size=1024, num_hidden_layers=24)
     assert v.hidden_size == 1024
     assert v.num_hidden_layers == 24
@@ -60,6 +81,27 @@ def test_generic_qwen3_with_overrides():
 def test_unknown_verifier_raises():
     with pytest.raises(KeyError):
         load_verifier("totally-fake-model")
+
+
+def test_experimental_factories_listable():
+    """The experimental namespace exposes the factories we moved out."""
+    exp = list_experimental_verifiers()
+    for name in ("kimi_k25", "qwen3_4b", "qwen3_14b",
+                 "deepseek_v4_flash", "deepseek_v4_pro",
+                 "nemotron3_super_120b", "nemotron3_nano_30b_a3b"):
+        assert name in exp, f"missing experimental factory: {name}"
+
+
+def test_experimental_factories_not_in_default_registry():
+    """Default `list_verifiers()` must not advertise unverified families."""
+    names = list_verifiers()
+    for forbidden in ("kimi-k2.5", "qwen3-4b", "qwen3-14b",
+                      "deepseek-v4-flash", "deepseek-v4-pro",
+                      "nemotron3-super-120b", "nemotron3-nano-30b-a3b"):
+        assert forbidden not in names, (
+            f"{forbidden} leaked into default registry — it must stay in "
+            f"dflash_llama.verifiers.experimental"
+        )
 
 
 def test_layer_ids_must_be_sorted():
@@ -77,9 +119,11 @@ def test_list_verifiers_contains_known_names():
     names = list_verifiers()
     assert "minimax-m2.7" in names
     assert "minimax-m2.7-iq4-xs" in names
-    assert "kimi-k2.5" in names
-    assert "qwen3-4b" in names
-    assert "qwen3-14b" in names
+    # Experimental names are NOT in the default registry — they must be
+    # opted into via register_verifier().
+    assert "kimi-k2.5" not in names
+    assert "qwen3-4b" not in names
+    assert "qwen3-14b" not in names
 
 
 def test_to_dict_serialisable():

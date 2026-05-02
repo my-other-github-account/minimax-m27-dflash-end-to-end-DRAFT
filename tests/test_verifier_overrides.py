@@ -9,7 +9,19 @@ from dflash_llama import (
     generic_verifier,
     list_verifiers,
     load_verifier,
+    register_verifier,
 )
+
+
+@pytest.fixture(autouse=False)
+def _register_kimi():
+    from dflash_llama.verifiers import _REGISTRY
+    from dflash_llama.verifiers.experimental import kimi_k25
+    snapshot = dict(_REGISTRY)
+    register_verifier("kimi-k2.5", kimi_k25)
+    yield
+    _REGISTRY.clear()
+    _REGISTRY.update(snapshot)
 
 
 def test_layer_ids_override_minimax():
@@ -44,7 +56,7 @@ def test_shape_override_minimax():
     assert tuple(v.layer_ids) == (2, 8, 16, 24, 40, 79)
 
 
-def test_default_layer_ids_unchanged_without_override():
+def test_default_layer_ids_unchanged_without_override(_register_kimi):
     """Without any override, the canonical defaults must remain intact."""
     v = load_verifier("minimax-m2.7-iq4-xs", gguf_path="/fake.gguf")
     assert tuple(v.layer_ids) == (2, 16, 30, 45, 59, 61)
@@ -55,7 +67,7 @@ def test_default_layer_ids_unchanged_without_override():
     assert tuple(k.layer_ids) == (1, 12, 24, 35, 47, 58)
 
 
-def test_layer_ids_override_kimi():
+def test_layer_ids_override_kimi(_register_kimi):
     v = load_verifier(
         "kimi-k2.5",
         gguf_path="/fake/path.gguf",
@@ -174,6 +186,8 @@ def test_list_includes_known():
     names = list_verifiers()
     assert "minimax-m2.7" in names
     assert "minimax-m2.7-iq4-xs" in names
-    assert "kimi-k2.5" in names
-    assert "qwen3-4b" in names
-    assert "qwen3-14b" in names
+    # Experimental names are NOT in the default registry — see
+    # list_experimental_verifiers() / dflash_llama.verifiers.experimental
+    assert "kimi-k2.5" not in names
+    assert "qwen3-4b" not in names
+    assert "qwen3-14b" not in names
