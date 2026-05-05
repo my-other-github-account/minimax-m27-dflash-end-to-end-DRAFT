@@ -128,6 +128,11 @@ def cmd_train(args) -> int:
         speculators_train_script=args.train_script,
         log_path=args.log,
         dry_run=args.dry_run,
+        fp8_recipe=args.fp8_recipe,
+        te_use_fused=not args.no_te_fused,
+        drafter_intermediate_size=args.drafter_intermediate_size,
+        nan_skip=not args.no_nan_skip,
+        use_torchrun=args.use_torchrun,
     )
     print(json.dumps({k: v for k, v in result.items() if k != "cmd"}, indent=2))
     if args.dry_run:
@@ -148,6 +153,13 @@ def cmd_smoke(args) -> int:
     )
     if not args.skip_prepare:
         trainer.prepare()
+    extra_env = None
+    if getattr(args, "fp8_recipe", None):
+        # Surface the FP8-related env to the smoke run too. The smoke runner
+        # itself doesn't currently emit FP8 flags (it always shells out via
+        # torchrun), but documenting the intent in extra_env is useful for
+        # log archeology.
+        extra_env = {"DFLASH_LLAMA_FP8_RECIPE": str(args.fp8_recipe)}
     res = trainer.smoke(
         timeout_sec=args.timeout,
         save_path=args.save_path,
@@ -178,6 +190,29 @@ def cmd_info(args) -> int:
     print("registered verifiers:")
     for name in list_verifiers():
         print(f"  - {name}")
+    return 0
+
+
+def cmd_check_fp8(args) -> int:
+    """Print the current arch capability dict + recipe recommendation.
+
+    Cheap, side-effect-free hardware probe. Useful when bringing up a new
+    Spark / DGX / Hopper machine to confirm which FP8 recipe will actually
+    work before committing to a 14-epoch training run.
+    """
+    from .training.fp8 import current_arch
+
+    arch = current_arch()
+    print(json.dumps(arch, indent=2))
+    cap_int = arch.get("compute_capability_int")
+    if cap_int in (120, 121):
+        print()
+        print("⚠  Spark-class arch detected (sm_120/121). Reminders:")
+        print("   - kind='block_fp8' is silently NON-CONVERGENT here (TE #2382). REFUSED.")
+        print("   - kind='mxfp8' via TE is BLOCKED here (cuBLAS layout, TE #2668). REFUSED.")
+        print("   - kind='current_fp8' + fused te.LayerNormMLP IS the production recipe.")
+        print("   - Always use FP8Recipe(use_split_accumulator=True) on all 3 GEMMs.")
+        print("   - Launch via python (NOT torchrun) on single-GPU to avoid the silent-bf16 trap.")
     return 0
 
 
@@ -361,6 +396,38 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--log", default=None)
     st.add_argument("--skip-prepare", action="store_true")
     st.add_argument("--dry-run", action="store_true")
+    # FP8 production training (0.2.0+). See src/dflash_llama/training/fp8.py
+    # for the rationale behind every default in this group.
+    fp8 = st.add_argument_group(
+        "FP8 training (0.2.0+)",
+        "TransformerEngine FP8 + fused te.LayerNormMLP. Verified production "
+        "on MiniMax-M2.7-IQ4-XS v12, Spark sm_121, 2026-05-05. See "
+        "repro/04-fp8-bringup.md.",
+    )
+    fp8.add_argument("--fp8-recipe", default=None,
+        choices=["current_fp8", "delayed_e4m3", "block_fp8", "mxfp8", "bf16", "none"],
+        help="FP8 recipe kind. 'current_fp8' is the production recipe. "
+             "'block_fp8' is REFUSED on sm_120/121 (silently non-convergent, TE #2382). "
+             "'mxfp8' via TE is REFUSED on sm_120/121 (cuBLAS layout, TE #2668). "
+             "Omit (or pass 'bf16'/'none') to run bf16.")
+    fp8.add_argument("--no-te-fused", action="store_true",
+        help="Disable fused te.LayerNormMLP (keep separate norm+mlp). "
+             "Only do this if you're debugging fusion correctness — fusion is the "
+             "lever that makes intermediate=6144 fit, not FP8 alone.")
+    fp8.add_argument("--drafter-intermediate-size", type=int, default=None,
+        help="Override drafter MLP intermediate size. Recipe-faithful default "
+             "for MiniMax-M2.7-class drafters when FP8+fused is active is 6144 "
+             "(v11 used 4096; v12 production uses 6144).")
+    fp8.add_argument("--no-nan-skip", action="store_true",
+        help="Disable defensive NaN-skip optimizer guard. Default ON: skips "
+             "optimizer.step() when any gradient is NaN/Inf, increments "
+             "global_step, continues. Cheap insurance.")
+    fp8.add_argument("--use-torchrun", action="store_true",
+        help="Launch via torchrun instead of direct python. Default OFF in 0.2.0+ "
+             "to avoid the silent-bf16 trap on single-GPU FP8 runs (torchrun sets "
+             "WORLD_SIZE=1 which routes speculators through its FSDP branch — and "
+             "the TE wrap only lives in the single-GPU branch). Use this only for "
+             "genuine multi-GPU runs.")
     st.set_defaults(func=cmd_train)
 
     # smoke
@@ -377,6 +444,14 @@ def build_parser() -> argparse.ArgumentParser:
     sm.add_argument("--train-script", default=None)
     sm.add_argument("--skip-prepare", action="store_true")
     sm.add_argument("--dry-run", action="store_true")
+    # FP8 informational flag for smoke runs (smoke is plumbing-only, but we
+    # accept the flag so that 'dflash-llama smoke ... --fp8-recipe current_fp8'
+    # doesn't error out and so logs reflect intent).
+    sm.add_argument("--fp8-recipe", default=None,
+        choices=["current_fp8", "delayed_e4m3", "block_fp8", "mxfp8", "bf16", "none"],
+        help="(informational) FP8 recipe kind being smoke-tested. "
+             "Smoke itself runs the bf16 plumbing path; full FP8 paths "
+             "are exercised by 'dflash-llama train --fp8-recipe ...'.")
     sm.set_defaults(func=cmd_smoke)
 
     # eval
@@ -391,6 +466,11 @@ def build_parser() -> argparse.ArgumentParser:
     # info
     si = sub.add_parser("info", help="list registered verifiers")
     si.set_defaults(func=cmd_info)
+
+    # check-fp8 (0.2.0+) — arch capability probe
+    sc = sub.add_parser("check-fp8",
+        help="probe CUDA arch + print recommended FP8 recipe (0.2.0+)")
+    sc.set_defaults(func=cmd_check_fp8)
 
     # export-gguf
     sx = sub.add_parser("export-gguf",

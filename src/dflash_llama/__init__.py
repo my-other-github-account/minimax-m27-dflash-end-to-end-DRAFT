@@ -17,6 +17,13 @@ from .generation.format import load_trace, save_trace, saturating_fp8_cast
 from .training import DFlashTrainer, SelfDescribingTraceDataset
 from .training.prompts import assemble_prompts_arrow
 from .training.vocab_maps import build_vocab_maps
+from .training.fp8 import (
+    FP8Recipe,
+    make_te_recipe,
+    wrap_with_te,
+    fp8_autocast_ctx,
+    current_arch,
+)
 from .inference import (
     export_to_gguf,
     LlamaServer,
@@ -54,6 +61,12 @@ __all__ = [
     "SelfDescribingTraceDataset",
     "assemble_prompts_arrow",
     "build_vocab_maps",
+    # FP8 production training (0.2.0+)
+    "FP8Recipe",
+    "make_te_recipe",
+    "wrap_with_te",
+    "fp8_autocast_ctx",
+    "current_arch",
     # inference
     "export_to_gguf",
     "LlamaServer",

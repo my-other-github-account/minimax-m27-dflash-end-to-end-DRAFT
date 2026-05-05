@@ -1,15 +1,20 @@
 # dflash-llama
 
-Self-describing fp8 trace generation, DFlash drafter training, GGUF
-export, OpenAI-compatible serving, and per-position + chain-cumulative
-acceptance benchmarking — for **MiniMax-M2.7** as the validated path,
-plus a generic adapter for any other llama-family verifier.
+Self-describing fp8 trace generation, **TransformerEngine FP8 production
+training** (Float8CurrentScaling + fused te.LayerNormMLP — verified
++42% throughput on Spark sm_121, 2026-05-05), DFlash drafter training,
+GGUF export, OpenAI-compatible serving, and per-position +
+chain-cumulative acceptance benchmarking — for **MiniMax-M2.7** as the
+validated path, plus a generic adapter for any other llama-family
+verifier.
 
 This library replaces a fragile shell-script pipeline with a clean
 Python API. It is the canonical way to train DFlash speculative-decoding
 drafters in this repo.
 
 > **🚀 First time on a Spark? Start here:** [`repro/00-spark-from-scratch.md`](repro/00-spark-from-scratch.md) — full bringup from a bare machine, including the `llama-dump-hiddens` build, the `verifier_meta` stub, the prompts arrow, the speculators install, and the multi-host shard plan. Tested end-to-end on a 4× DGX Spark cluster.
+>
+> **🔥 Adding FP8 to an existing Spark? See [`repro/04-fp8-bringup.md`](repro/04-fp8-bringup.md)** — the four production blockers (split-accumulator NaN, silent-bf16 trap, BlockScaling silent non-convergence, MXFP8 cuBLAS block) and the cuBLAS LD_PRELOAD trick.
 
 ## What is verified end-to-end
 
@@ -36,8 +41,9 @@ and require explicit opt-in. See **Experimental factories** below.
 | topic | doc |
 |---|---|
 | §1 — Trace generation | [`repro/01-generation.md`](repro/01-generation.md) |
-| §2 — Training a DFlash drafter | [`repro/02-training.md`](repro/02-training.md) |
+| §2 — Training a DFlash drafter (incl. FP8 production recipe) | [`repro/02-training.md`](repro/02-training.md) |
 | §3 — Inference: GGUF export, OpenAI-compat server, speculative-decode benchmark | [`repro/03-inference.md`](repro/03-inference.md) |
+| §4 — FP8 bringup on a Spark | [`repro/04-fp8-bringup.md`](repro/04-fp8-bringup.md) |
 
 ## What you get
 
@@ -46,6 +52,17 @@ and require explicit opt-in. See **Experimental factories** below.
   `token_ids`, `input_ids`, `loss_mask`, plus full provenance metadata
   (`schema_version`, `source_name`, `source_row_idx`, `gen_timestamp`,
   `layer_ids`). No more post-hoc sha256 pairing.
+- **🔥 FP8 production training (0.2.0+)** —
+  `trainer.train(fp8_recipe="current_fp8", drafter_intermediate_size=6144,
+  te_use_fused=True)`. **+42% throughput** vs bf16 on Spark sm_121
+  (verified end-to-end on MiniMax-M2.7-IQ4-XS v12, 2026-05-05). The
+  library forces split-accumulator on all three GEMMs (the difference
+  between converging and NaN at step 40), refuses
+  `Float8BlockScaling` on sm_120/121 (silently non-convergent, TE
+  #2382), refuses MXFP8 via TE on sm_120/121 (cuBLAS layout, TE
+  #2668), guards against the silent-bf16 trap (torchrun + FP8 +
+  single-GPU silently dropping to bf16), and includes a NaN-skip
+  optimizer guard. See [`repro/04-fp8-bringup.md`](repro/04-fp8-bringup.md).
 - **End-to-end DFlash training** —
   `DFlashTrainer.prepare() → .smoke() → .train() → .offline_eval()`.
   Wraps the [speculators](https://github.com/neuralmagic/speculators)
@@ -74,7 +91,7 @@ git clone https://github.com/my-other-github-account/minimax-m27-dflash-end-to-e
 cd dflash-llama
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e .
-pytest tests/ -q                       # 79 tests pass on CPU in <2s
+pytest tests/ -q                       # 97 tests pass on CPU in <2s
 ```
 
 Then build `llama-dump-hiddens` reproducibly from a pinned upstream
@@ -96,6 +113,7 @@ needed.
 from dflash_llama import (
     DFlashTrainer, TraceGenerator, load_verifier,
     export_to_gguf, LlamaServer, benchmark,
+    FP8Recipe, current_arch,
 )
 
 # Hub slugs — library downloads to ~/.cache/dflash-llama/ on first use
@@ -130,7 +148,20 @@ trainer = DFlashTrainer(
 )
 trainer.prepare()                                          # arrow + vocab maps + hs symlinks
 trainer.smoke(timeout_sec=90, save_path="data/smoke_ckpt") # 90s plumbing check
-trainer.train(save_to="data/ckpt", epochs=14)              # writes val_metrics.json per epoch
+
+# 2a. bf16 training (legacy / non-Spark hardware)
+# trainer.train(save_to="data/ckpt", epochs=14)
+
+# 2b. FP8 production training (Spark sm_120+ / Hopper sm_90+) — the v12 launcher
+trainer.train(
+    save_to="data/ckpt",
+    epochs=15,
+    fp8_recipe="current_fp8",         # Float8CurrentScaling HYBRID
+    te_use_fused=True,                 # fused te.LayerNormMLP — THE memory lever
+    drafter_intermediate_size=6144,    # recipe-faithful for MiniMax-M2.7
+    nan_skip=True,                     # defensive optimizer guard
+    # use_torchrun=False               # default — avoids silent-bf16 trap
+)
 trainer.offline_eval(checkpoint="data/ckpt/checkpoint_best", max_batches=60)
 
 # 3. Export to GGUF
@@ -386,7 +417,7 @@ src/dflash_llama/
 │   ├── benchmark.py           # benchmark() with tqdm progress
 │   └── analyze.py             # SpeculativeReport, log parser, z-score
 └── cli.py                     # `dflash-llama` entry point
-tests/                         # 79 unit tests, all passing on CPU
+tests/                         # 97 unit tests, all passing on CPU
 repro/                         # walkthroughs + examples
 ```
 
@@ -423,8 +454,12 @@ verifier configs (validated + experimental), vocab maps (numpy/torch
 coercion), `SelfDescribingTraceDataset`, end-to-end smoke on synthetic
 data, GGUF-export module imports without buun, log-parser correctness
 on real `llama-speculative-simple` output, chained-prediction math, and
-the `LlamaServer` argv builder. All run on CPU; no GPU/network
-dependencies.
+the `LlamaServer` argv builder. **18 additional tests (0.2.0+)** cover
+the FP8Recipe dataclass, arch-detection schema, refusal of broken
+recipes on sm_120/121 (BlockScaling silent non-convergence, MXFP8
+cuBLAS block), the silent-bf16 trap guard, and the train-cmd FP8 flag
+plumbing. All run on CPU; no GPU/network dependencies. **97 tests
+total.**
 
 ## Roadmap
 

@@ -19,6 +19,7 @@ from ..verifiers.base import BaseVerifier
 from .prompts import assemble_prompts_arrow
 from .vocab_maps import build_vocab_maps
 from .smoke import run_smoke_test, SmokeResult
+from .fp8 import FP8Recipe
 
 
 def _resolve_torchrun() -> str:
@@ -166,18 +167,49 @@ class DFlashTrainer:
         port: int,
         speculators_train_script: Optional[str],
         total_seq_len: int,
+        fp8_recipe: Optional[FP8Recipe] = None,
+        te_use_fused: bool = True,
+        drafter_intermediate_size: Optional[int] = None,
+        nan_skip: bool = True,
+        use_torchrun: bool = False,
     ) -> list[str]:
+        """Build the speculators train.py command line.
+
+        Launch shape:
+        - ``use_torchrun=False`` (DEFAULT, single-GPU + FP8): runs
+          ``python <train_script> ...`` directly, avoiding the silent-bf16
+          trap (see :meth:`train` docstring for the full story).
+        - ``use_torchrun=True``: classic torchrun launch. Still supported
+          for genuine multi-GPU runs.
+
+        FP8-related flags are only emitted when ``fp8_recipe`` is set, so
+        an unpatched speculators install can still consume the bf16 path.
+        """
         train_script = speculators_train_script or os.environ.get(
             "SPECULATORS_TRAIN_SCRIPT",
             os.path.expanduser("~/repos/speculators/scripts/train.py"),
         )
         target_layer_ids = self.verifier.trainer_target_layer_ids()
-        torchrun_bin = _resolve_torchrun()
+
+        if use_torchrun:
+            torchrun_bin = _resolve_torchrun()
+            launcher = [
+                torchrun_bin,
+                f"--master_port={port}",
+                "--nproc-per-node=1",
+                train_script,
+            ]
+        else:
+            # Direct python invocation. Avoids the silent-bf16 trap on
+            # single-GPU machines: torchrun --nproc-per-node=1 sets
+            # RANK/WORLD_SIZE which routes speculators through its FSDP
+            # branch — and the TE wrap is only patched into the
+            # single-GPU branch, so torchrun silently runs bf16 with no
+            # [FP8] log line.
+            launcher = [sys.executable, train_script]
+
         cmd = [
-            torchrun_bin,
-            f"--master_port={port}",
-            "--nproc-per-node=1",
-            train_script,
+            *launcher,
             "--speculator-type", "dflash",
             "--verifier-name-or-path", str(self.verifier.hf_path or self.verifier.gguf_path or ""),
             "--data-path", str(self.paired_dir / "prompts"),
@@ -202,6 +234,24 @@ class DFlashTrainer:
         ]
         if save_best:
             cmd.append("--save-best")
+
+        # FP8 / TE plumbing — these flags are consumed by speculators
+        # *iff* it has been patched via scripts/patch_speculators_for_fp8.py.
+        # An unpatched speculators ignores unknown args (its argparse uses
+        # parse_known_args in newer versions); on older versions it raises
+        # a clear error instead of silently running bf16, which is the
+        # behavior we want.
+        if fp8_recipe is not None and fp8_recipe.kind is not None:
+            cmd.extend(["--fp8-recipe-kind", fp8_recipe.kind])
+            cmd.extend(["--fp8-format", fp8_recipe.format])
+            if fp8_recipe.use_split_accumulator:
+                cmd.append("--fp8-split-accumulator")
+            if te_use_fused:
+                cmd.append("--te-use-fused")
+        if drafter_intermediate_size is not None:
+            cmd.extend(["--drafter-intermediate-size", str(int(drafter_intermediate_size))])
+        if nan_skip:
+            cmd.append("--nan-skip")
         return cmd
 
     # -----------------------------------------------------------------
@@ -220,16 +270,74 @@ class DFlashTrainer:
         speculators_train_script: Optional[str] = None,
         log_path: Optional[str] = None,
         dry_run: bool = False,
+        # ---- FP8 production knobs (added in 0.2.0; see fp8.py module docstring) ----
+        fp8_recipe: "FP8Recipe | str | None" = None,
+        te_use_fused: bool = True,
+        drafter_intermediate_size: Optional[int] = None,
+        nan_skip: bool = True,
+        use_torchrun: bool = False,
     ) -> dict:
         """Run a full training job.
 
         Returns ``{"rc": int, "log_path": str, "cmd": [...]}``. ``dry_run=True``
         returns the exact command that would be invoked without executing it.
+
+        FP8 production training (added 0.2.0):
+
+            from dflash_llama import DFlashTrainer, FP8Recipe
+            t = DFlashTrainer(...)
+            t.train(
+                save_to=...,
+                fp8_recipe="current_fp8",        # or FP8Recipe(kind="current_fp8")
+                te_use_fused=True,                # default — fuses LayerNorm + MLP
+                drafter_intermediate_size=6144,   # recipe-faithful for MiniMax-M2.7
+                nan_skip=True,                    # default — defensive optimizer skip
+                # use_torchrun=False                # default — avoids silent-bf16 trap
+                epochs=15,
+            )
+
+        Silent-bf16 trap guard
+        ----------------------
+        ``use_torchrun=True`` combined with ``fp8_recipe`` set on a
+        single-GPU machine (``WORLD_SIZE`` env var unset or ``"1"``) will
+        raise ``RuntimeError`` rather than silently dropping back to
+        bf16. The bug: speculators routes through its FSDP branch the
+        moment torchrun sets ``RANK``/``WORLD_SIZE`` (which it always does,
+        even with ``--nproc-per-node=1``) — and the TE wrap is only
+        patched into the single-GPU branch. Result: torchrun + FP8 on
+        one GPU silently runs bf16, with no ``[FP8]`` line in the log
+        and the user thinks they were getting +42% throughput when they
+        weren't. We refuse to launch in that configuration.
         """
         if not self._prepared and not (self.paired_dir / "prompts" / "t2d.npy").exists():
             raise RuntimeError(
                 "trainer.prepare() must be called first (or pass an already-prepared paired_dir)"
             )
+
+        # Normalise fp8_recipe (string shorthand → FP8Recipe).
+        if isinstance(fp8_recipe, str) or fp8_recipe is None:
+            recipe_obj: Optional[FP8Recipe] = FP8Recipe.from_string(fp8_recipe) if fp8_recipe else None
+        else:
+            recipe_obj = fp8_recipe
+
+        # Silent-bf16 trap guard: torchrun + FP8 + WORLD_SIZE==1 ==> hard error.
+        if (
+            use_torchrun
+            and recipe_obj is not None
+            and recipe_obj.kind is not None
+            and int(os.environ.get("WORLD_SIZE", "1")) == 1
+        ):
+            raise RuntimeError(
+                "Silent-bf16 trap: launching with use_torchrun=True + fp8_recipe="
+                f"{recipe_obj.kind!r} on a single-GPU machine (WORLD_SIZE=1) is "
+                "refused. torchrun --nproc-per-node=1 sets RANK/WORLD_SIZE which "
+                "routes speculators through its FSDP branch; the TE wrap only "
+                "lives in the single-GPU branch, so this configuration silently "
+                "runs bf16 with no [FP8] log line. Either set use_torchrun=False "
+                "(default in 0.2.0+) or run with WORLD_SIZE > 1 / a real multi-GPU "
+                "launcher."
+            )
+
         save_to_p = Path(save_to)
         save_to_p.mkdir(parents=True, exist_ok=True)
         if log_path is None:
@@ -244,6 +352,11 @@ class DFlashTrainer:
             save_best=save_best, port=port,
             speculators_train_script=speculators_train_script,
             total_seq_len=total_seq_len,
+            fp8_recipe=recipe_obj,
+            te_use_fused=te_use_fused,
+            drafter_intermediate_size=drafter_intermediate_size,
+            nan_skip=nan_skip,
+            use_torchrun=use_torchrun,
         )
 
         if dry_run:

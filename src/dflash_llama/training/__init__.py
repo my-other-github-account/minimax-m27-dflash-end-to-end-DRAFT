@@ -5,6 +5,13 @@ from .prompts import assemble_prompts_arrow
 from .smoke import run_smoke_test, SmokeResult
 from .trainer import DFlashTrainer
 from .eval import offline_eval
+from .fp8 import (
+    FP8Recipe,
+    make_te_recipe,
+    wrap_with_te,
+    fp8_autocast_ctx,
+    current_arch,
+)
 
 __all__ = [
     "SelfDescribingTraceDataset",
@@ -16,4 +23,10 @@ __all__ = [
     "run_smoke_test",
     "SmokeResult",
     "offline_eval",
+    # FP8 production training
+    "FP8Recipe",
+    "make_te_recipe",
+    "wrap_with_te",
+    "fp8_autocast_ctx",
+    "current_arch",
 ]

@@ -85,7 +85,10 @@ def test_full_prepare_then_dryrun_train(synthetic_trace_dir, tmp_path):
     res = trainer.train(save_to=str(out), dry_run=True, epochs=3, max_anchors=64, lr=5e-5)
     assert res["dry_run"] is True
     cmd = res["cmd"]
-    assert "torchrun" in cmd[0]
+    # 0.2.0+: default launcher is direct python (avoids silent-bf16 trap on
+    # single-GPU FP8 runs). torchrun is opt-in via use_torchrun=True.
+    assert cmd[0].endswith("python") or cmd[0].endswith("python3") \
+        or "python" in cmd[0]
     cmd_str = " ".join(cmd)
     assert "--speculator-type dflash" in cmd_str
     assert "--data-path" in cmd_str
