@@ -107,3 +107,80 @@ print(f"  ✓ {eval_report}")
 
 print(f"\nDone. Checkpoint: {best_ckpt}")
 print(f"Next: convert to GGUF for llama.cpp speculative-decode (see repro/03-inference.md)")
+
+# 6. (External) GGUF conversion + chain-pos validation — see repro/03-inference.md.
+#
+# 7. (External) Empirical tau against llama-benchy / Project Gutenberg traffic.
+#
+# This step shells out to the bash scripts in repro/scripts/inference/.
+# It assumes the §3 conversion produced a *legacy target-lm-head* GGUF
+# (NOT the compact-d2t-i32 GGUF, which collapses tau to ~1.0 at runtime —
+# see repro/04-empirical-tau-llama-benchy.md §4.1) and that llama-server
+# from ~/llama.cpp-dflash is on $PATH. Default paths point at the spark-4
+# 2026-05-07 measurement; override DRAFTER_GGUF / VERIFIER_GGUF for your run.
+import shutil
+import signal
+import subprocess
+import time
+
+SCRIPTS = Path(__file__).resolve().parent.parent / "scripts" / "inference"
+VERIFIER_GGUF = os.environ.get(
+    "VERIFIER_GGUF",
+    "/home/user/clawd/iq4_models/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf",
+)
+DRAFTER_GGUF = os.environ.get(
+    "DRAFTER_GGUF",
+    str(WORK / "checkpoints" / "checkpoint_best.legacy-targethead.gguf"),
+)
+TAU_OUT_DIR = WORK / "empirical_tau"
+TAU_OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+print(f"\n[7/7] empirical tau against llama-benchy / Gutenberg")
+if not shutil.which("llama-server"):
+    print("  ! llama-server not on $PATH — skipping step 7")
+elif not Path(DRAFTER_GGUF).exists():
+    print(f"  ! drafter GGUF not found at {DRAFTER_GGUF} — skipping step 7")
+elif not Path(VERIFIER_GGUF).exists():
+    print(f"  ! verifier GGUF not found at {VERIFIER_GGUF} — skipping step 7")
+else:
+    server_log = TAU_OUT_DIR / "server_dflash.log"
+    proxy_jsonl = TAU_OUT_DIR / "empirical_tau_traffic.jsonl"
+    bench_json = TAU_OUT_DIR / "with_spec.json"
+
+    server = subprocess.Popen(
+        ["bash", str(SCRIPTS / "launch_server_dflash.sh")],
+        env={**os.environ,
+             "VERIFIER_GGUF": str(VERIFIER_GGUF),
+             "DRAFTER_GGUF": str(DRAFTER_GGUF),
+             "PORT": "8080",
+             "LOG": str(server_log)},
+        start_new_session=True,
+    )
+    try:
+        subprocess.check_call(
+            ["bash", str(SCRIPTS / "wait_for_server.sh")],
+            env={**os.environ, "PORT": "8080"},
+        )
+        proxy = subprocess.Popen(
+            ["python3", str(SCRIPTS / "tau_capture_proxy.py")],
+            env={**os.environ,
+                 "UPSTREAM_URL": "http://127.0.0.1:8080",
+                 "LISTEN_PORT": "8081",
+                 "OUT_JSONL": str(proxy_jsonl)},
+            start_new_session=True,
+        )
+        try:
+            time.sleep(2)  # let the proxy bind
+            subprocess.check_call(
+                ["bash", str(SCRIPTS / "bench.sh")],
+                env={**os.environ, "PORT": "8081", "OUT": str(bench_json)},
+            )
+            subprocess.check_call(
+                ["python3", str(SCRIPTS / "summarize_empirical_tau.py"),
+                 str(proxy_jsonl)],
+            )
+            print(f"  ✓ empirical tau receipts -> {TAU_OUT_DIR}")
+        finally:
+            os.killpg(os.getpgid(proxy.pid), signal.SIGTERM)
+    finally:
+        os.killpg(os.getpgid(server.pid), signal.SIGTERM)
