@@ -30,7 +30,8 @@ Training-distribution prompts (the MiniMax DFlash mix) yield tau ≈ 1.9–2.4;
 Project Gutenberg English narrative yields tau ≈ 1.57. There is a real
 ~0.4–0.7 tau gap when leaving the training distribution. The wall-clock
 translation in §4.9 is **not yet shippable**: the best tuned cell only breaks
-even, and the median tuned speedup remains below 1.0x.
+even, the median tuned speedup remains below 1.0x, and v9 Q4_K_M/Q8_0
+drafter quantization did not improve the serving path.
 
 This stage *only* makes sense after §3 produces a working legacy-targethead
 GGUF. Without §4.1 you measure tau ≈ 1.0 and the rest of this document is moot.
@@ -437,3 +438,53 @@ Artifacts:
 - Depth sweep: `with_spec_depth_dm1_pp256_d0_2048_r1_20260507_172441.json`,
   `no_spec_depth_pp256_d0_2048_r1_20260507_172210.json`
 - Concurrency blocker log: `~/dflash-mission/logs/server_wallclock_conc_spec_dm1_20260507_171818.log`
+
+### v9 quantized-drafter attempt
+
+The remaining untried lever after the bf16 wall-clock run was drafter
+quantization. Both quantized artifacts were generated successfully from the
+same legacy-targethead source GGUF:
+
+| artifact | size | row_04 sanity tau | verdict |
+|---|---:|---:|---|
+| `MiniMax-M2.7-DFlash-v11-step15080-legacy-targethead-Q4_K_M.gguf` | 244 MB | 2.822 | acceptance preserved |
+| `MiniMax-M2.7-DFlash-v11-step15080-legacy-targethead-Q8_0.gguf` | 439 MB | 2.822 | acceptance preserved |
+
+The OAI/llama-benchy proxy runs on the stable `pp=256,1024 depth=0 tg=128`
+cells showed that quantization did **not** reduce serving overhead in this
+fork. It preserved empirical tau but made throughput worse than the bf16
+drafter:
+
+| drafter | empirical tau on measured OAI cells | pp=256 speedup | pp=1024 speedup | median speedup | draft overhead at median |
+|---|---:|---:|---:|---:|---:|
+| bf16 legacy, `--draft-max 7` | 1.566 locked receipt | 0.798x | 0.568x | 0.683x | 1.29 |
+| bf16 legacy, best tuned `--draft-max 1` | not remeasured in proxy | 0.922x | 0.749x | 0.836x | 0.87 using tau=1.566 |
+| Q4_K_M legacy, `--draft-max 7` | 1.533 | 0.716x | 0.542x | 0.629x | 1.44 |
+| Q8_0 legacy, `--draft-max 7` | 1.600 | 0.742x | 0.549x | 0.646x | 1.48 |
+
+Interpretation: the quantized GGUFs load and draft correctly, but the DFlash
+quantized CUDA path is not faster for this small drafter on spark-4. The
+bottleneck is therefore not simply model file size or memory bandwidth; it is
+likely dequant/kernel overhead and/or the current server scheduling path.
+
+Final v9 verdict remains **block**. To reach the minimum deployable bar with
+the locked empirical tau `1.566`, median draft overhead must fall below about
+`0.566`. The best measured production-like median is still `0.836x`, which
+corresponds to roughly `0.87` overhead. A viable path forward needs a faster
+DFlash drafter execution path, not just post-hoc GGUF quantization. Concrete
+next engineering target: profile DFlash decode kernels for bf16 vs Q4/Q8 and
+make the quantized path actually reduce per-draft latency, or implement a
+serving path that can overlap draft work without requiring unsupported
+`n_parallel > 1`.
+
+Additional artifacts:
+
+- Quantization logs: `~/dflash-mission/logs/quantize_step15080_legacy_targethead_Q4_K_M_20260507.log`,
+  `~/dflash-mission/logs/quantize_step15080_legacy_targethead_Q8_0_20260507.log`
+- Row sanity receipts: `~/dflash-mission/replay/row04_q4km_sanity_step15080_legacy_targethead_20260507_1809_summary.json`,
+  `~/dflash-mission/replay/row04_q8_sanity_step15080_legacy_targethead_20260507_1814_summary.json`
+- OAI wall-clock/tau receipts: `with_spec_q4km_dm7_pp256_1024_depth0_r1_20260507_181127.json`,
+  `empirical_tau_q4km_dm7_20260507_181127.jsonl`,
+  `with_spec_q8_dm7_pp256_1024_depth0_r1_20260507_181602.json`,
+  `empirical_tau_q8_dm7_20260507_181602.jsonl`
+- Consolidated summary: `~/dflash-mission/realworld_results/wallclock_quant_v9_20260507_summary.json`
