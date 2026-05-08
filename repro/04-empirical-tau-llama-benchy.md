@@ -28,12 +28,14 @@ completions issued by `llama-benchy` against Project Gutenberg book text
 The data-distribution generalization verdict is **partial, not full.**
 Training-distribution prompts (the MiniMax DFlash mix) yield tau ≈ 1.9–2.4;
 Project Gutenberg English narrative yields tau ≈ 1.57. There is a real
-~0.4–0.7 tau gap when leaving the training distribution.
+~0.4–0.7 tau gap when leaving the training distribution. The wall-clock
+translation in §4.9 is **not yet shippable**: the best tuned cell only breaks
+even, and the median tuned speedup remains below 1.0x.
 
 This stage *only* makes sense after §3 produces a working legacy-targethead
 GGUF. Without §4.1 you measure tau ≈ 1.0 and the rest of this document is moot.
 
-Headline data: §4.6. Pitfalls that cost the most time: §4.1 and §4.8.
+Headline data: §4.6. Wall-clock translation: §4.9. Pitfalls that cost the most time: §4.1 and §4.8.
 
 ---
 
@@ -369,3 +371,69 @@ surface.
   the DFlash server today on spark-4. Stick to the compact stable cells
   for wall-clock comparisons; deep cells are still a known issue and
   the empirical-tau sample uses the captured request log instead.
+
+---
+
+## 4.9 Wall-clock translation: tau is not speedup
+
+The empirical tau result above answers whether the drafter generalizes to real
+OAI traffic. It does **not** by itself answer whether speculative decoding is
+worth enabling in production. The deployment metric is server-side generation
+throughput:
+
+```text
+wallclock_speedup = with_spec_tg_t_s / no_spec_tg_t_s
+                 ~= tau / (1 + draft_overhead_fraction)
+```
+
+Using the locked empirical tau sanity value `tau = 1.5659`, the current
+server-side translation is:
+
+| run / tuning | pp | depth | tg | with-spec t/s | no-spec t/s | speedup | draft overhead fraction |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `--draft-max 7` original | 256 | 0 | 128 | 3.246 | 4.066 | 0.798x | 0.961 |
+| `--draft-max 7` original | 1024 | 0 | 128 | 2.305 | 4.061 | 0.568x | 1.759 |
+| `--draft-max 1` tune | 256 | 0 | 128 | 3.749 | 4.066 | 0.922x | 0.698 |
+| `--draft-max 1` tune | 1024 | 0 | 128 | 3.041 | 4.061 | 0.749x | 1.091 |
+| `--draft-max 2` tune | 256 | 0 | 128 | 3.963 | 4.066 | 0.975x | 0.607 |
+| `--draft-max 2` tune | 1024 | 0 | 128 | 2.631 | 4.061 | 0.648x | 1.417 |
+| `--draft-max 4` tune | 256 | 0 | 128 | 3.643 | 4.066 | 0.896x | 0.748 |
+| `--draft-max 4` tune | 1024 | 0 | 128 | 2.467 | 4.061 | 0.607x | 1.578 |
+| `--draft-max 1`, depth sweep | 256 | 0 | 128 | 4.153 | 4.145 | **1.002x** | 0.563 |
+| `--draft-max 1`, depth sweep | 256 | 2048 | 128 | 2.075 | 4.096 | 0.507x | 2.091 |
+
+Summary:
+
+- Sanity tau: `1.5659`, matching the §4.6 empirical-tau receipt.
+- Original `--draft-max 7` median speedup: `0.683x` across the two stable
+  compact cells.
+- Best tuned median on the same `pp=256,1024 depth=0` cells: `0.836x` with
+  `--draft-max 1`; `--draft-max 2` nearly breaks even on `pp=256` but regresses
+  the `pp=1024` cell.
+- Best single cell: `pp=256 depth=0 tg=128 --draft-max 1`, `1.002x`. This is
+  statistical break-even, not a deployable win.
+- Worst cell: `pp=256 depth=2048 tg=128 --draft-max 1`, `0.507x`; deeper
+  context did not rescue overhead on this server path.
+- Concurrency sweep is blocked in this fork: `llama-server` exits with
+  `DFlash speculative decoding is not supported with n_parallel > 1`.
+- No quantized legacy-targethead drafter was present under `~/models`, so the
+  drafter-quantization lever was not available in this run.
+
+Verdict: **block for production as currently implemented.** The drafter does
+produce real accepted tokens on Gutenberg traffic, but the server-side drafter
+cost is too high relative to the verifier step. To ship, the serving path needs
+either a materially faster drafter path (for example a valid quantized
+legacy-targethead GGUF or faster draft decode kernels) or a server architecture
+that can overlap / batch draft work without losing DFlash support. Until median
+speedup is at least `1.0x`, spec decode should stay off for user-facing traffic.
+
+Artifacts:
+
+- Summary JSON: `~/dflash-mission/realworld_results/wallclock_translation_20260507_summary.json`
+- Original pair: `with_spec_compact_r1.json`, `no_spec_compact_r1.json`
+- Draft-max tuning: `with_spec_tune_dm1_pp256_1024_depth0_r1_20260507_170551.json`,
+  `with_spec_tune_dm2_pp256_1024_depth0_r1_20260507_170741.json`,
+  `with_spec_tune_dm4_pp256_1024_depth0_r1_20260507_170936.json`
+- Depth sweep: `with_spec_depth_dm1_pp256_d0_2048_r1_20260507_172441.json`,
+  `no_spec_depth_pp256_d0_2048_r1_20260507_172210.json`
+- Concurrency blocker log: `~/dflash-mission/logs/server_wallclock_conc_spec_dm1_20260507_171818.log`
