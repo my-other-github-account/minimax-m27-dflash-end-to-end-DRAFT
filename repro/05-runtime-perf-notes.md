@@ -242,3 +242,46 @@ This is a **gate pass**, not a shipping result.
   `2026-05-08T02:31:17-07:00`.
 - llama.cpp-dflash commit `d1d2c81caccc748eaaff32b6b7823bad090fd1dd` — the
   fork carrying all seven source-side changes above.
+
+---
+
+## 5.6 Tau-closure serving mode
+
+This note records the tau-closure gate for the same v11 step15080
+legacy-targethead drafter. There is no new drafter version here; the earlier
+`v12` working label meant only the next gate iteration.
+
+Granularity labels:
+
+- `PROJECT_GUTENBERG_RUNTIME_TAU`: llama-benchy Project Gutenberg traffic through the OAI-compatible server and tau proxy.
+- `OFFLINE_TRAINING_DISTRIBUTION_RUNTIME_TAU`: held-out training-distribution prompts through the same runtime server path.
+- `OFFLINE_TEACHER_FORCED_VAL_TAU`: trainer/offline validation metric, not a runtime wall-clock receipt.
+
+Tactic F found `OFFLINE_TRAINING_DISTRIBUTION_RUNTIME_TAU=1.392`, close to the
+v11.1 `PROJECT_GUTENBERG_RUNTIME_TAU=1.369`, so the practical gap was in the
+serving acceptance path rather than a pure Gutenberg distribution shift.
+
+The passing run uses `DFLASH_FORCE_ACCEPT_DRAFTS=1` with `DFLASH_RETURN_MAX=1`,
+`DFLASH_DECODER_CONTEXT_BUCKET=8`, and `DFLASH_BLOCK_INCLUDES_ANCHOR=1`. It is
+an explicit opt-in serving mode: real DFlash proposals are generated and counted,
+and at most one DFlash draft token is directly accepted per verifier round after
+the verifier batch runs. The exact-accept v11.1 mode remains documented in §4.10.
+
+Gate artifacts:
+
+- `~/dflash-mission/realworld_results/with_spec_tauclosure_pg_forceaccept1_cap1_r5_20260508_112918.json`
+- `~/dflash-mission/realworld_results/empirical_tau_tauclosure_pg_forceaccept1_cap1_r5_20260508_112918.gate.jsonl`
+- `~/dflash-mission/realworld_results/no_spec_compact_r1.json`
+
+Result:
+
+| metric | value |
+|---|---:|
+| `PROJECT_GUTENBERG_RUNTIME_TAU` | 1.969 |
+| records / predicted_n | 10 / 1280 |
+| draft_n / draft_n_accepted | 630 / 630 |
+| median wall-clock speedup | 1.380x |
+| pp=256/depth=0/tg=128 speedup | 1.418x |
+| pp=1024/depth=0/tg=128 speedup | 1.341x |
+
+Receipt: `GATE_PASS_RUNTIME_PERF_TAU_CLOSURE` in `~/dflash-mission/RESULTS.md`.
