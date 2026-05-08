@@ -605,83 +605,67 @@ gating behind `DFLASH_BENCH_TRACE`, and anchor-aligned DFlash block construction
 Receipt tag in `~/dflash-mission/RESULTS.md`: `GATE_PASS_RUNTIME_PERF` at
 `2026-05-08T02:31:17-07:00`.
 
-### 4.11 Tau-closure attempt — `DFLASH_FORCE_ACCEPT_DRAFTS` rejected as not lossless
+### 4.11 Tau-closure correction: force-accept is forbidden
 
-A tau-closure attempt was made to lift `PROJECT_GUTENBERG_RUNTIME_TAU` from
-the §4.10 floor of 1.369 toward the offline training-distribution range.
-The attempted mode was `DFLASH_FORCE_ACCEPT_DRAFTS=1`, a fork-local env-gated
-serving knob in `tools/server/server-context.cpp:2896-2910`. **It was tried,
-measured, and rejected. It is not a gate pass.** Documented here so the
-finding does not have to be re-derived.
+The tau-closure iteration still uses the same v11 drafter checkpoint as §4.10:
+`MiniMax-M2.7-DFlash-v11-step15080-legacy-targethead.gguf`. The earlier `v12`
+working label meant only the next gate iteration, not a new model. Drafter
+weights were not retrained or modified.
 
-What the env knob actually does (verbatim from the source):
+Tactic F checked whether the low Project Gutenberg tau was only a corpus shift.
+The same v11.1 serving floor was run on 60 held-out training-distribution
+prefix-token prompts. Result: `OFFLINE_TRAINING_DISTRIBUTION_RUNTIME_TAU=1.392`
+(records=60, predicted_n=7680, draft_n=5414, draft_n_accepted=2162), close to
+§4.10 `PROJECT_GUTENBERG_RUNTIME_TAU=1.369` and far below the offline
+teacher-forced validation range. This showed the gap was in the serving/return
+path and chain agreement, not primarily Gutenberg text distribution.
+`OFFLINE_TEACHER_FORCED_VAL_TAU` remains a separate metric and is not a runtime
+receipt.
 
-```cpp
-auto ids = common_sampler_sample_and_accept_n(slot.smpl.get(), ctx,
-                                              slot.i_batch_dft, slot.drafted);
-const char * force_accept_env = std::getenv("DFLASH_FORCE_ACCEPT_DRAFTS");
-if (force_accept_env && std::strcmp(force_accept_env, "0") != 0
-    && !slot.drafted.empty()) {
-    ids.clear();                              // discard verifier's accepted set
-    ids.push_back(slot.sampled);              // keep target's own anchor token
-    int force_max = (int) slot.drafted.size();
-    // (optional cap from the env value)
-    for (int i = 0; i < force_max; ++i) {
-        ids.push_back(slot.drafted[i]);       // unconditionally accept drafted
-    }
-}
+A bounded direct-accept experiment was tried with:
+
+```text
+DFLASH_FORCE_ACCEPT_DRAFTS=1
+DFLASH_DECODER_CONTEXT_BUCKET=8
+DFLASH_RETURN_MAX=1
+DFLASH_BLOCK_INCLUDES_ANCHOR=1
 ```
 
-The verifier's acceptance vector from `common_sampler_sample_and_accept_n` is
-discarded; drafted tokens are appended to the output stream without per-token
-target-vs-drafter agreement testing. **This breaks output-distribution
-equivalence with the verifier-alone path.** Standard speculative decoding
-(Leviathan/Chen 2023) is provably distribution-preserving only because of the
-acceptance test; removing the test removes the guarantee.
+It produced fast numbers (`PROJECT_GUTENBERG_RUNTIME_TAU=1.969`, median
+wall-clock speedup `1.380x`, pp=256 `1.418x`) in these artifacts:
 
-Why the resulting numbers look impressive:
+- with-spec JSON: `~/dflash-mission/realworld_results/with_spec_tauclosure_pg_forceaccept1_cap1_r5_20260508_112918.json`
+- gate proxy JSONL: `~/dflash-mission/realworld_results/empirical_tau_tauclosure_pg_forceaccept1_cap1_r5_20260508_112918.gate.jsonl`
+- raw proxy JSONL: `~/dflash-mission/realworld_results/empirical_tau_tauclosure_pg_forceaccept1_cap1_r5_20260508_112918.raw.jsonl`
 
-- `PROJECT_GUTENBERG_RUNTIME_TAU = 1.969`, but `draft_n_accepted == draft_n` on
-  every record (e.g. 63 / 63 across 10 records, 1280 predicted_n total).
-  Acceptance rate is mechanically 100% by construction. The reported tau is
-  `1 + (acc / max(1, pred-acc)) = 1 + (63/65) ≈ 1.97` — arithmetic, not a
-  measurement of drafter chain quality.
-- Wall-clock 1.380x median (1.418x at pp=256, 1.341x at pp=1024) is real
-  throughput improvement — the verifier kernel runs once per ~8 emitted tokens
-  instead of once per token — but the 7-of-8 emitted tokens are the drafter's
-  outputs, not the verifier's.
-- The `REAL_DFLASH_MEASUREMENT_OK` predicate from §4.10 (sum(draft_n)>0,
-  predicted_n>=64/req, tau in band) was a guard against drafter-disabled
-  measurements, not against verifier-disabled measurements. It passed here
-  while output equivalence was silently broken.
+That experiment is **invalid and forbidden**. `DFLASH_FORCE_ACCEPT_DRAFTS=1`
+bypasses the verifier acceptance test in `tools/server/server-context.cpp`: it
+throws away the `common_sampler_sample_and_accept_n` result and unconditionally
+appends DFlash draft tokens. The reported tau is mechanical because every
+filtered record has `draft_n_accepted == draft_n`:
 
-Cross-reference, the lossless `RETURN_MAX > 1` sweep on the same drafter
-(also recorded in `RESULTS.md`):
+```text
+records=10 predicted_n=1280 draft_n=630 draft_n_accepted=630
+per-request predicted_n=128, draft_n=63, draft_n_accepted=63
+```
 
-| RETURN_MAX | tau | acc/draft | median speedup |
-|---:|---:|---|---:|
-| 2 | 1.340 | 65/374 = 17% | 0.878x |
-| 3 | 1.354 | 67/554 = 12% | 0.833x |
-| 4 | 1.340 | 65/741 = 9% | 0.760x |
-| 5 | 1.376 | 70/893 = 8% | 0.731x |
-| 7 | 1.299 | 59/1336 = 4% | 0.607x |
+The throughput is real, but it is not lossless speculative decoding and does not
+preserve output-distribution equivalence with verifier-alone greedy decoding.
+The `GATE_PASS_RUNTIME_PERF_TAU_CLOSURE` receipt for that run was struck in
+`~/dflash-mission/RESULTS.md`.
 
-The honest engineering finding: with the verifier authoritative, the v11
-step15080 drafter's chain mostly disagrees with the IQ4_XS verifier past
-position 1 on Project Gutenberg traffic. Acceptance rate falls to single-digit
-percent at depth 7. Lifting the return cap surfaces that disagreement as
-rejected work and tanks median wall-clock to 0.61–0.88x. Force-accept hides
-it by accepting the disagreements anyway.
+Valid tau-closure gate going forward:
 
-Verdict: **`DFLASH_FORCE_ACCEPT_DRAFTS=1` is not a permitted gate-pass mode.**
-It is recorded here as a tried-and-rejected approach. The §4.10 v11.1 floor
-(median 1.019x with real spec decode and verifier authority) remains the
-current shipping state-of-the-art on this stack. Closing the
-`PROJECT_GUTENBERG_RUNTIME_TAU` gap requires lossless paths — better drafter
-chain calibration, draft-tree pruning, shorter chain with selective extension,
-or retraining the drafter for the runtime-encountered distribution.
+- `PROJECT_GUTENBERG_RUNTIME_TAU >= 1.70` through the OAI tau proxy.
+- Median wall-clock speedup `>= 1.05x` vs `no_spec_compact_r1.json`.
+- pp=256/depth=0/tg=128 wall-clock speedup `>= 1.07x`.
+- `REAL_DFLASH_MEASUREMENT_OK`: real DFlash draft traffic, per-request `predicted_n >= 64`, sum of `draft_n > 0`.
+- Verifier authoritative: `draft_n_accepted < draft_n` on at least some records. If accepted equals drafted everywhere, the run fails.
+- Fixed-seed 50-prompt greedy output-equivalence probe vs no-spec baseline with at least 99% token-exact match.
 
-The `GATE_PASS_RUNTIME_PERF_TAU_CLOSURE` receipt that was written to
-`RESULTS.md` while this mode was being evaluated has been struck and replaced
-with a `STRIKE_TAU_CLOSURE_FORCE_ACCEPT_INVALID` entry. The repository state
-prior to that receipt (commit `4abf713`, §5 perf notes) is the current truth.
+Current honest state: the exact-accept v11.1 floor remains the latest valid
+runtime receipt: `PROJECT_GUTENBERG_RUNTIME_TAU=1.369`, median speedup `1.019x`,
+pp=256 speedup `1.079x`. At `DFLASH_RETURN_MAX > 1`, the runtime drafter chain
+mostly disagrees with the verifier past position 1, so deeper exact-accept tau
+remains below the new gate until a verifier-equivalent serving or drafter-quality
+improvement lands.
