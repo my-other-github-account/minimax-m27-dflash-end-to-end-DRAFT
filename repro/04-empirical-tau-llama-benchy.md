@@ -551,3 +551,56 @@ Artifacts:
 - Tail-window summary: `~/dflash-mission/realworld_results/runtime_perf_v10_tailctx_profile_summary_20260507.json`
 - Tail-64 OAI result: `with_spec_tailctx_oai_tail64_20260507_225522.json`, `empirical_tau_tailctx_oai_tail64_20260507_225522.jsonl`
 - Tail-128 OAI result: `with_spec_tailctx_oai_tail128_20260507_225740.json`, `empirical_tau_tailctx_oai_tail128_20260507_225740.jsonl`
+
+### 4.10 v11.1 real-DFlash wall-clock gate pass
+
+The v11.1 binary gate required real DFlash drafting through the OAI-compatible
+server path: server launched with `--dflash`, the legacy-targethead drafter,
+and `--draft-max 7`; llama-benchy requests used `--tg 128`, `--no-warmup`, and
+`--skip-coherence`; the gate proxy JSONL was filtered to real generation
+requests with `predicted_n >= 64`.
+
+Passing run:
+
+- with-spec JSON: `~/dflash-mission/realworld_results/with_spec_dm7_asyncfeat_return1_ub1024_anchor_r1_20260508_014846.json`
+- gate proxy JSONL: `~/dflash-mission/realworld_results/empirical_tau_dm7_asyncfeat_return1_ub1024_anchor_r1_20260508_014846.gate.jsonl`
+- baseline JSON: `~/dflash-mission/realworld_results/no_spec_compact_r1.json`
+
+Runtime configuration:
+
+```text
+llama-server --dflash \
+  -m ~/clawd/iq4_models/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf \
+  -md ~/models/MiniMax-M2.7-DFlash-v11-step15080-legacy-targethead.gguf \
+  -c 4096 -cd 4096 -b 4096 -ub 1024 \
+  --draft-max 7 --draft-p-min 0.0 --sampling-seq k --top-k 1 --temp 0.0
+
+DFLASH_DECODER_CONTEXT_BUCKET=8
+DFLASH_RETURN_MAX=1
+DFLASH_BLOCK_INCLUDES_ANCHOR=1
+```
+
+Gate sanity from the filtered proxy JSONL:
+
+```text
+records=2 predicted_n=256 draft_n=184 draft_n_accepted=69 empirical_tau=1.369
+REAL_DFLASH_MEASUREMENT_OK
+```
+
+Wall-clock generation throughput versus the v8 no-spec baseline:
+
+| cell | with-spec tg t/s | no-spec tg t/s | speedup |
+|---|---:|---:|---:|
+| pp=256, depth=0, tg=128 | 4.388736 | 4.065855 | 1.079x |
+| pp=1024, depth=0, tg=128 | 3.892503 | 4.060645 | 0.959x |
+| median | | | 1.019x |
+
+The source changes that mattered were the bucketed DFlash cross-context reuse
+path, dirty append upload for accumulated target context, the flash-attn mask
+fix, a `DFLASH_RETURN_MAX` validation cap while keeping the server invocation at
+`--draft-max 7`, larger serving ubatch (`-ub 1024`), batched DFlash target
+feature async reads with a single scheduler sync per extraction, debug dump
+gating behind `DFLASH_BENCH_TRACE`, and anchor-aligned DFlash block construction.
+
+Receipt tag in `~/dflash-mission/RESULTS.md`: `GATE_PASS_RUNTIME_PERF` at
+`2026-05-08T02:31:17-07:00`.
