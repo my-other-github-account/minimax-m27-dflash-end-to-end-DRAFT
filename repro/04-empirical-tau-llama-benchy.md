@@ -488,3 +488,66 @@ Additional artifacts:
   `with_spec_q8_dm7_pp256_1024_depth0_r1_20260507_181602.json`,
   `empirical_tau_q8_dm7_20260507_181602.jsonl`
 - Consolidated summary: `~/dflash-mission/realworld_results/wallclock_quant_v9_20260507_summary.json`
+
+### v10 serving-profile blocker
+
+The v10 objective was to turn the locked empirical-tau result into actual
+user-facing OAI throughput, with a bare minimum bar of median wall-clock
+speedup >= `1.0x` versus `--draft-max 0`. The locked sanity value remains
+`empirical_tau = 1.566`, but Nsight Systems shows the current serving path is
+blocked by DFlash decoder context handling rather than by the bf16 drafter GEMM
+itself.
+
+Profile receipt, `nsys_spec_bf16_dm7_pp256_20260507_224136`:
+
+| measured term | value |
+|---|---:|
+| server eval time for profiled request | 41.268 s |
+| logged DFlash draft-generation time | 5.214 s |
+| CUDA host-to-device memcpy time | 17.809 s |
+| CUDA host-to-device bytes | 361.164 GB |
+| `cudaMemcpyAsync` API time | 18.290 s |
+| `cudaStreamSynchronize` API time | 5.573 s |
+| bf16 DFlash matmul kernel total | 0.237 s |
+
+The dominant cost is repeated multi-megabyte H2D upload and full-prefix decoder
+work. The DFlash decoder path feeds `accumulated_ctx` through the generic
+cross-attention input (`llama_set_dflash_accumulated_target_ctx` ->
+`cross.v_embd` -> `ggml_backend_tensor_set`) on every draft call, then rebuilds
+K/V projections over the full accumulated target prefix because this decoder
+path has no DFlash KV/projection cache. The kernel profile does not support
+spending more time on drafter quantization as the next lever; Q4/Q8 already
+failed to improve wall-clock in §4.9.
+
+As a low-risk probe, an experimental `DFLASH_DECODER_CONTEXT_TAIL` window was
+added locally in the llama.cpp fork to send only the last `N` encoded target
+states into the DFlash decoder while preserving absolute positions. This did
+reduce some full-prefix work, but it destroyed enough acceptance on the actual
+llama-benchy traffic that wall-clock remained far below parity:
+
+| tail window | empirical tau on measured OAI cells | pp=256 speedup | pp=1024 speedup | median speedup | verdict |
+|---|---:|---:|---:|---:|---|
+| 64 tokens | 1.093 | 0.731x | 0.628x | 0.680x | block |
+| 128 tokens | 1.090 | 0.770x | 0.574x | 0.672x | block |
+
+This confirms the needed fix is architectural, not another surface-level tuning
+sweep. To reach production parity with the locked tau, the serving path needs a
+persistent DFlash decoder cache: keep encoded target context resident on device,
+append only new accepted rows, and cache/reuse target-side K/V projections (or
+otherwise fuse/overlap that work) instead of re-uploading and re-projecting the
+entire prefix every draft round. The current server also rejects `n_parallel > 1`
+with DFlash, so concurrency cannot hide the cost in this fork.
+
+Final v10 verdict: **block** for user-facing traffic. Empirical tau generalizes,
+but median wall-clock speedup is still below `1.0x`; the best production-like
+median remains the earlier `--draft-max 1` result at `0.836x`, and the
+profile-guided tail-window experiment only reached `0.680x` / `0.672x` while
+collapsing empirical tau to about `1.09`.
+
+Artifacts:
+
+- Nsight profile: `~/dflash-mission/profiles/nsys_spec_bf16_dm7_pp256_20260507_224136.nsys-rep`
+- Nsight stats: `~/dflash-mission/profiles/nsys_spec_bf16_dm7_pp256_20260507_224136_stats.txt`
+- Tail-window summary: `~/dflash-mission/realworld_results/runtime_perf_v10_tailctx_profile_summary_20260507.json`
+- Tail-64 OAI result: `with_spec_tailctx_oai_tail64_20260507_225522.json`, `empirical_tau_tailctx_oai_tail64_20260507_225522.jsonl`
+- Tail-128 OAI result: `with_spec_tailctx_oai_tail128_20260507_225740.json`, `empirical_tau_tailctx_oai_tail128_20260507_225740.jsonl`
