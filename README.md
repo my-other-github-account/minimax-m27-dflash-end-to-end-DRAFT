@@ -38,6 +38,8 @@ and require explicit opt-in. See **Experimental factories** below.
 | §1 — Trace generation | [`repro/01-generation.md`](repro/01-generation.md) |
 | §2 — Training a DFlash drafter | [`repro/02-training.md`](repro/02-training.md) |
 | §3 — Inference: GGUF export, OpenAI-compat server, speculative-decode benchmark | [`repro/03-inference.md`](repro/03-inference.md) |
+| §4 — Empirical tau against llama-benchy / Project Gutenberg traffic | [`repro/04-empirical-tau-llama-benchy.md`](repro/04-empirical-tau-llama-benchy.md) |
+| §5 — Runtime perf notes: how the v11.1 wall-clock gate was cleared | [`repro/05-runtime-perf-notes.md`](repro/05-runtime-perf-notes.md) |
 
 ## What you get
 
