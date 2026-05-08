@@ -242,3 +242,38 @@ This is a **gate pass**, not a shipping result.
   `2026-05-08T02:31:17-07:00`.
 - llama.cpp-dflash commit `d1d2c81caccc748eaaff32b6b7823bad090fd1dd` — the
   fork carrying all seven source-side changes above.
+
+## 5.6 Verifier authority is mandatory — `DFLASH_FORCE_ACCEPT_DRAFTS` rejected
+
+A short follow-up so this engineering finding doesn't have to be re-derived.
+
+A tau-closure attempt tried `DFLASH_FORCE_ACCEPT_DRAFTS=1` to lift
+`PROJECT_GUTENBERG_RUNTIME_TAU` from 1.369 (§4.10 floor) toward the
+offline training-distribution range. It produced apparent tau=1.969 and
+median wall-clock 1.380x, but the env knob bypasses the verifier acceptance
+test in `tools/server/server-context.cpp:2896-2910` — it discards
+`common_sampler_sample_and_accept_n`'s verdict and appends drafted tokens
+unconditionally. That breaks output-distribution equivalence with the
+verifier-alone path, which is the exact property standard speculative
+decoding (Leviathan/Chen 2023) preserves.
+
+The "tau" in that mode is not a measurement: by construction
+`draft_n_accepted == draft_n` always, so the formula
+`tau = 1 + acc/(pred-acc)` returns whatever the chain depth was. The
+wall-clock gain is real throughput but the emitted tokens are the drafter's,
+not the verifier's. Full discussion and source quote in §4.11.
+
+**Rule:** every gate going forward requires `draft_n_accepted < draft_n` on
+at least some records (proving the verifier rejected something), AND a
+50-prompt fixed-seed greedy output-equivalence probe vs the no-spec baseline
+with ≥99% token-exact match. If acceptance is 100% on every record, the
+verifier is not authoritative and the receipt does not count.
+
+The honest finding from the lossless `RETURN_MAX > 1` sweep that motivated
+the attempt: at depth 7, the v11 step15080 drafter's chain agrees with the
+IQ4_XS verifier on only ~4% of proposals on Project Gutenberg traffic, and
+the per-step verification cost outweighs the win on most cells. That points
+at lossless paths to investigate next — better drafter chain calibration,
+shorter chain with selective extension, draft-tree pruning, or retraining
+the drafter for the runtime-encountered distribution. Force-accept is
+not on the table.

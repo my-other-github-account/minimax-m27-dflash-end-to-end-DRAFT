@@ -604,3 +604,84 @@ gating behind `DFLASH_BENCH_TRACE`, and anchor-aligned DFlash block construction
 
 Receipt tag in `~/dflash-mission/RESULTS.md`: `GATE_PASS_RUNTIME_PERF` at
 `2026-05-08T02:31:17-07:00`.
+
+### 4.11 Tau-closure attempt — `DFLASH_FORCE_ACCEPT_DRAFTS` rejected as not lossless
+
+A tau-closure attempt was made to lift `PROJECT_GUTENBERG_RUNTIME_TAU` from
+the §4.10 floor of 1.369 toward the offline training-distribution range.
+The attempted mode was `DFLASH_FORCE_ACCEPT_DRAFTS=1`, a fork-local env-gated
+serving knob in `tools/server/server-context.cpp:2896-2910`. **It was tried,
+measured, and rejected. It is not a gate pass.** Documented here so the
+finding does not have to be re-derived.
+
+What the env knob actually does (verbatim from the source):
+
+```cpp
+auto ids = common_sampler_sample_and_accept_n(slot.smpl.get(), ctx,
+                                              slot.i_batch_dft, slot.drafted);
+const char * force_accept_env = std::getenv("DFLASH_FORCE_ACCEPT_DRAFTS");
+if (force_accept_env && std::strcmp(force_accept_env, "0") != 0
+    && !slot.drafted.empty()) {
+    ids.clear();                              // discard verifier's accepted set
+    ids.push_back(slot.sampled);              // keep target's own anchor token
+    int force_max = (int) slot.drafted.size();
+    // (optional cap from the env value)
+    for (int i = 0; i < force_max; ++i) {
+        ids.push_back(slot.drafted[i]);       // unconditionally accept drafted
+    }
+}
+```
+
+The verifier's acceptance vector from `common_sampler_sample_and_accept_n` is
+discarded; drafted tokens are appended to the output stream without per-token
+target-vs-drafter agreement testing. **This breaks output-distribution
+equivalence with the verifier-alone path.** Standard speculative decoding
+(Leviathan/Chen 2023) is provably distribution-preserving only because of the
+acceptance test; removing the test removes the guarantee.
+
+Why the resulting numbers look impressive:
+
+- `PROJECT_GUTENBERG_RUNTIME_TAU = 1.969`, but `draft_n_accepted == draft_n` on
+  every record (e.g. 63 / 63 across 10 records, 1280 predicted_n total).
+  Acceptance rate is mechanically 100% by construction. The reported tau is
+  `1 + (acc / max(1, pred-acc)) = 1 + (63/65) ≈ 1.97` — arithmetic, not a
+  measurement of drafter chain quality.
+- Wall-clock 1.380x median (1.418x at pp=256, 1.341x at pp=1024) is real
+  throughput improvement — the verifier kernel runs once per ~8 emitted tokens
+  instead of once per token — but the 7-of-8 emitted tokens are the drafter's
+  outputs, not the verifier's.
+- The `REAL_DFLASH_MEASUREMENT_OK` predicate from §4.10 (sum(draft_n)>0,
+  predicted_n>=64/req, tau in band) was a guard against drafter-disabled
+  measurements, not against verifier-disabled measurements. It passed here
+  while output equivalence was silently broken.
+
+Cross-reference, the lossless `RETURN_MAX > 1` sweep on the same drafter
+(also recorded in `RESULTS.md`):
+
+| RETURN_MAX | tau | acc/draft | median speedup |
+|---:|---:|---|---:|
+| 2 | 1.340 | 65/374 = 17% | 0.878x |
+| 3 | 1.354 | 67/554 = 12% | 0.833x |
+| 4 | 1.340 | 65/741 = 9% | 0.760x |
+| 5 | 1.376 | 70/893 = 8% | 0.731x |
+| 7 | 1.299 | 59/1336 = 4% | 0.607x |
+
+The honest engineering finding: with the verifier authoritative, the v11
+step15080 drafter's chain mostly disagrees with the IQ4_XS verifier past
+position 1 on Project Gutenberg traffic. Acceptance rate falls to single-digit
+percent at depth 7. Lifting the return cap surfaces that disagreement as
+rejected work and tanks median wall-clock to 0.61–0.88x. Force-accept hides
+it by accepting the disagreements anyway.
+
+Verdict: **`DFLASH_FORCE_ACCEPT_DRAFTS=1` is not a permitted gate-pass mode.**
+It is recorded here as a tried-and-rejected approach. The §4.10 v11.1 floor
+(median 1.019x with real spec decode and verifier authority) remains the
+current shipping state-of-the-art on this stack. Closing the
+`PROJECT_GUTENBERG_RUNTIME_TAU` gap requires lossless paths — better drafter
+chain calibration, draft-tree pruning, shorter chain with selective extension,
+or retraining the drafter for the runtime-encountered distribution.
+
+The `GATE_PASS_RUNTIME_PERF_TAU_CLOSURE` receipt that was written to
+`RESULTS.md` while this mode was being evaluated has been struck and replaced
+with a `STRIKE_TAU_CLOSURE_FORCE_ACCEPT_INVALID` entry. The repository state
+prior to that receipt (commit `4abf713`, §5 perf notes) is the current truth.
