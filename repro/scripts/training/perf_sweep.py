@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Iterable
 
 from datasets import concatenate_datasets, load_from_disk
+from safetensors.torch import load_file
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -169,6 +170,13 @@ def _seconds_between(start_hms: str, end_hms: str) -> int:
     return end - start
 
 
+def _extract_event_time(log_text: str, pattern: str) -> str | None:
+    match = re.search(pattern, log_text)
+    if match:
+        return match.group(1)
+    return None
+
+
 def _parse_fp8_receipt(log_text: str) -> dict[str, bool]:
     return {
         "has_fp8_line": "[FP8]" in log_text,
@@ -231,6 +239,27 @@ def _materialize_combined_pool(
                 keep_indices.append(idx)
         return keep_indices
 
+    def _filter_indices_with_finite_hidden_states(
+        indices: list[int],
+        *,
+        hidden_states_root: Path,
+    ) -> list[int]:
+        kept: list[int] = []
+        bad = 0
+        for idx in indices:
+            hs_path = hidden_states_root / f"hs_{idx}.safetensors"
+            hs = load_file(str(hs_path))["hidden_states"].float()
+            if hs.isfinite().all():
+                kept.append(idx)
+            else:
+                bad += 1
+        if bad:
+            print(
+                f"[perf_sweep] filtering {bad} non-finite hidden-state rows "
+                f"from {hidden_states_root}"
+            )
+        return kept
+
     common_cols = ["input_ids", "loss_mask", "seq_len"]
     datasets = []
     source_keep_indices: list[list[int]] = []
@@ -242,6 +271,12 @@ def _materialize_combined_pool(
                 f"[perf_sweep] filtering {len(ds) - len(keep_indices)} zero-anchor rows "
                 f"from {src['datapath']}"
             )
+        if "train_paired_v3" in str(src.get("name", "")) or "train_paired_v3" in str(src["hidden_states_path"]):
+            keep_indices = _filter_indices_with_finite_hidden_states(
+                keep_indices,
+                hidden_states_root=Path(src["hidden_states_path"]),
+            )
+        if len(keep_indices) != len(ds):
             ds = ds.select(keep_indices)
         source_keep_indices.append(keep_indices)
         keep = [col for col in common_cols if col in ds.column_names]
@@ -662,7 +697,7 @@ def _run_cell(
     if points:
         loss_0 = next((p["loss"] for p in points if p["step"] == 0), points[0]["loss"])
         loss_final = points[-1]["loss"]
-        usable = [p for p in points if isinstance(p["step"], int) and int(p["step"]) >= 50]
+        usable = [p for p in points if isinstance(p["step"], int) and int(p["step"]) > 0]
         if len(usable) >= 2:
             deltas = []
             for prev, cur in zip(usable, usable[1:]):
@@ -673,12 +708,23 @@ def _run_cell(
             if deltas:
                 step_time_ms = sum(deltas) / len(deltas)
         start_point = next((p for p in points if p["step"] == 0), points[0])
-        trigger_match = re.search(
-            rf"\[(\d\d:\d\d:\d\d)\].*In-epoch validation triggered at global_step={args.target_step}",
-            log_text,
+        target_point = next(
+            (p for p in points if p["step"] == args.target_step),
+            None,
         )
-        if trigger_match:
-            elapsed = _seconds_between(str(start_point["timestamp"]), trigger_match.group(1))
+        trigger_time = (
+            str(target_point["timestamp"])
+            if target_point is not None
+            else _extract_event_time(
+                log_text,
+                rf"\[(\d\d:\d\d:\d\d)\][^\n]*In-epoch validation triggered at[^\n]*global_step={args.target_step}",
+            ) or _extract_event_time(
+                log_text,
+                rf"\[(\d\d:\d\d:\d\d)\][^\n]*In-epoch val_metrics saved",
+            )
+        )
+        if trigger_time:
+            elapsed = _seconds_between(str(start_point["timestamp"]), trigger_time)
             if elapsed > 0:
                 throughput = (
                     BASE_TOTAL_SEQ_LEN * args.max_anchors * micro_bs * args.target_step
