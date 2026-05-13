@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -21,6 +22,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+
+from datasets import concatenate_datasets, load_from_disk
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -205,6 +208,53 @@ def _build_default_data_sources_json(path: Path) -> Path:
     ]
     path.write_text(json.dumps(payload, indent=2) + "\n")
     return path
+
+
+def _materialize_combined_pool(
+    *,
+    data_sources_path: Path,
+    dest_root: Path,
+) -> tuple[Path, Path]:
+    prompts_out = dest_root / "combined_prompts"
+    hidden_states_out = dest_root / "combined_hidden_states"
+    if prompts_out.exists() and hidden_states_out.exists():
+        return prompts_out, hidden_states_out
+
+    sources = json.loads(data_sources_path.read_text())
+    if not isinstance(sources, list) or not sources:
+        raise ValueError(f"invalid data sources file: {data_sources_path}")
+
+    common_cols = ["input_ids", "loss_mask", "seq_len"]
+    datasets = []
+    for src in sources:
+        ds = load_from_disk(src["datapath"])
+        keep = [col for col in common_cols if col in ds.column_names]
+        datasets.append(ds.select_columns(keep))
+    combined = concatenate_datasets(datasets)
+    prompts_out.parent.mkdir(parents=True, exist_ok=True)
+    combined.save_to_disk(str(prompts_out))
+
+    first_prompts = Path(sources[0]["datapath"])
+    for name in ("d2t.npy", "t2d.npy", "token_freq.pt", "dataset_info.json", "state.json"):
+        src = first_prompts / name
+        dst = prompts_out / name
+        if src.exists() and not dst.exists():
+            shutil.copy2(src, dst)
+
+    hidden_states_out.mkdir(parents=True, exist_ok=True)
+    out_idx = 0
+    for src in sources:
+        hs_root = Path(src["hidden_states_path"])
+        hs_files = sorted(
+            hs_root.glob("hs_*.safetensors"),
+            key=lambda p: int(p.stem.split("_")[1]),
+        )
+        for hs_file in hs_files:
+            dst = hidden_states_out / f"hs_{out_idx}.safetensors"
+            if not dst.exists():
+                dst.symlink_to(hs_file)
+            out_idx += 1
+    return prompts_out, hidden_states_out
 
 
 def _build_env(
@@ -715,6 +765,14 @@ def main() -> int:
     args.run_root.mkdir(parents=True, exist_ok=True)
     if args.data_sources_path is None:
         args.data_sources_path = _build_default_data_sources_json(args.run_root / "full_55k_sources.json")
+    if args.data_sources_path is not None:
+        prompts_path, hidden_states_path = _materialize_combined_pool(
+            data_sources_path=args.data_sources_path,
+            dest_root=args.run_root,
+        )
+        args.vocab_data_path = prompts_path
+        args.default_hidden_states_path = hidden_states_path
+        args.data_sources_path = None
     config_order = args.config_id or ["C1", "C3", "C4", "C5", "C6"]
     jsonl_path = args.run_root / f"{args.results_prefix}.jsonl"
     md_path = args.run_root / f"{args.results_prefix}.md"
