@@ -447,6 +447,9 @@ def wrap_with_te(model: nn.Module, fp8: bool = True) -> nn.Module:
 
     If env TE_USE_FUSED=1, also fuses Qwen3 (post_attention_layernorm + mlp)
     into te.LayerNormMLP BEFORE doing the plain nn.Linear -> te.Linear sweep.
+    The newer attention/lm_head fusions remain enabled by default and can be
+    disabled per-run with ``TE_DISABLE_EXTENDED_FUSION=1`` to reproduce the
+    older v12-stable MLP-only fused recipe.
 
     Returns model unchanged if fp8=False or TE unavailable.
     Idempotent: calling twice is a no-op.
@@ -458,27 +461,35 @@ def wrap_with_te(model: nn.Module, fp8: bool = True) -> nn.Module:
         return model
 
     use_fused = os.environ.get("TE_USE_FUSED", "0") == "1"
+    use_extended_fusion = os.environ.get("TE_DISABLE_EXTENDED_FUSION", "0") != "1"
     n_fused_mlp = 0
     n_fused_attn = 0
     n_fused_lm_head = 0
     if use_fused:
         n_fused_mlp = _fuse_qwen3_decoder_mlp_blocks(model)
-        n_fused_attn = _fuse_qwen3_attention_qkv(model)
-        n_fused_lm_head = _fuse_final_norm_lm_head(model)
+        if use_extended_fusion:
+            n_fused_attn = _fuse_qwen3_attention_qkv(model)
+            n_fused_lm_head = _fuse_final_norm_lm_head(model)
         logger.info(f"[te_wrap] fused {n_fused_mlp} Qwen3 (post_norm+mlp) -> te.LayerNormMLP")
-        logger.info(
-            "[te_wrap] fused %s DFlash attention blocks (input_norm+q_proj) -> "
-            "te.LayerNormLinear and %s final norm+lm_head pairs",
-            n_fused_attn,
-            n_fused_lm_head,
-        )
+        if use_extended_fusion:
+            logger.info(
+                "[te_wrap] fused %s DFlash attention blocks (input_norm+q_proj) -> "
+                "te.LayerNormLinear and %s final norm+lm_head pairs",
+                n_fused_attn,
+                n_fused_lm_head,
+            )
+        else:
+            logger.info("[te_wrap] extended TE fusion disabled by TE_DISABLE_EXTENDED_FUSION=1")
         print(f"[te_wrap] fused {n_fused_mlp} Qwen3 (post_norm+mlp) -> te.LayerNormMLP", flush=True)
-        print(
-            "[te_wrap] fused "
-            f"{n_fused_attn} DFlash attention blocks (input_norm+q_proj) -> "
-            f"te.LayerNormLinear and {n_fused_lm_head} final norm+lm_head pairs",
-            flush=True,
-        )
+        if use_extended_fusion:
+            print(
+                "[te_wrap] fused "
+                f"{n_fused_attn} DFlash attention blocks (input_norm+q_proj) -> "
+                f"te.LayerNormLinear and {n_fused_lm_head} final norm+lm_head pairs",
+                flush=True,
+            )
+        else:
+            print("[te_wrap] extended TE fusion disabled by TE_DISABLE_EXTENDED_FUSION=1", flush=True)
 
     n = _replace_linear(model)
     logger.info(f"[te_wrap] replaced {n} nn.Linear with te.Linear")
@@ -520,6 +531,11 @@ def fusion_coverage(model: nn.Module) -> dict:
             coverage["unfused"].append(name)
         elif isinstance(module, nn.Embedding):
             coverage["nn_embedding"].append(name)
+    if getattr(model, "_liger_fused_linear_ce", False):
+        coverage["liger_fused_lce"].append("model.forward")
+    rope_patches = int(getattr(model, "_liger_rope_patches", 0) or 0)
+    for idx in range(rope_patches):
+        coverage["liger_rope"].append(f"rope_patch_{idx}")
     return {
         "coverage": coverage,
         "summary": {k: len(v) for k, v in coverage.items()},

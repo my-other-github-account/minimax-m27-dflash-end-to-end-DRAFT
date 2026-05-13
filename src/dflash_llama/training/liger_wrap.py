@@ -305,6 +305,9 @@ def apply_liger(model, *, fused_linear_ce: bool = True, rope: bool = True, rms_n
     if fused_linear_ce and hasattr(model, "lm_head") and hasattr(model, "layers") and hasattr(model, "norm"):
         model.forward = MethodType(_liger_forward, model)
         patched["fused_linear_ce"] = True
+    model._liger_fused_linear_ce = patched["fused_linear_ce"]
+    model._liger_rope_patches = patched["rope"]
+    model._liger_rms_norm_patches = patched["rms_norm"]
 
     logger.info(
         "[liger_wrap] LIGER_VERSION=%s fused_linear_ce=%s rope_patches=%s rms_norm_patches=%s",
