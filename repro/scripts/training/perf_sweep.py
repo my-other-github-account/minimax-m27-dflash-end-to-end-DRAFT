@@ -217,6 +217,18 @@ def _build_env(
     if env.get("PYTHONPATH"):
         py_parts.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = ":".join(py_parts)
+    venv_site = Path("/home/user/venvs/vllm/lib/python3.12/site-packages/nvidia")
+    nccl_lib = str(venv_site / "nccl" / "lib")
+    cudnn_lib = str(venv_site / "cudnn" / "lib")
+    nccl_inc = str(venv_site / "nccl" / "include")
+    cudnn_inc = str(venv_site / "cudnn" / "include")
+    cuda_inc = str(venv_site / "cu13" / "include")
+    env["LD_LIBRARY_PATH"] = ":".join(
+        part for part in (nccl_lib, cudnn_lib, env.get("LD_LIBRARY_PATH", "")) if part
+    )
+    env["CPATH"] = ":".join(
+        part for part in (nccl_inc, cudnn_inc, cuda_inc, env.get("CPATH", "")) if part
+    )
     env["TORCHDYNAMO_DISABLE"] = "1"
     env["TORCH_COMPILE_DISABLE"] = "1"
     env["NVTE_FUSED_ATTN"] = "0"
@@ -341,10 +353,10 @@ class MemoryPoller(threading.Thread):
         super().__init__(daemon=True)
         self.interval_sec = interval_sec
         self.max_mem_gb = 0.0
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 out = subprocess.check_output(
                     [
@@ -359,10 +371,10 @@ class MemoryPoller(threading.Thread):
                 self.max_mem_gb = max(self.max_mem_gb, mem_gb)
             except Exception:
                 pass
-            self._stop.wait(self.interval_sec)
+            self._stop_event.wait(self.interval_sec)
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
 
 @dataclass
