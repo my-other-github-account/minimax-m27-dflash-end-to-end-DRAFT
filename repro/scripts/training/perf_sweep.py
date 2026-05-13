@@ -202,8 +202,8 @@ def _build_default_data_sources_json(path: Path) -> Path:
         },
         {
             "name": "v4_pool",
-            "datapath": "/home/user/iq4_full_run/v4_pool/prompts",
-            "hidden_states_path": "/home/user/iq4_full_run/v4_pool/hidden_states",
+            "datapath": "/home/user/iq4_full_run/v4_pool/prompts_renum",
+            "hidden_states_path": "/home/user/iq4_full_run/v4_pool/hidden_states_renum",
         },
     ]
     path.write_text(json.dumps(payload, indent=2) + "\n")
