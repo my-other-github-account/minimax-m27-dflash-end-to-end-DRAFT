@@ -231,6 +231,7 @@ def _materialize_combined_pool(
         keep = [col for col in common_cols if col in ds.column_names]
         datasets.append(ds.select_columns(keep))
     combined = concatenate_datasets(datasets)
+    combined.set_format(type="torch", columns=common_cols, output_all_columns=True)
     prompts_out.parent.mkdir(parents=True, exist_ok=True)
     combined.save_to_disk(str(prompts_out))
 
