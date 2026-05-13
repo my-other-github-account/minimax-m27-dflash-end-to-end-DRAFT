@@ -85,6 +85,9 @@ def run_smoke_test(
     # === DFlash FP8 / TransformerEngine wrap (optional) ===
     fp8_recipe_kind: str = "",
     te_use_fused: bool = False,
+    liger_fused_linear_ce: bool = False,
+    liger_rope: bool = False,
+    liger_rms_norm: bool = False,
     use_torchrun: Optional[bool] = None,
 ) -> SmokeResult:
     """Run a 90-second smoke training run against a paired-trace directory.
@@ -148,6 +151,12 @@ def run_smoke_test(
         cmd += ["--fp8-recipe-kind", fp8_recipe_kind]
     if te_use_fused:
         cmd.append("--te-use-fused")
+    if liger_fused_linear_ce:
+        cmd.append("--liger-fused-linear-ce")
+    if liger_rope:
+        cmd.append("--liger-rope")
+    if liger_rms_norm:
+        cmd.append("--liger-rms-norm")
     cmd_with_timeout = ["timeout", str(timeout_sec), *cmd]
 
     if dry_run:

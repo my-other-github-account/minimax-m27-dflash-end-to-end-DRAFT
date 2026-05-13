@@ -1,7 +1,7 @@
 diff --git a/scripts/train.py b/scripts/train.py
 --- a/scripts/train.py
 +++ b/scripts/train.py
-@@ -375,6 +375,13 @@
+@@ -375,6 +375,17 @@
          save_best=args.save_best,
          hidden_states_dtype=hidden_states_dtype,
          log_freq=args.log_freq,
@@ -12,10 +12,14 @@ diff --git a/scripts/train.py b/scripts/train.py
 +        # DFlash FP8 / TransformerEngine wrap
 +        fp8_recipe_kind=args.fp8_recipe_kind,
 +        te_use_fused=args.te_use_fused,
++        # DFlash Liger-Kernel integration
++        liger_fused_linear_ce=args.liger_fused_linear_ce,
++        liger_rope=args.liger_rope,
++        liger_rms_norm=args.liger_rms_norm,
      )
      # R27 patch (tick26): cast draft_model to hidden_states_dtype before training
      # speculators/models/eagle3/core.py:187 fc layer defaults to float32 but hs are bfloat16
-@@ -652,6 +659,49 @@
+@@ -652,6 +663,69 @@
      parser.add_argument("--scheduler-warmup-steps", type=int, default=None)
      parser.add_argument("--scheduler-total-steps", type=int, default=None)
      parser.add_argument("--scheduler-num-cosine-cycles", type=float, default=0.5)
@@ -61,7 +65,27 @@ diff --git a/scripts/train.py b/scripts/train.py
 +            "Requires --fp8-recipe-kind to be set."
 +        ),
 +    )
-+
++    parser.add_argument(
++        "--liger-fused-linear-ce",
++        action="store_true",
++        default=False,
++        help=(
++            "Apply the Liger fused linear cross-entropy path to the DFlash lm_head "
++            "+ weighted CE loss."
++        ),
++    )
++    parser.add_argument(
++        "--liger-rope",
++        action="store_true",
++        default=False,
++        help="Apply the Liger fused RoPE kernel to the DFlash attention path.",
++    )
++    parser.add_argument(
++        "--liger-rms-norm",
++        action="store_true",
++        default=False,
++        help="Patch remaining unfused RMSNorm modules with Liger kernels.",
++    )
      return parser.parse_args()
  
  

@@ -173,6 +173,9 @@ class DFlashTrainer:
         # === DFlash FP8 / TransformerEngine wrap ===
         fp8_recipe_kind: str = "",
         te_use_fused: bool = False,
+        liger_fused_linear_ce: bool = False,
+        liger_rope: bool = False,
+        liger_rms_norm: bool = False,
         # === Launch mode ===
         use_torchrun: Optional[bool] = None,
     ) -> list[str]:
@@ -245,6 +248,12 @@ class DFlashTrainer:
             cmd += ["--fp8-recipe-kind", fp8_recipe_kind]
         if te_use_fused:
             cmd.append("--te-use-fused")
+        if liger_fused_linear_ce:
+            cmd.append("--liger-fused-linear-ce")
+        if liger_rope:
+            cmd.append("--liger-rope")
+        if liger_rms_norm:
+            cmd.append("--liger-rms-norm")
         return cmd
 
     # -----------------------------------------------------------------
@@ -270,6 +279,9 @@ class DFlashTrainer:
         # === DFlash FP8 / TransformerEngine wrap ===
         fp8_recipe_kind: str = "",
         te_use_fused: bool = False,
+        liger_fused_linear_ce: bool = False,
+        liger_rope: bool = False,
+        liger_rms_norm: bool = False,
         # === Launch mode override ===
         use_torchrun: Optional[bool] = None,
     ) -> dict:
@@ -280,6 +292,9 @@ class DFlashTrainer:
 
         FP8 training (DGX Spark sm_121a verified-stable):
             fp8_recipe_kind="current_fp8", te_use_fused=True
+
+        Liger add-ons (apply after TE wrap):
+            liger_fused_linear_ce=True, liger_rope=True
 
         When ``fp8_recipe_kind`` is set, the launcher automatically switches from
         torchrun to direct ``python`` invocation — torchrun on a single GPU sets
@@ -312,6 +327,9 @@ class DFlashTrainer:
             save_every_n_vals=save_every_n_vals,
             fp8_recipe_kind=fp8_recipe_kind,
             te_use_fused=te_use_fused,
+            liger_fused_linear_ce=liger_fused_linear_ce,
+            liger_rope=liger_rope,
+            liger_rms_norm=liger_rms_norm,
             use_torchrun=use_torchrun,
         )
 
@@ -336,6 +354,9 @@ class DFlashTrainer:
         dry_run: bool = False,
         fp8_recipe_kind: str = "",
         te_use_fused: bool = False,
+        liger_fused_linear_ce: bool = False,
+        liger_rope: bool = False,
+        liger_rms_norm: bool = False,
         use_torchrun: Optional[bool] = None,
     ) -> SmokeResult:
         """Run the 90-second smoke against ``self.paired_dir``."""
@@ -350,6 +371,9 @@ class DFlashTrainer:
             dry_run=dry_run,
             fp8_recipe_kind=fp8_recipe_kind,
             te_use_fused=te_use_fused,
+            liger_fused_linear_ce=liger_fused_linear_ce,
+            liger_rope=liger_rope,
+            liger_rms_norm=liger_rms_norm,
             use_torchrun=use_torchrun,
         )
 

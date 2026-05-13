@@ -219,6 +219,136 @@ def _build_layernorm_mlp_from(post_norm: nn.Module, mlp: nn.Module) -> "te.Layer
     return fused
 
 
+def _build_layernorm_linear_from(
+    norm: nn.Module,
+    linear: nn.Module,
+    *,
+    return_layernorm_output: bool = False,
+) -> "te.LayerNormLinear":
+    """Construct a te.LayerNormLinear mirroring (RMSNorm + Linear)."""
+    assert TE_AVAILABLE
+    has_bias = getattr(linear, "bias", None) is not None
+    eps = _rmsnorm_eps(norm)
+    dtype = linear.weight.dtype
+    device = linear.weight.device
+    fused = te.LayerNormLinear(
+        linear.in_features,
+        linear.out_features,
+        eps=eps,
+        bias=has_bias,
+        normalization="RMSNorm",
+        params_dtype=dtype,
+        device=device,
+        return_layernorm_output=return_layernorm_output,
+    )
+    with torch.no_grad():
+        fused.layer_norm_weight.copy_(norm.weight.detach().to(dtype))
+        if hasattr(fused, "layer_norm_bias") and getattr(fused, "layer_norm_bias") is not None:
+            fused.layer_norm_bias.zero_()
+        fused.weight.copy_(linear.weight.detach().to(dtype))
+        if has_bias:
+            fused.bias.copy_(linear.bias.detach().to(dtype))
+    return fused
+
+
+class _Qwen3DFlashFusedQProjAttention(nn.Module):
+    """DFlash attention wrapper that fuses input RMSNorm + q_proj.
+
+    DFlash shares k/v projection weights across the verifier-hidden and
+    noise-hidden paths, so those stay as standalone Linear modules. The q path
+    is still fusion-eligible because it consumes only the noise hidden states.
+    """
+
+    def __init__(self, input_layernorm: nn.Module, attn: nn.Module):
+        super().__init__()
+        self.config = attn.config
+        self.layer_idx = attn.layer_idx
+        self.head_dim = attn.head_dim
+        self.num_key_value_groups = attn.num_key_value_groups
+        self.scaling = attn.scaling
+        self.attention_dropout = attn.attention_dropout
+        self.is_causal = attn.is_causal
+        self.sliding_window = getattr(attn, "sliding_window", None)
+
+        self.q_proj = _build_layernorm_linear_from(
+            input_layernorm,
+            attn.q_proj,
+            return_layernorm_output=True,
+        )
+        self.k_proj = attn.k_proj
+        self.v_proj = attn.v_proj
+        self.o_proj = attn.o_proj
+        self.q_norm = attn.q_norm
+        self.k_norm = attn.k_norm
+
+        g = attn.forward.__globals__
+        self._apply_rotary_pos_emb = g["apply_rotary_pos_emb"]
+        self._eager_attention_forward = g["eager_attention_forward"]
+        self._all_attention_functions = g["ALL_ATTENTION_FUNCTIONS"]
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        target_hidden: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: torch.Tensor | None,
+        past_key_values=None,
+        cache_position: torch.LongTensor | None = None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        bsz, q_len = hidden_states.shape[:-1]
+        ctx_len = target_hidden.shape[1]
+
+        q_proj_out = self.q_proj(hidden_states)
+        if not isinstance(q_proj_out, tuple) or len(q_proj_out) < 2:
+            raise RuntimeError(
+                "te.LayerNormLinear(return_layernorm_output=True) must return "
+                "(linear_output, layernorm_output)"
+            )
+        q, normed_hidden = q_proj_out[0], q_proj_out[1]
+
+        q = q.view(bsz, q_len, -1, self.head_dim)
+        q = self.q_norm(q).transpose(1, 2)
+
+        k_ctx = self.k_proj(target_hidden)
+        k_noise = self.k_proj(normed_hidden)
+        v_ctx = self.v_proj(target_hidden)
+        v_noise = self.v_proj(normed_hidden)
+        k = torch.cat([k_ctx, k_noise], dim=1).view(bsz, ctx_len + q_len, -1, self.head_dim)
+        v = torch.cat([v_ctx, v_noise], dim=1).view(bsz, ctx_len + q_len, -1, self.head_dim)
+        k = self.k_norm(k).transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        cos, sin = position_embeddings
+        q, k = self._apply_rotary_pos_emb(q, k, cos, sin)
+
+        if past_key_values is not None:
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            k, v = past_key_values.update(k, v, self.layer_idx, cache_kwargs)
+
+        attn_fn = self._eager_attention_forward
+        if (
+            getattr(self.config, "_attn_implementation", None) is not None
+            and self.config._attn_implementation != "eager"
+        ):
+            attn_fn = self._all_attention_functions[self.config._attn_implementation]
+
+        attn_output, attn_weights = attn_fn(
+            self,
+            q,
+            k,
+            v,
+            attention_mask,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=self.scaling,
+            sliding_window=self.sliding_window,
+            **kwargs,
+        )
+        attn_output = attn_output.reshape(bsz, q_len, -1)
+        attn_output = self.o_proj(attn_output)
+        return attn_output, attn_weights
+
+
 def _fuse_qwen3_decoder_mlp_blocks(model: nn.Module) -> int:
     """Walk the model and replace every (post_attention_layernorm + mlp) pair on a
     Qwen3 decoder layer with (Identity + te.LayerNormMLP). Returns count of fusions.
@@ -242,6 +372,49 @@ def _fuse_qwen3_decoder_mlp_blocks(model: nn.Module) -> int:
         module.post_attention_layernorm = nn.Identity()
         n += 1
     return n
+
+
+def _fuse_qwen3_attention_qkv(model: nn.Module) -> int:
+    """Fuse the DFlash attention block's input RMSNorm + q_proj path.
+
+    DFlash reuses the same k/v projection weights for both verifier-hidden and
+    noise-hidden activations, so a full qkv merge would duplicate parameters and
+    change training semantics. The safe extension is to fuse the q path and keep
+    shared k/v projections as TE linears.
+    """
+    if not TE_AVAILABLE:
+        return 0
+    n = 0
+    for module in model.modules():
+        input_norm = getattr(module, "input_layernorm", None)
+        attn = getattr(module, "self_attn", None)
+        if input_norm is None or attn is None:
+            continue
+        if not _is_rmsnorm(input_norm):
+            continue
+        q_proj = getattr(attn, "q_proj", None)
+        k_proj = getattr(attn, "k_proj", None)
+        v_proj = getattr(attn, "v_proj", None)
+        o_proj = getattr(attn, "o_proj", None)
+        if not all(isinstance(m, nn.Linear) for m in (q_proj, k_proj, v_proj, o_proj)):
+            continue
+        module.self_attn = _Qwen3DFlashFusedQProjAttention(input_norm, attn)
+        module.input_layernorm = nn.Identity()
+        n += 1
+    return n
+
+
+def _fuse_final_norm_lm_head(model: nn.Module) -> int:
+    """Fuse the top-level RMSNorm + lm_head into te.LayerNormLinear."""
+    if not TE_AVAILABLE:
+        return 0
+    norm = getattr(model, "norm", None)
+    lm_head = getattr(model, "lm_head", None)
+    if not _is_rmsnorm(norm) or not isinstance(lm_head, nn.Linear):
+        return 0
+    model.lm_head = _build_layernorm_linear_from(norm, lm_head)
+    model.norm = nn.Identity()
+    return 1
 
 
 # ---- nn.Linear -> te.Linear monkey-patch -------------------------------------
@@ -286,24 +459,160 @@ def wrap_with_te(model: nn.Module, fp8: bool = True) -> nn.Module:
 
     use_fused = os.environ.get("TE_USE_FUSED", "0") == "1"
     n_fused_mlp = 0
+    n_fused_attn = 0
+    n_fused_lm_head = 0
     if use_fused:
         n_fused_mlp = _fuse_qwen3_decoder_mlp_blocks(model)
+        n_fused_attn = _fuse_qwen3_attention_qkv(model)
+        n_fused_lm_head = _fuse_final_norm_lm_head(model)
         logger.info(f"[te_wrap] fused {n_fused_mlp} Qwen3 (post_norm+mlp) -> te.LayerNormMLP")
+        logger.info(
+            "[te_wrap] fused %s DFlash attention blocks (input_norm+q_proj) -> "
+            "te.LayerNormLinear and %s final norm+lm_head pairs",
+            n_fused_attn,
+            n_fused_lm_head,
+        )
         print(f"[te_wrap] fused {n_fused_mlp} Qwen3 (post_norm+mlp) -> te.LayerNormMLP", flush=True)
+        print(
+            "[te_wrap] fused "
+            f"{n_fused_attn} DFlash attention blocks (input_norm+q_proj) -> "
+            f"te.LayerNormLinear and {n_fused_lm_head} final norm+lm_head pairs",
+            flush=True,
+        )
 
     n = _replace_linear(model)
     logger.info(f"[te_wrap] replaced {n} nn.Linear with te.Linear")
     return model
 
 
+def fusion_coverage(model: nn.Module) -> dict:
+    """Classify module coverage across TE/Liger/vanilla buckets."""
+    coverage = {
+        "te_layernorm_mlp": [],
+        "te_layernorm_linear": [],
+        "te_linear": [],
+        "liger_fused_lce": [],
+        "liger_rope": [],
+        "nn_linear": [],
+        "nn_embedding": [],
+        "unfused": [],
+    }
+    te_linear_cls = getattr(te, "Linear", tuple()) if TE_AVAILABLE else tuple()
+    te_ln_linear_cls = getattr(te, "LayerNormLinear", tuple()) if TE_AVAILABLE else tuple()
+    te_ln_mlp_cls = getattr(te, "LayerNormMLP", tuple()) if TE_AVAILABLE else tuple()
+    if not isinstance(te_linear_cls, type):
+        te_linear_cls = tuple()
+    if not isinstance(te_ln_linear_cls, type):
+        te_ln_linear_cls = tuple()
+    if not isinstance(te_ln_mlp_cls, type):
+        te_ln_mlp_cls = tuple()
+    for name, module in model.named_modules():
+        if not name:
+            continue
+        if te_ln_mlp_cls and isinstance(module, te_ln_mlp_cls):
+            coverage["te_layernorm_mlp"].append(name)
+        elif te_ln_linear_cls and isinstance(module, te_ln_linear_cls):
+            coverage["te_layernorm_linear"].append(name)
+        elif te_linear_cls and isinstance(module, te_linear_cls):
+            coverage["te_linear"].append(name)
+        elif isinstance(module, nn.Linear):
+            coverage["nn_linear"].append(name)
+            coverage["unfused"].append(name)
+        elif isinstance(module, nn.Embedding):
+            coverage["nn_embedding"].append(name)
+    return {
+        "coverage": coverage,
+        "summary": {k: len(v) for k, v in coverage.items()},
+    }
+
+
 def count_linears(model: nn.Module):
-    """Return dict with counts of nn.Linear, te.Linear, te.LayerNormLinear, te.LayerNormMLP."""
-    counts = {"nn_linear": 0, "te_linear": 0, "te_layernorm_linear": 0, "te_layernorm_mlp": 0}
-    if not TE_AVAILABLE:
-        for m in model.modules():
-            if isinstance(m, nn.Linear):
-                counts["nn_linear"] += 1
-        return counts
+    """Backward-compatible summary view over fusion_coverage()."""
+    summary = fusion_coverage(model)["summary"]
+    return {
+        "nn_linear": summary["nn_linear"],
+        "te_linear": summary["te_linear"],
+        "te_layernorm_linear": summary["te_layernorm_linear"],
+        "te_layernorm_mlp": summary["te_layernorm_mlp"],
+    }
+
+
+def unfused_to_fused_state_dict(state_dict: dict, model_arch: str = "qwen3") -> dict:
+    """Translate pre-fusion DFlash Qwen3 state dict keys into the fused layout."""
+    if model_arch != "qwen3":
+        raise ValueError(f"unsupported model_arch: {model_arch}")
+    out = dict(state_dict)
+    rename_pairs = []
+    for key in list(state_dict):
+        if ".input_layernorm.weight" in key:
+            rename_pairs.append((key, key.replace(".input_layernorm.weight", ".self_attn.q_proj.layer_norm_weight")))
+        elif key == "norm.weight":
+            rename_pairs.append((key, "lm_head.layer_norm_weight"))
+    for src, dst in rename_pairs:
+        out[dst] = out.pop(src)
+    mlp_prefixes = sorted(
+        {
+            key[: -len("gate_proj.weight")]
+            for key in state_dict
+            if key.endswith("gate_proj.weight")
+        }
+    )
+    for prefix in mlp_prefixes:
+        gate_w = out.pop(prefix + "gate_proj.weight")
+        up_w = out.pop(prefix + "up_proj.weight")
+        down_w = out.pop(prefix + "down_proj.weight")
+        out[prefix + "layer_norm_weight"] = out.pop(prefix.replace("mlp.", "post_attention_layernorm.") + "weight")
+        out[prefix + "fc1_weight"] = torch.cat([gate_w, up_w], dim=0)
+        out[prefix + "fc2_weight"] = down_w
+        gate_b_key = prefix + "gate_proj.bias"
+        up_b_key = prefix + "up_proj.bias"
+        down_b_key = prefix + "down_proj.bias"
+        if gate_b_key in out and up_b_key in out:
+            out[prefix + "fc1_bias"] = torch.cat([out.pop(gate_b_key), out.pop(up_b_key)], dim=0)
+        if down_b_key in out:
+            out[prefix + "fc2_bias"] = out.pop(down_b_key)
+    return out
+
+
+def fused_to_unfused_state_dict(state_dict: dict, model_arch: str = "qwen3") -> dict:
+    """Translate fused-layout DFlash Qwen3 state dict keys back to the pre-fusion layout."""
+    if model_arch != "qwen3":
+        raise ValueError(f"unsupported model_arch: {model_arch}")
+    out = dict(state_dict)
+    rename_pairs = []
+    for key in list(state_dict):
+        if ".self_attn.q_proj.layer_norm_weight" in key:
+            rename_pairs.append((key, key.replace(".self_attn.q_proj.layer_norm_weight", ".input_layernorm.weight")))
+        elif key == "lm_head.layer_norm_weight":
+            rename_pairs.append((key, "norm.weight"))
+    for src, dst in rename_pairs:
+        out[dst] = out.pop(src)
+    mlp_prefixes = sorted(
+        {
+            key[: -len("layer_norm_weight")]
+            for key in state_dict
+            if key.endswith("mlp.layer_norm_weight")
+        }
+    )
+    for prefix in mlp_prefixes:
+        layer_norm_weight = out.pop(prefix + "layer_norm_weight")
+        fc1_weight = out.pop(prefix + "fc1_weight")
+        fc2_weight = out.pop(prefix + "fc2_weight")
+        split = fc1_weight.shape[0] // 2
+        out[prefix.replace("mlp.", "post_attention_layernorm.") + "weight"] = layer_norm_weight
+        out[prefix + "gate_proj.weight"] = fc1_weight[:split]
+        out[prefix + "up_proj.weight"] = fc1_weight[split:]
+        out[prefix + "down_proj.weight"] = fc2_weight
+        fc1_bias_key = prefix + "fc1_bias"
+        fc2_bias_key = prefix + "fc2_bias"
+        if fc1_bias_key in out:
+            fc1_bias = out.pop(fc1_bias_key)
+            split_bias = fc1_bias.shape[0] // 2
+            out[prefix + "gate_proj.bias"] = fc1_bias[:split_bias]
+            out[prefix + "up_proj.bias"] = fc1_bias[split_bias:]
+        if fc2_bias_key in out:
+            out[prefix + "down_proj.bias"] = out.pop(fc2_bias_key)
+    return out
     for m in model.modules():
         if isinstance(m, te.LayerNormMLP):
             counts["te_layernorm_mlp"] += 1
@@ -347,5 +656,8 @@ __all__ = [
     "get_recipe",
     "fp8_context",
     "wrap_with_te",
+    "fusion_coverage",
     "count_linears",
+    "unfused_to_fused_state_dict",
+    "fused_to_unfused_state_dict",
 ]

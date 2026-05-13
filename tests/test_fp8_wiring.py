@@ -164,6 +164,23 @@ def test_train_dryrun_in_epoch_val_flags(prepared_trainer, tmp_path):
     assert "--save-every-n-vals 1" in cmd_str
 
 
+def test_train_dryrun_liger_flags(prepared_trainer, tmp_path):
+    """Liger flags must propagate to the training command."""
+    res = prepared_trainer.train(
+        save_to=str(tmp_path / "ckpt"),
+        dry_run=True, epochs=1,
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        liger_fused_linear_ce=True,
+        liger_rope=True,
+        liger_rms_norm=True,
+    )
+    cmd_str = " ".join(res["cmd"])
+    assert "--liger-fused-linear-ce" in cmd_str
+    assert "--liger-rope" in cmd_str
+    assert "--liger-rms-norm" in cmd_str
+
+
 def test_train_dryrun_use_torchrun_override(prepared_trainer, tmp_path):
     """use_torchrun=True must force torchrun even when fp8 is set (and vice versa)."""
     import sys
@@ -210,6 +227,22 @@ def test_smoke_dryrun_fp8_drops_torchrun(prepared_trainer, tmp_path):
     assert "torchrun" not in res.message.split("would run:", 1)[1].split()[0:2][0]
     assert "--fp8-recipe-kind current_fp8" in res.message
     assert "--te-use-fused" in res.message
+
+
+def test_smoke_dryrun_liger_flags(prepared_trainer, tmp_path):
+    """run_smoke_test must forward Liger toggles too."""
+    res = prepared_trainer.smoke(
+        dry_run=True,
+        timeout_sec=15,
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        liger_fused_linear_ce=True,
+        liger_rope=True,
+        liger_rms_norm=True,
+    )
+    assert "--liger-fused-linear-ce" in res.message
+    assert "--liger-rope" in res.message
+    assert "--liger-rms-norm" in res.message
 
 
 # ---- Patch well-formedness tests ----------------------------------------------
@@ -280,6 +313,9 @@ def test_patch_06_adds_required_cli_flags():
     for flag in (
         "--fp8-recipe-kind",
         "--te-use-fused",
+        "--liger-fused-linear-ce",
+        "--liger-rope",
+        "--liger-rms-norm",
         "--val-every-steps",
         "--val-in-epoch-max-batches",
         "--save-every-n-vals",
@@ -288,3 +324,6 @@ def test_patch_06_adds_required_cli_flags():
     # Must also wire the args into TrainerConfig
     assert "fp8_recipe_kind=args.fp8_recipe_kind" in text
     assert "te_use_fused=args.te_use_fused" in text
+    assert "liger_fused_linear_ce=args.liger_fused_linear_ce" in text
+    assert "liger_rope=args.liger_rope" in text
+    assert "liger_rms_norm=args.liger_rms_norm" in text

@@ -1,7 +1,7 @@
 diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
 --- a/src/speculators/train/trainer.py
 +++ b/src/speculators/train/trainer.py
-@@ -54,6 +54,15 @@
+@@ -54,6 +54,22 @@
      val_every_steps: int = 0
      val_in_epoch_max_batches: int = 0
      save_every_n_vals: int = 0
@@ -14,10 +14,17 @@ diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
 +    # See repro/06-fp8-training.md for the full recipe rationale.
 +    fp8_recipe_kind: str = ""
 +    te_use_fused: bool = False
++    # === DFLASH Liger-Kernel integration ===
++    # Apply order is TE first, Liger second. fused_linear_ce replaces the
++    # lm_head+weighted-CE path; rope patches rotary application; rms_norm is a
++    # fallback for any RMSNorm that remains after TE fusion.
++    liger_fused_linear_ce: bool = False
++    liger_rope: bool = False
++    liger_rms_norm: bool = False
  
  
  class Trainer:
-@@ -121,6 +130,12 @@
+@@ -121,6 +137,12 @@
              self.model.to(self.local_rank)  # type: ignore[arg-type]
              if load_checkpoint:
                  self.checkpointer.load_model_state_dict(self.model)
@@ -30,7 +37,7 @@ diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
              return
  
          # Distributed case
-@@ -188,6 +203,74 @@
+@@ -188,6 +210,109 @@
          if self.resume_from_checkpoint and self.checkpointer.previous_epoch != -1:
              self.checkpointer.load_scheduler_state_dict(self.scheduler)
  
@@ -51,11 +58,15 @@ diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
 +            return
 +        # Lazy import so a TE-less environment can still load this module and run bf16 training.
 +        import os as _os
++
 +        if self.config.te_use_fused:
 +            _os.environ["TE_USE_FUSED"] = "1"
 +        try:
 +            from dflash_llama.training.te_wrap import (
-+                wrap_with_te, get_recipe, count_linears, TE_VERSION,
++                TE_VERSION,
++                fusion_coverage,
++                get_recipe,
++                wrap_with_te,
 +            )
 +        except ImportError as e:
 +            raise RuntimeError(
@@ -63,14 +74,39 @@ diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
 +                f"imported: {e}. Install dflash-llama (pip install -e <path-to-repo>) or "
 +                "set fp8_recipe_kind='' to fall back to bf16."
 +            )
-+        before = count_linears(self.model)
++        before = fusion_coverage(self.model)["summary"]
 +        wrap_with_te(self.model, fp8=True)
-+        after = count_linears(self.model)
 +        self._fp8_recipe = get_recipe(kind)
++        liger_version = None
++        if (
++            self.config.liger_fused_linear_ce
++            or self.config.liger_rope
++            or self.config.liger_rms_norm
++        ):
++            try:
++                from dflash_llama.training.liger_wrap import LIGER_VERSION, apply_liger
++            except ImportError as e:
++                raise RuntimeError(
++                    "Liger was requested but dflash_llama.training.liger_wrap could not be "
++                    f"imported: {e}. Install dflash-llama (pip install -e <path-to-repo>) or "
++                    "disable the --liger-* flags."
++                )
++            apply_liger(
++                self.model,
++                fused_linear_ce=self.config.liger_fused_linear_ce,
++                rope=self.config.liger_rope,
++                rms_norm=self.config.liger_rms_norm,
++            )
++            liger_version = LIGER_VERSION
++        after = fusion_coverage(self.model)["summary"]
 +        root_logger.info(
 +            f"[FP8] TE_VERSION={TE_VERSION} recipe={self._fp8_recipe} "
 +            f"fused={self.config.te_use_fused} "
-+            f"linears_before={before} linears_after={after}"
++            f"liger_fused_linear_ce={self.config.liger_fused_linear_ce} "
++            f"liger_rope={self.config.liger_rope} "
++            f"liger_rms_norm={self.config.liger_rms_norm} "
++            f"LIGER_VERSION={liger_version} "
++            f"coverage_before={before} coverage_after={after}"
 +        )
 +        if self.local_rank == 0:
 +            # Print on rank 0 too — the logger may be filtered in some configs and this
@@ -78,18 +114,24 @@ diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
 +            print(
 +                f"[FP8] TE_VERSION={TE_VERSION} recipe={self._fp8_recipe} "
 +                f"fused={self.config.te_use_fused} "
-+                f"linears_before={before} linears_after={after}",
++                f"liger_fused_linear_ce={self.config.liger_fused_linear_ce} "
++                f"liger_rope={self.config.liger_rope} "
++                f"liger_rms_norm={self.config.liger_rms_norm} "
++                f"LIGER_VERSION={liger_version} "
++                f"coverage_before={before} coverage_after={after}",
 +                flush=True,
 +            )
 +
 +    def _fp8_context(self):
 +        """Return a TE fp8_autocast context manager if recipe is set, else nullcontext."""
 +        import contextlib as _cl
++
 +        rec = getattr(self, "_fp8_recipe", None)
 +        if rec is None:
 +            return _cl.nullcontext()
 +        try:
 +            import transformer_engine.pytorch as te
++
 +            return te.fp8_autocast(enabled=True, fp8_recipe=rec)
 +        except ImportError:
 +            return _cl.nullcontext()
@@ -105,7 +147,7 @@ diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
      def train_epoch(self, epoch: int):
          self.model.train()
          if hasattr(self.train_loader.batch_sampler, "set_epoch"):
-@@ -205,9 +288,7 @@
+@@ -205,9 +330,7 @@
                  for k, v in batch.items()
              }
  
@@ -116,7 +158,7 @@ diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
  
              self.opt.zero_grad()
              loss.backward()
-@@ -367,9 +448,7 @@
+@@ -367,9 +490,7 @@
                  for k, v in batch.items()
              }
  
