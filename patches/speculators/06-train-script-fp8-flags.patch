@@ -1,0 +1,67 @@
+diff --git a/scripts/train.py b/scripts/train.py
+--- a/scripts/train.py
++++ b/scripts/train.py
+@@ -375,6 +375,13 @@
+         save_best=args.save_best,
+         hidden_states_dtype=hidden_states_dtype,
+         log_freq=args.log_freq,
++        # DFlash in-epoch val + step-tagged ckpt cadence
++        val_every_steps=args.val_every_steps,
++        val_in_epoch_max_batches=args.val_in_epoch_max_batches,
++        save_every_n_vals=args.save_every_n_vals,
++        # DFlash FP8 / TransformerEngine wrap
++        fp8_recipe_kind=args.fp8_recipe_kind,
++        te_use_fused=args.te_use_fused,
+     )
+     # R27 patch (tick26): cast draft_model to hidden_states_dtype before training
+     # speculators/models/eagle3/core.py:187 fc layer defaults to float32 but hs are bfloat16
+@@ -652,6 +659,49 @@
+     parser.add_argument("--scheduler-warmup-steps", type=int, default=None)
+     parser.add_argument("--scheduler-total-steps", type=int, default=None)
+     parser.add_argument("--scheduler-num-cosine-cycles", type=float, default=0.5)
++
++    # === DFlash in-epoch val + step-tagged checkpoint cadence ===
++    parser.add_argument(
++        "--val-every-steps",
++        type=int,
++        default=0,
++        help="Run validation every N global steps (in-epoch). 0 disables (epoch-only val).",
++    )
++    parser.add_argument(
++        "--val-in-epoch-max-batches",
++        type=int,
++        default=0,
++        help="Cap iterations per in-epoch val tick (0 = full val_loader).",
++    )
++    parser.add_argument(
++        "--save-every-n-vals",
++        type=int,
++        default=0,
++        help="Save model+optimizer every N in-epoch val triggers (0 = disabled).",
++    )
++
++    # === DFlash FP8 / TransformerEngine wrap ===
++    parser.add_argument(
++        "--fp8-recipe-kind",
++        type=str,
++        choices=["", "bf16", "none", "current_fp8", "delayed_e4m3", "block_fp8", "mxfp8", "nvfp4_safe", "nvfp4_rtn"],
++        default="",
++        help=(
++            "FP8 recipe for TransformerEngine wrapping. '' / 'bf16' / 'none' disables FP8. "
++            "'current_fp8' is the production-stable recipe on DGX Spark sm_121a. "
++            "See repro/06-fp8-training.md."
++        ),
++    )
++    parser.add_argument(
++        "--te-use-fused",
++        action="store_true",
++        default=False,
++        help=(
++            "Fuse Qwen3 (post_attention_layernorm + mlp) -> te.LayerNormMLP. "
++            "Requires --fp8-recipe-kind to be set."
++        ),
++    )
++
+     return parser.parse_args()
+ 
+ 

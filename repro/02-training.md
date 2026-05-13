@@ -2,6 +2,8 @@
 
 End-to-end recipe to train a 5-layer DFlash drafter from a directory of self-describing traces (§1) using `dflash-llama train` (or the `DFlashTrainer` Python API).
 
+> **Looking for FP8 training?** This page covers the bf16 path (the v11 baseline). For Float8CurrentScaling(HYBRID) + fused TE LayerNormMLP on DGX Spark sm_121a (+18% throughput, verified step-for-step ≥ bf16 through step 2,610), see [§6 — FP8 training](06-fp8-training.md).
+
 > **No pairing step.** v2 required a brittle `build_paired_dataset.py` that sha256-matched hidden-state files against a separate prompts dataset. The new self-describing trace format makes this a 30-second enumeration: `assemble_prompts_arrow` walks the directory and reads the `input_ids` / `loss_mask` / `source_row_idx` directly off each safetensor.
 
 ## Pipeline at a glance
@@ -28,14 +30,14 @@ End-to-end recipe to train a 5-layer DFlash drafter from a directory of self-des
 # Smoke first (mandatory — 90s torchrun, exit 124 = pass)
 dflash-llama smoke \
     --verifier minimax-m2.7-iq4-xs \
-    --hf-path /home/user/models/MiniMax-M2.7-FP8 \
+    --hf-path /path/to/MiniMax-M2.7-FP8 \
     --traces /path/to/traces \
     --timeout 90
 
 # Full run (17 epochs, max_anchors=512, lr=3e-5)
 dflash-llama train \
     --verifier minimax-m2.7-iq4-xs \
-    --hf-path /home/user/models/MiniMax-M2.7-FP8 \
+    --hf-path /path/to/MiniMax-M2.7-FP8 \
     --traces /path/to/traces \
     --output /path/to/checkpoint \
     --epochs 17 \
@@ -50,7 +52,7 @@ from dflash_llama import DFlashTrainer, load_verifier
 
 verifier = load_verifier(
     "minimax-m2.7-iq4-xs",
-    hf_path="/home/user/models/MiniMax-M2.7-FP8",
+    hf_path="/path/to/MiniMax-M2.7-FP8",
 )
 trainer = DFlashTrainer(
     traces_dir="/path/to/traces",

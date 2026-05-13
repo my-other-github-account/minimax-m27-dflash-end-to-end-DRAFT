@@ -166,18 +166,49 @@ class DFlashTrainer:
         port: int,
         speculators_train_script: Optional[str],
         total_seq_len: int,
+        # === DFlash in-epoch val + step-tagged ckpt cadence ===
+        val_every_steps: int = 0,
+        val_in_epoch_max_batches: int = 0,
+        save_every_n_vals: int = 0,
+        # === DFlash FP8 / TransformerEngine wrap ===
+        fp8_recipe_kind: str = "",
+        te_use_fused: bool = False,
+        # === Launch mode ===
+        use_torchrun: Optional[bool] = None,
     ) -> list[str]:
         train_script = speculators_train_script or os.environ.get(
             "SPECULATORS_TRAIN_SCRIPT",
             os.path.expanduser("~/repos/speculators/scripts/train.py"),
         )
         target_layer_ids = self.verifier.trainer_target_layer_ids()
-        torchrun_bin = _resolve_torchrun()
-        cmd = [
-            torchrun_bin,
-            f"--master_port={port}",
-            "--nproc-per-node=1",
-            train_script,
+
+        # === Launch mode selection: torchrun vs direct python ===
+        # FP8 single-GPU training MUST bypass torchrun. The speculators trainer's
+        # setup_model() routes to the FSDP branch when any of RANK/WORLD_SIZE/etc
+        # are set in the environment — which torchrun --nproc-per-node=1 always sets,
+        # even on a single GPU. The FP8/TE wrap fires only in the single-GPU branch,
+        # so torchrun would silently run plain bf16 with no warning. See
+        # repro/06-fp8-training.md for the full failure-mode analysis.
+        #
+        # Default policy: drop torchrun whenever fp8 is requested. Caller can force
+        # either mode via use_torchrun=True/False.
+        if use_torchrun is None:
+            use_torchrun = (fp8_recipe_kind in ("", "bf16", "none"))
+
+        cmd: list[str] = []
+        if use_torchrun:
+            torchrun_bin = _resolve_torchrun()
+            cmd = [
+                torchrun_bin,
+                f"--master_port={port}",
+                "--nproc-per-node=1",
+                train_script,
+            ]
+        else:
+            # Direct python launch. Use sys.executable so the venv is preserved.
+            cmd = [sys.executable, train_script]
+
+        cmd += [
             "--speculator-type", "dflash",
             "--verifier-name-or-path", str(self.verifier.hf_path or self.verifier.gguf_path or ""),
             "--data-path", str(self.paired_dir / "prompts"),
@@ -202,6 +233,18 @@ class DFlashTrainer:
         ]
         if save_best:
             cmd.append("--save-best")
+        # In-epoch val + step-tagged ckpt flags (passed as 0 = disabled by default)
+        if val_every_steps > 0:
+            cmd += ["--val-every-steps", str(val_every_steps)]
+        if val_in_epoch_max_batches > 0:
+            cmd += ["--val-in-epoch-max-batches", str(val_in_epoch_max_batches)]
+        if save_every_n_vals > 0:
+            cmd += ["--save-every-n-vals", str(save_every_n_vals)]
+        # FP8 / TE wrap flags
+        if fp8_recipe_kind:
+            cmd += ["--fp8-recipe-kind", fp8_recipe_kind]
+        if te_use_fused:
+            cmd.append("--te-use-fused")
         return cmd
 
     # -----------------------------------------------------------------
@@ -220,11 +263,31 @@ class DFlashTrainer:
         speculators_train_script: Optional[str] = None,
         log_path: Optional[str] = None,
         dry_run: bool = False,
+        # === DFlash in-epoch val + step-tagged ckpt cadence ===
+        val_every_steps: int = 0,
+        val_in_epoch_max_batches: int = 0,
+        save_every_n_vals: int = 0,
+        # === DFlash FP8 / TransformerEngine wrap ===
+        fp8_recipe_kind: str = "",
+        te_use_fused: bool = False,
+        # === Launch mode override ===
+        use_torchrun: Optional[bool] = None,
     ) -> dict:
         """Run a full training job.
 
         Returns ``{"rc": int, "log_path": str, "cmd": [...]}``. ``dry_run=True``
         returns the exact command that would be invoked without executing it.
+
+        FP8 training (DGX Spark sm_121a verified-stable):
+            fp8_recipe_kind="current_fp8", te_use_fused=True
+
+        When ``fp8_recipe_kind`` is set, the launcher automatically switches from
+        torchrun to direct ``python`` invocation — torchrun on a single GPU sets
+        ``RANK``/``WORLD_SIZE`` env vars, which routes the trainer through the
+        FSDP branch and silently skips the TE wrap. See ``repro/06-fp8-training.md``.
+
+        In-epoch validation (off by default, opt-in for long runs):
+            val_every_steps=145, val_in_epoch_max_batches=80, save_every_n_vals=1
         """
         if not self._prepared and not (self.paired_dir / "prompts" / "t2d.npy").exists():
             raise RuntimeError(
@@ -244,6 +307,12 @@ class DFlashTrainer:
             save_best=save_best, port=port,
             speculators_train_script=speculators_train_script,
             total_seq_len=total_seq_len,
+            val_every_steps=val_every_steps,
+            val_in_epoch_max_batches=val_in_epoch_max_batches,
+            save_every_n_vals=save_every_n_vals,
+            fp8_recipe_kind=fp8_recipe_kind,
+            te_use_fused=te_use_fused,
+            use_torchrun=use_torchrun,
         )
 
         if dry_run:
@@ -265,6 +334,9 @@ class DFlashTrainer:
         port: int = 29501,
         speculators_train_script: Optional[str] = None,
         dry_run: bool = False,
+        fp8_recipe_kind: str = "",
+        te_use_fused: bool = False,
+        use_torchrun: Optional[bool] = None,
     ) -> SmokeResult:
         """Run the 90-second smoke against ``self.paired_dir``."""
         return run_smoke_test(
@@ -276,6 +348,9 @@ class DFlashTrainer:
             port=port,
             speculators_train_script=speculators_train_script,
             dry_run=dry_run,
+            fp8_recipe_kind=fp8_recipe_kind,
+            te_use_fused=te_use_fused,
+            use_torchrun=use_torchrun,
         )
 
     # -----------------------------------------------------------------

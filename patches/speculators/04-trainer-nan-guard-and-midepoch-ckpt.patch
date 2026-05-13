@@ -1,47 +1,177 @@
 diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
+index 37520c0..d3092db 100644
 --- a/src/speculators/train/trainer.py
 +++ b/src/speculators/train/trainer.py
-@@ -203,9 +203,13 @@
-             )
+@@ -47,6 +47,13 @@ class TrainerConfig(NamedTuple):
+     save_best: bool = False
+     hidden_states_dtype: torch.dtype = torch.bfloat16
+     log_freq: int = 1
++    # === DFLASH in-epoch val + step-tagged checkpoint cadence ===
++    # val_every_steps: 0 = disabled (epoch-only val); else run val every N global_steps.
++    # val_in_epoch_max_batches: 0 = full val_loader; else cap iterations per in-epoch tick.
++    # save_every_n_vals: 0 = no in-epoch ckpt; else save model+optimizer every N in-epoch vals.
++    val_every_steps: int = 0
++    val_in_epoch_max_batches: int = 0
++    save_every_n_vals: int = 0
  
+ 
+ class Trainer:
+@@ -205,6 +212,29 @@ class Trainer:
              self.opt.zero_grad()
--            loss.backward()
--            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
--            self.opt.step()
-+            # DFLASH_R32_FIX: skip NaN/Inf loss to prevent corrupting weights
-+            if torch.isnan(loss) or torch.isinf(loss):
-+                root_logger.warning(f'[step {self.global_step}] NaN/Inf loss, skipping backward+step')
-+            else:
-+                loss.backward()
-+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-+                self.opt.step()
+             loss.backward()
+             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
++
++            # === DFLASH gradient-level NaN-skip defense ===
++            # If any grad is NaN/Inf, skip optimizer step + scheduler step + logging.
++            # Prevents a single bad batch (e.g. an FP8 fprop accumulator overflow on a
++            # high-LR step) from poisoning all weights with NaN. See repro/06-fp8-training.md
++            # for the failure mode this catches.
++            #
++            # IMPORTANT: clip_grad_norm_ alone is NOT sufficient — norm(NaN) is NaN, so
++            # the scaling factor it computes is NaN, and the step still corrupts weights.
++            # We must explicitly check for non-finite grads AFTER clip_grad_norm_.
++            has_nan_grad = any(
++                p.grad is not None and not torch.isfinite(p.grad).all()
++                for p in self.model.parameters()
++            )
++            if has_nan_grad:
++                root_logger.warning(
++                    f"[NaN-SKIP] step={self.global_step} grad contains NaN/Inf, "
++                    "skipping optimizer + scheduler step"
++                )
++                self.opt.zero_grad()
++                self.global_step += 1
++                continue
++
+             self.opt.step()
  
              current_lr = self.opt.param_groups[0]["lr"]
-             if self.scheduler is not None:
-@@ -226,6 +230,26 @@
+@@ -226,10 +256,93 @@ class Trainer:
                      },
                      extra={"step": self.global_step},
                  )
 +
-+            # DFLASH_R31_FIX: mid-epoch checkpointing every N steps
-+            # Set MIDEPOCH_CHECKPOINT_FREQ env var (in steps); 0 disables.
-+            import os as _os
-+            _mef = int(_os.environ.get("MIDEPOCH_CHECKPOINT_FREQ", "0"))
-+            if _mef > 0 and self.global_step > 0 and self.global_step % _mef == 0:
-+                if not self.is_distributed or self.local_rank == 0:
-+                    _tag = f"step{self.global_step}"
-+                    _path = self.checkpointer.path / _tag
-+                    root_logger.info(f"[mid-epoch] Saving checkpoint at global_step={self.global_step} to {_path}")
-+                    try:
-+                        self.checkpointer.save_checkpoint(self.model, self.opt, _tag)
-+                        if self.scheduler is not None:
-+                            self.checkpointer.save_scheduler_state_dict(self.scheduler, _tag)
-+                        root_logger.info(f"[mid-epoch] Saved checkpoint to {_path}")
-+                    except Exception as _e:
-+                        root_logger.warning(f"[mid-epoch] checkpoint save failed: {_e}")
++            # === DFLASH in-epoch validation + step-tagged checkpoints ===
++            # Run val_epoch every config.val_every_steps global steps, write metrics to
++            # <save_path>/val_in_epoch/step_<N>.json (cheap), and optionally save a
++            # full model+optimizer checkpoint every config.save_every_n_vals vals.
++            #
++            # The in-epoch ckpt directory uses a non-int tag ("step_<gs>") so that
++            # checkpointer._get_previous_epoch skips it (int(name) raises ValueError),
++            # which keeps the epoch-boundary best-checkpoint logic untouched.
++            # checkpoint_last_inepoch is a sliding symlink for crash recovery.
++            if (
++                self.config.val_every_steps > 0
++                and self.val_loader is not None
++                and self.global_step > 0
++                and self.global_step % self.config.val_every_steps == 0
++            ):
 +                if self.is_distributed:
 +                    dist.barrier()
++                root_logger.info(
++                    f"In-epoch validation triggered at global_step={self.global_step}"
++                )
++                val_metrics_inep = self.val_epoch(
++                    epoch, max_batches=self.config.val_in_epoch_max_batches
++                )
++                if self.local_rank == 0 and val_metrics_inep is not None:
++                    import json as _json
++                    from pathlib import Path as _Path
++                    out_dir = _Path(self.checkpointer.path) / "val_in_epoch"
++                    out_dir.mkdir(parents=True, exist_ok=True)
++                    out_file = out_dir / f"step_{self.global_step:08d}.json"
++                    payload = {
++                        "epoch": epoch,
++                        "global_step": self.global_step,
++                        **val_metrics_inep,
++                    }
++                    out_file.write_text(_json.dumps(payload))
++                    root_logger.info(f"In-epoch val_metrics saved to {out_file}")
++
++                    if not hasattr(self, "_n_inepoch_vals"):
++                        self._n_inepoch_vals = 0
++                    self._n_inepoch_vals += 1
++                    if (
++                        self.config.save_every_n_vals > 0
++                        and self._n_inepoch_vals % self.config.save_every_n_vals == 0
++                    ):
++                        ckpt_tag = f"step_{self.global_step:08d}"
++                        try:
++                            self.checkpointer.save_checkpoint(
++                                self.model, self.opt, epoch=ckpt_tag,
++                                float_dtype=self.config.hidden_states_dtype,
++                            )
++                            if self.scheduler is not None:
++                                try:
++                                    self.checkpointer.save_scheduler_state_dict(
++                                        self.scheduler, ckpt_tag
++                                    )
++                                except Exception as _e:
++                                    root_logger.warning(
++                                        f"In-epoch scheduler save failed (non-fatal): {_e}"
++                                    )
++                            # Sliding "last in-epoch checkpoint" pointer for crash recovery
++                            last_ptr = _Path(self.checkpointer.path) / "checkpoint_last_inepoch"
++                            try:
++                                if last_ptr.exists() or last_ptr.is_symlink():
++                                    last_ptr.unlink()
++                                last_ptr.symlink_to(ckpt_tag)
++                            except Exception as _e:
++                                root_logger.warning(
++                                    f"In-epoch ckpt symlink update failed (non-fatal): {_e}"
++                                )
++                            root_logger.info(
++                                f"In-epoch checkpoint saved to {self.checkpointer.path}/{ckpt_tag} "
++                                f"(every {self.config.save_every_n_vals} vals; "
++                                f"global_step={self.global_step})"
++                            )
++                        except Exception as _e:
++                            root_logger.error(
++                                f"In-epoch checkpoint save FAILED at step={self.global_step}: {_e}"
++                            )
++                if self.is_distributed:
++                    dist.barrier()
++                self.model.train()  # val_epoch sets eval(), restore train mode
 +
              self.global_step += 1
  
      @torch.no_grad()
+-    def val_epoch(self, epoch: int) -> dict[str, float] | None:
++    def val_epoch(self, epoch: int, max_batches: int = 0) -> dict[str, float] | None:
+         if self.val_loader is None:
+             return None
+         self.model.eval()
+@@ -240,8 +353,13 @@ class Trainer:
+             val_loader = tqdm(val_loader, desc=f"Epoch {epoch}")  # type: ignore[assignment]
+ 
+         val_metrics: dict[str, float] = {}
+-        num_batches = len(val_loader)
++        total_batches = len(val_loader)
++        # Cap iterations for in-epoch validation. max_batches=0 means full val.
++        effective_max = total_batches if max_batches <= 0 else min(max_batches, total_batches)
++        num_batches = 0
+         for batch in val_loader:
++            if num_batches >= effective_max:
++                break
+             gpu_batch = {
+                 k: v.to(self.local_rank, non_blocking=True)
+                 if isinstance(v, torch.Tensor)
+@@ -259,10 +377,17 @@ class Trainer:
+ 
+             for k, v in metrics.items():
+                 val_metrics[k] = val_metrics.get(k, 0.0) + v.item()
++            num_batches += 1
+ 
++        if num_batches == 0:
++            return None
+         val_metrics = {f"{k}_epoch": v / num_batches for k, v in val_metrics.items()}
++        # Record batch-count metadata so consumers can distinguish full-epoch vs in-epoch vals.
++        val_metrics["_n_batches"] = float(num_batches)
++        val_metrics["_n_total_batches"] = float(total_batches)
+         metric_logger.info(
+-            {"val": val_metrics, "epoch": epoch}, extra={"step": self.global_step}
++            {"val": val_metrics, "epoch": epoch, "n_batches": num_batches},
++            extra={"step": self.global_step},
+         )
+         return val_metrics
+ 

@@ -19,7 +19,7 @@ matching training prediction within sample noise) for **one** family:
 
 - **`minimax-m2.7-iq4-xs`** — MiniMax-M2.7 verifier with the Unsloth
   `UD-IQ4_XS` GGUF quant + DFlash 5L drafter (draft_vocab=32768).
-  Validated 2026-04-30 / 2026-05-02 on spark-1. The reference path.
+  Validated 2026-04-30 / 2026-05-02 on the reference single-GPU host.
 
 `minimax-m2.7` (FP8 quant) shares all shape metadata. Trace generation
 via FP8 was retired (the `tensor.to(float8_e4m3fn)` cast silently
@@ -40,6 +40,7 @@ and require explicit opt-in. See **Experimental factories** below.
 | §3 — Inference: GGUF export, OpenAI-compat server, speculative-decode benchmark | [`repro/03-inference.md`](repro/03-inference.md) |
 | §4 — Empirical tau against llama-benchy / Project Gutenberg traffic | [`repro/04-empirical-tau-llama-benchy.md`](repro/04-empirical-tau-llama-benchy.md) |
 | §5 — Runtime perf notes: how the v11.1 wall-clock gate was cleared | [`repro/05-runtime-perf-notes.md`](repro/05-runtime-perf-notes.md) |
+| §6 — FP8 training (Float8CurrentScaling HYBRID + fused TE LayerNormMLP) | [`repro/06-fp8-training.md`](repro/06-fp8-training.md) |
 
 ## What you get
 
@@ -52,7 +53,9 @@ and require explicit opt-in. See **Experimental factories** below.
   `DFlashTrainer.prepare() → .smoke() → .train() → .offline_eval()`.
   Wraps the [speculators](https://github.com/neuralmagic/speculators)
   trainer; does the data prep inside the library instead of in shell
-  scripts.
+  scripts. Bf16 is the default; pass ``fp8_recipe_kind="current_fp8",
+  te_use_fused=True`` to ``.train()`` for the verified-stable FP8 path
+  on DGX Spark sm_121a (+18% throughput, see [§6](repro/06-fp8-training.md)).
 - **GGUF export of trained drafters** — `export_to_gguf()` runs the full
   validated recipe: rebake `lm_head` from draft-vocab to target-vocab
   with the `-65504` floor (the d2t zero-row dilution fix), idempotent

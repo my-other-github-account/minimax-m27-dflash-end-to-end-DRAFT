@@ -1,0 +1,129 @@
+diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
+--- a/src/speculators/train/trainer.py
++++ b/src/speculators/train/trainer.py
+@@ -54,6 +54,15 @@
+     val_every_steps: int = 0
+     val_in_epoch_max_batches: int = 0
+     save_every_n_vals: int = 0
++    # === DFLASH FP8 / TransformerEngine wrap ===
++    # fp8_recipe_kind: "" / "bf16" / "none" disables FP8 (model stays plain bf16).
++    #   "current_fp8" -> Float8CurrentScaling(HYBRID) with split_accumulator=True on all 3 GEMMs (production-stable).
++    #   "delayed_e4m3" -> DelayedScaling(HYBRID) (legacy Hopper baseline).
++    #   "block_fp8" / "mxfp8" -> Float8BlockScaling / MXFP8BlockScaling (recipe-specific).
++    # te_use_fused: if True, fuse Qwen3 (post_attention_layernorm + mlp) into te.LayerNormMLP.
++    # See repro/06-fp8-training.md for the full recipe rationale.
++    fp8_recipe_kind: str = ""
++    te_use_fused: bool = False
+ 
+ 
+ class Trainer:
+@@ -121,6 +130,12 @@
+             self.model.to(self.local_rank)  # type: ignore[arg-type]
+             if load_checkpoint:
+                 self.checkpointer.load_model_state_dict(self.model)
++            # === DFLASH FP8 wrap (single-GPU path only) ===
++            # We deliberately do NOT wrap inside the FSDP branch — TE + FSDP2 sharded
++            # parameter compatibility is unverified, and torchrun-on-single-GPU is the
++            # silent-bf16 trap (see repro/06-fp8-training.md). Single-GPU launches must
++            # invoke train.py directly, not via torchrun.
++            self._maybe_wrap_te()
+             return
+ 
+         # Distributed case
+@@ -188,6 +203,74 @@
+         if self.resume_from_checkpoint and self.checkpointer.previous_epoch != -1:
+             self.checkpointer.load_scheduler_state_dict(self.scheduler)
+ 
++    # === DFLASH FP8 / TransformerEngine wrap helpers ===
++    def _maybe_wrap_te(self):
++        """Wrap self.model with TransformerEngine for FP8 training, if configured.
++
++        Driven by:
++          - self.config.fp8_recipe_kind  ("" / "bf16" / "current_fp8" / "mxfp8" / ...)
++          - self.config.te_use_fused     (also fuse Qwen3 MLPs into te.LayerNormMLP)
++
++        Sets self._fp8_recipe (TE recipe instance, or None) for later use in the
++        train/val forward wrappers. Idempotent: safe to call twice (no-op).
++        """
++        self._fp8_recipe = None
++        kind = (self.config.fp8_recipe_kind or "").strip().lower()
++        if kind in ("", "bf16", "none"):
++            return
++        # Lazy import so a TE-less environment can still load this module and run bf16 training.
++        import os as _os
++        if self.config.te_use_fused:
++            _os.environ["TE_USE_FUSED"] = "1"
++        try:
++            from dflash_llama.training.te_wrap import (
++                wrap_with_te, get_recipe, count_linears, TE_VERSION,
++            )
++        except ImportError as e:
++            raise RuntimeError(
++                "fp8_recipe_kind is set but dflash_llama.training.te_wrap could not be "
++                f"imported: {e}. Install dflash-llama (pip install -e <path-to-repo>) or "
++                "set fp8_recipe_kind='' to fall back to bf16."
++            )
++        before = count_linears(self.model)
++        wrap_with_te(self.model, fp8=True)
++        after = count_linears(self.model)
++        self._fp8_recipe = get_recipe(kind)
++        root_logger.info(
++            f"[FP8] TE_VERSION={TE_VERSION} recipe={self._fp8_recipe} "
++            f"fused={self.config.te_use_fused} "
++            f"linears_before={before} linears_after={after}"
++        )
++        if self.local_rank == 0:
++            # Print on rank 0 too — the logger may be filtered in some configs and this
++            # line is the verification marker the operator greps for at launch.
++            print(
++                f"[FP8] TE_VERSION={TE_VERSION} recipe={self._fp8_recipe} "
++                f"fused={self.config.te_use_fused} "
++                f"linears_before={before} linears_after={after}",
++                flush=True,
++            )
++
++    def _fp8_context(self):
++        """Return a TE fp8_autocast context manager if recipe is set, else nullcontext."""
++        import contextlib as _cl
++        rec = getattr(self, "_fp8_recipe", None)
++        if rec is None:
++            return _cl.nullcontext()
++        try:
++            import transformer_engine.pytorch as te
++            return te.fp8_autocast(enabled=True, fp8_recipe=rec)
++        except ImportError:
++            return _cl.nullcontext()
++
++    def _fp8_train_forward(self, gpu_batch):
++        with self._fp8_context():
++            return self.model(**gpu_batch, **self.config.train_call_kwargs)
++
++    def _fp8_val_forward(self, gpu_batch):
++        with self._fp8_context():
++            return self.model(**gpu_batch, **self.config.val_call_kwargs)
++
+     def train_epoch(self, epoch: int):
+         self.model.train()
+         if hasattr(self.train_loader.batch_sampler, "set_epoch"):
+@@ -205,9 +288,7 @@
+                 for k, v in batch.items()
+             }
+ 
+-            _draft_tokens, loss, metrics = self.model(
+-                **gpu_batch, **self.config.train_call_kwargs
+-            )
++            _draft_tokens, loss, metrics = self._fp8_train_forward(gpu_batch)
+ 
+             self.opt.zero_grad()
+             loss.backward()
+@@ -367,9 +448,7 @@
+                 for k, v in batch.items()
+             }
+ 
+-            _draft_tokens, _loss, metrics = self.model(
+-                **gpu_batch, **self.config.val_call_kwargs
+-            )
++            _draft_tokens, _loss, metrics = self._fp8_val_forward(gpu_batch)
+ 
+             if self.is_distributed:
+                 for m in metrics.values():

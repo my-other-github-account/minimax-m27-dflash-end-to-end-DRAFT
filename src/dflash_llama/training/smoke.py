@@ -82,11 +82,21 @@ def run_smoke_test(
     speculators_train_script: Optional[str] = None,
     extra_env: Optional[dict] = None,
     dry_run: bool = False,
+    # === DFlash FP8 / TransformerEngine wrap (optional) ===
+    fp8_recipe_kind: str = "",
+    te_use_fused: bool = False,
+    use_torchrun: Optional[bool] = None,
 ) -> SmokeResult:
-    """Run a 90-second torchrun smoke against a paired-trace directory.
+    """Run a 90-second smoke training run against a paired-trace directory.
 
     ``paired_dir`` must contain ``prompts/`` (HF Dataset + d2t.npy + t2d.npy
     + token_freq.pt) and ``hidden_states/`` (the trace files).
+
+    When ``fp8_recipe_kind`` is set (e.g. ``"current_fp8"``), the smoke launcher
+    automatically switches from torchrun to direct ``python`` invocation — torchrun
+    sets ``RANK``/``WORLD_SIZE`` which routes the trainer through FSDP and silently
+    skips the FP8/TE wrap. See ``repro/06-fp8-training.md`` for details. Pass
+    ``use_torchrun=True/False`` to override the default.
     """
     paired_dir = Path(paired_dir)
     train_script = speculators_train_script or os.environ.get(
@@ -97,11 +107,23 @@ def run_smoke_test(
     save_path_p.mkdir(parents=True, exist_ok=True)
 
     target_layer_ids = verifier.trainer_target_layer_ids()
+
+    # Launch-mode selection: same policy as DFlashTrainer.train (FP8 -> direct python).
+    if use_torchrun is None:
+        use_torchrun = (fp8_recipe_kind in ("", "bf16", "none"))
+
+    if use_torchrun:
+        launcher = [
+            _resolve_torchrun_smoke(),
+            f"--master_port={port}",
+            "--nproc-per-node=1",
+            train_script,
+        ]
+    else:
+        launcher = [sys.executable, train_script]
+
     cmd = [
-        _resolve_torchrun_smoke(),
-        f"--master_port={port}",
-        "--nproc-per-node=1",
-        train_script,
+        *launcher,
         "--speculator-type", "dflash",
         "--verifier-name-or-path", str(verifier.hf_path or verifier.gguf_path or ""),
         "--data-path", str(paired_dir / "prompts"),
@@ -122,6 +144,10 @@ def run_smoke_test(
         "--draft-vocab-size", "32768",
         "--log-freq", "5",
     ]
+    if fp8_recipe_kind:
+        cmd += ["--fp8-recipe-kind", fp8_recipe_kind]
+    if te_use_fused:
+        cmd.append("--te-use-fused")
     cmd_with_timeout = ["timeout", str(timeout_sec), *cmd]
 
     if dry_run:
