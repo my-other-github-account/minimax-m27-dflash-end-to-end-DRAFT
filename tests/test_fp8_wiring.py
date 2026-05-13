@@ -251,6 +251,7 @@ def test_smoke_dryrun_liger_flags(prepared_trainer, tmp_path):
     "04-trainer-nan-guard-and-midepoch-ckpt.patch",
     "05-trainer-te-fp8-wrap.patch",
     "06-train-script-fp8-flags.patch",
+    "07-dflash-anchor-valid-mask.patch",
 ])
 def test_patch_is_wellformed(patch_name):
     """Each patch file must be a valid unified diff with the expected header."""
@@ -327,3 +328,12 @@ def test_patch_06_adds_required_cli_flags():
     assert "liger_fused_linear_ce=args.liger_fused_linear_ce" in text
     assert "liger_rope=args.liger_rope" in text
     assert "liger_rms_norm=args.liger_rms_norm" in text
+
+
+def test_patch_07_trims_invalid_anchor_slots():
+    """Patch 07 must only pass valid anchors into the DFlash forward path."""
+    p = REPO_ROOT / "patches" / "speculators" / "07-dflash-anchor-valid-mask.patch"
+    text = p.read_text()
+    assert "anchor_positions = anchor_positions[anchor_valid]" in text
+    assert "No valid anchors were selected for this batch" in text
+    assert "mask_tokens_size = anchor_positions.numel() * self.block_size" in text

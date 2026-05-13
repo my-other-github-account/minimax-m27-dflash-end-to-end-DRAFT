@@ -210,6 +210,13 @@ def _apply_liger_rms_norm(model):
     return patched
 
 
+def _valid_anchor_positions(anchor_positions: torch.Tensor, anchor_valid: torch.Tensor) -> torch.Tensor:
+    selected = anchor_positions[anchor_valid]
+    if selected.numel() == 0:
+        raise ValueError("No valid anchors were selected for this batch")
+    return selected
+
+
 def _liger_forward(self, hidden_states, input_ids, loss_mask, verifier_last_hidden_states, lengths=None, position_ids=None, **kwargs):
     from speculators.models.dflash.core import (
         create_anchor_block_mask_mod,
@@ -228,6 +235,7 @@ def _liger_forward(self, hidden_states, input_ids, loss_mask, verifier_last_hidd
         position_ids = 1 + torch.arange(total_seq_len, dtype=torch.long, device=device).unsqueeze(0)
 
     anchor_positions, anchor_valid = select_anchors(loss_mask, num_anchors, self.block_size)
+    anchor_positions = _valid_anchor_positions(anchor_positions, anchor_valid)
     mask_mod, q_len, kv_len = create_anchor_block_mask_mod(
         lengths=lengths.to(device),
         total_seq_len=total_seq_len,
@@ -236,7 +244,7 @@ def _liger_forward(self, hidden_states, input_ids, loss_mask, verifier_last_hidd
     )
     attention_mask = create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
 
-    mask_tokens_size = num_anchors * self.block_size
+    mask_tokens_size = anchor_positions.numel() * self.block_size
     mask_token_ids = torch.full((1, mask_tokens_size), self.mask_token_id, dtype=torch.long, device=device)
     mask_token_ids[:, :: self.block_size] = input_ids[:, anchor_positions]
     noise_embedding = self.embed_tokens(mask_token_ids)
@@ -273,9 +281,6 @@ def _liger_forward(self, hidden_states, input_ids, loss_mask, verifier_last_hidd
 
     final_hidden = self.norm(noise_embedding)
     aligned_loss_mask = loss_mask.clone()[:, anchored_block_indices]
-    aligned_loss_mask = aligned_loss_mask * (
-        anchor_valid.repeat_interleave(self.block_size).unsqueeze(0).to(aligned_loss_mask.dtype)
-    )
     aligned_loss_mask[:, :: self.block_size] = 0
 
     loss, metrics, predicted_tokens = dflash_weighted_ce_liger(

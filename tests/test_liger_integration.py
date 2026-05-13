@@ -92,3 +92,20 @@ def test_liger_fused_linear_ce_matches_reference(fake_liger):
     for pos in range(1, block_size):
         key = f"position {pos} acc"
         assert torch.allclose(liger_metrics[key], ref_metrics[key], atol=1e-6, rtol=1e-6)
+
+
+def test_valid_anchor_positions_drops_invalid_slots(fake_liger):
+    anchors = torch.tensor([17, 9, 0, 0], dtype=torch.long)
+    valid = torch.tensor([True, True, False, False])
+
+    selected = fake_liger._valid_anchor_positions(anchors, valid)
+
+    assert torch.equal(selected, torch.tensor([17, 9], dtype=torch.long))
+
+
+def test_valid_anchor_positions_requires_at_least_one_anchor(fake_liger):
+    anchors = torch.zeros(4, dtype=torch.long)
+    valid = torch.zeros(4, dtype=torch.bool)
+
+    with pytest.raises(ValueError, match="No valid anchors"):
+        fake_liger._valid_anchor_positions(anchors, valid)

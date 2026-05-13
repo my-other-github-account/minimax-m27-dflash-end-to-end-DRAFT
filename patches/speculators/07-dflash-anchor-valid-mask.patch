@@ -1,0 +1,36 @@
+diff --git a/src/speculators/models/dflash/core.py b/src/speculators/models/dflash/core.py
+--- a/src/speculators/models/dflash/core.py
++++ b/src/speculators/models/dflash/core.py
+@@ -220,6 +220,9 @@
+         anchor_positions, anchor_valid = select_anchors(
+             loss_mask, num_anchors, self.block_size
+         )
++        anchor_positions = anchor_positions[anchor_valid]
++        if anchor_positions.numel() == 0:
++            raise ValueError("No valid anchors were selected for this batch")
+         # shape: [num_anchors], [num_anchors]
+ 
+         mask_mod, q_len, kv_len = create_anchor_block_mask_mod(
+@@ -238,7 +241,7 @@
+             device=device,
+         )
+ 
+-        mask_tokens_size = num_anchors * self.block_size
++        mask_tokens_size = anchor_positions.numel() * self.block_size
+ 
+         mask_token_ids = torch.full(
+             (1, mask_tokens_size),
+@@ -296,13 +299,6 @@
+ 
+         aligned_loss_mask = loss_mask.clone()[:, anchored_block_indices]
+         # shape: [1, num_anchors*block_size] # noqa: ERA001
+-
+-        # zero out any padded anchor blocks
+-        aligned_loss_mask = aligned_loss_mask * (
+-            anchor_valid.repeat_interleave(self.block_size)
+-            .unsqueeze(0)
+-            .to(aligned_loss_mask.dtype)
+-        )  # shape: [1, num_anchors*block_size]
+ 
+         aligned_loss_mask[:, :: self.block_size] = 0
+         loss, metrics = compute_metrics(

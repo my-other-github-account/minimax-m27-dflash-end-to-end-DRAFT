@@ -35,7 +35,7 @@ NUM_LAYERS = 6
 LR = 3e-4
 WARMUP_STEPS = 100
 LOG_FREQ = 5
-TARGET_STEP = 300
+TARGET_STEP_DEFAULT = 300
 VAL_MAX_BATCHES = 80
 MICRO_BS_DEFAULT = (1, 2, 3, 4, 6, 8)
 OOM_MARKERS = (
@@ -224,10 +224,26 @@ def _materialize_combined_pool(
     if not isinstance(sources, list) or not sources:
         raise ValueError(f"invalid data sources file: {data_sources_path}")
 
+    def _keep_indices_for_anchorable_rows(ds, *, block_size: int = 8) -> list[int]:
+        keep_indices: list[int] = []
+        for idx, row in enumerate(ds):
+            if any(row["loss_mask"][:-block_size]):
+                keep_indices.append(idx)
+        return keep_indices
+
     common_cols = ["input_ids", "loss_mask", "seq_len"]
     datasets = []
+    source_keep_indices: list[list[int]] = []
     for src in sources:
         ds = load_from_disk(src["datapath"])
+        keep_indices = _keep_indices_for_anchorable_rows(ds)
+        if len(keep_indices) != len(ds):
+            print(
+                f"[perf_sweep] filtering {len(ds) - len(keep_indices)} zero-anchor rows "
+                f"from {src['datapath']}"
+            )
+            ds = ds.select(keep_indices)
+        source_keep_indices.append(keep_indices)
         keep = [col for col in common_cols if col in ds.column_names]
         datasets.append(ds.select_columns(keep))
     combined = concatenate_datasets(datasets)
@@ -244,13 +260,16 @@ def _materialize_combined_pool(
 
     hidden_states_out.mkdir(parents=True, exist_ok=True)
     out_idx = 0
-    for src in sources:
+    for src, keep_indices in zip(sources, source_keep_indices, strict=True):
         hs_root = Path(src["hidden_states_path"])
-        hs_files = sorted(
-            hs_root.glob("hs_*.safetensors"),
-            key=lambda p: int(p.stem.split("_")[1]),
-        )
-        for hs_file in hs_files:
+        hs_files = {
+            int(p.stem.split("_")[1]): p
+            for p in hs_root.glob("hs_*.safetensors")
+        }
+        for row_idx in keep_indices:
+            hs_file = hs_files.get(row_idx)
+            if hs_file is None:
+                raise FileNotFoundError(f"missing hidden-state shard hs_{row_idx}.safetensors under {hs_root}")
             dst = hidden_states_out / f"hs_{out_idx}.safetensors"
             if not dst.exists():
                 dst.symlink_to(hs_file)
@@ -522,7 +541,7 @@ def _run_cell(
     train_log = run_root / "train.log"
     save_path = run_root / "ckpt"
     save_path.mkdir(parents=True, exist_ok=True)
-    val_json = save_path / "val_in_epoch" / f"step_{TARGET_STEP:08d}.json"
+    val_json = save_path / "val_in_epoch" / f"step_{args.target_step:08d}.json"
     env = _build_env(
         speculators_repo=args.speculators_repo,
         disable_extended_te=config.disable_extended_te,
@@ -603,7 +622,7 @@ def _run_cell(
         micro_bs=micro_bs,
         master_port=args.base_port + 100 + micro_bs,
         max_anchors=args.max_anchors,
-        val_every_steps=TARGET_STEP,
+        val_every_steps=args.target_step,
         val_in_epoch_max_batches=args.val_in_epoch_max_batches,
     )
     poller = MemoryPoller(interval_sec=5.0)
@@ -620,7 +639,7 @@ def _run_cell(
         reached, log_text = _wait_for_step_target(
             proc,
             log_path=train_log,
-            target_step=TARGET_STEP,
+            target_step=args.target_step,
             val_json_path=val_json,
             timeout_sec=args.cell_timeout_sec,
         )
@@ -655,14 +674,14 @@ def _run_cell(
                 step_time_ms = sum(deltas) / len(deltas)
         start_point = next((p for p in points if p["step"] == 0), points[0])
         trigger_match = re.search(
-            rf"\[(\d\d:\d\d:\d\d)\].*In-epoch validation triggered at global_step={TARGET_STEP}",
+            rf"\[(\d\d:\d\d:\d\d)\].*In-epoch validation triggered at global_step={args.target_step}",
             log_text,
         )
         if trigger_match:
             elapsed = _seconds_between(str(start_point["timestamp"]), trigger_match.group(1))
             if elapsed > 0:
                 throughput = (
-                    BASE_TOTAL_SEQ_LEN * args.max_anchors * micro_bs * TARGET_STEP
+                    BASE_TOTAL_SEQ_LEN * args.max_anchors * micro_bs * args.target_step
                 ) / elapsed
     nan_skips = log_text.count("NaN-SKIP")
     if val_json.exists():
@@ -756,6 +775,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-port", type=int, default=29540)
     parser.add_argument("--max-anchors", type=int, default=MAX_ANCHORS)
     parser.add_argument("--val-in-epoch-max-batches", type=int, default=VAL_MAX_BATCHES)
+    parser.add_argument("--target-step", type=int, default=TARGET_STEP_DEFAULT)
     parser.add_argument("--smoke-timeout-sec", type=int, default=60)
     parser.add_argument("--cell-timeout-sec", type=int, default=3600)
     return parser.parse_args()
