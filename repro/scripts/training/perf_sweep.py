@@ -44,13 +44,6 @@ OOM_MARKERS = (
     "CUDA error: out of memory",
     "CUDA out of memory",
 )
-DEFAULT_VERIFIER_PATH = Path("/home/user/iq4_full_run/verifier_meta_v11")
-DEFAULT_VOCAB_DATA_PATH = Path("/home/user/iq4_full_run/iq4_v10/prompts")
-DEFAULT_HIDDEN_STATES_PATH = Path("/home/user/iq4_full_run/iq4_v10/hidden_states")
-DEFAULT_SPECULATORS_REPO = Path("/home/user/speculators-phase2")
-DEFAULT_TRAIN_SCRIPT = Path("/home/user/speculators-phase2/scripts/train.py")
-DEFAULT_PYTHON_BIN = Path("/home/user/venvs/vllm/bin/python")
-DEFAULT_TORCHRUN_BIN = Path("/home/user/venvs/vllm/bin/torchrun")
 
 
 @dataclass(frozen=True)
@@ -63,11 +56,6 @@ class SweepConfig:
     liger_fused_linear_ce: bool
     liger_rope: bool
     liger_rms_norm: bool = False
-    te_use_dpa: bool = False
-    dflash_fused_ce_chunk: int = 0
-    te_fp8_params: bool = False
-    nvte_fused_attn: bool = False
-    compile_flex_attention: bool = False
 
 
 CONFIGS: dict[str, SweepConfig] = {
@@ -115,161 +103,6 @@ CONFIGS: dict[str, SweepConfig] = {
         disable_extended_te=False,
         liger_fused_linear_ce=True,
         liger_rope=True,
-    ),
-    "C7": SweepConfig(
-        config_id="C7",
-        description="FP8 full TE fusion + TE DPA",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        te_use_dpa=True,
-        nvte_fused_attn=True,
-    ),
-    "C8": SweepConfig(
-        config_id="C8",
-        description="FP8 full TE fusion + chunked DFlash CE (128)",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        dflash_fused_ce_chunk=128,
-    ),
-    "C9": SweepConfig(
-        config_id="C9",
-        description="FP8 full TE fusion + fp8_model_init params",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        te_fp8_params=True,
-    ),
-    "C10": SweepConfig(
-        config_id="C10",
-        description="FP8 full TE fusion + DPA + chunked CE + fp8 params",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        te_use_dpa=True,
-        dflash_fused_ce_chunk=128,
-        te_fp8_params=True,
-        nvte_fused_attn=True,
-    ),
-    "C11": SweepConfig(
-        config_id="C11",
-        description="FP8 full TE fusion + chunked CE + fp8 params (no DPA)",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        te_use_dpa=False,
-        dflash_fused_ce_chunk=128,
-        te_fp8_params=True,
-    ),
-    "C12": SweepConfig(
-        config_id="C12",
-        description="FP8 full TE fusion + chunked CE + fp8 params bs=6 (no DPA)",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        te_use_dpa=False,
-        dflash_fused_ce_chunk=128,
-        te_fp8_params=True,
-    ),
-    "C13": SweepConfig(
-        config_id="C13",
-        description="FP8 full TE fusion + TE DPA with NVTE fused attention enabled",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        te_use_dpa=True,
-        nvte_fused_attn=True,
-    ),
-    "C14": SweepConfig(
-        config_id="C14",
-        description="FP8 full TE fusion + DPA + chunked CE + fp8 params + NVTE fused attention",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        te_use_dpa=True,
-        dflash_fused_ce_chunk=128,
-        te_fp8_params=True,
-        nvte_fused_attn=True,
-    ),
-    "C15": SweepConfig(
-        config_id="C15",
-        description="FP8 full TE fusion + fp8 params + compiled flex attention",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        te_fp8_params=True,
-        compile_flex_attention=True,
-    ),
-    "C16": SweepConfig(
-        config_id="C16",
-        description="FP8 full TE fusion + chunked CE + fp8 params + compiled flex attention",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-        dflash_fused_ce_chunk=128,
-        te_fp8_params=True,
-        compile_flex_attention=True,
-    ),
-    "C17": SweepConfig(
-        config_id="C17",
-        description="NVFP4 safe recipe on full TE fusion",
-        fp8_recipe_kind="nvfp4_safe",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=False,
-        liger_rope=False,
-    ),
-    "C18": SweepConfig(
-        config_id="C18",
-        description="FP8 full TE fusion + fp8 params + low-level Liger CE",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=True,
-        liger_rope=False,
-        te_fp8_params=True,
-    ),
-    "C19": SweepConfig(
-        config_id="C19",
-        description="FP8 full TE fusion + fp8 params + Liger CE + compiled flex attention",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=True,
-        liger_rope=False,
-        te_fp8_params=True,
-        compile_flex_attention=True,
-    ),
-    "C20": SweepConfig(
-        config_id="C20",
-        description="FP8 full TE fusion + fp8 params + Liger CE + Liger RoPE",
-        fp8_recipe_kind="current_fp8",
-        te_use_fused=True,
-        disable_extended_te=False,
-        liger_fused_linear_ce=True,
-        liger_rope=True,
-        te_fp8_params=True,
     ),
 }
 
@@ -483,11 +316,6 @@ def _build_env(
     *,
     speculators_repo: Path,
     disable_extended_te: bool,
-    te_use_dpa: bool,
-    dflash_fused_ce_chunk: int,
-    te_fp8_params: bool,
-    nvte_fused_attn: bool,
-    compile_flex_attention: bool,
 ) -> dict[str, str]:
     env = os.environ.copy()
     py_parts = [str(SRC_ROOT), str(speculators_repo / "src")]
@@ -506,30 +334,10 @@ def _build_env(
     env["CPATH"] = ":".join(
         part for part in (nccl_inc, cudnn_inc, cuda_inc, env.get("CPATH", "")) if part
     )
-    if compile_flex_attention:
-        env.pop("TORCHDYNAMO_DISABLE", None)
-        env.pop("TORCH_COMPILE_DISABLE", None)
-    else:
-        env["TORCHDYNAMO_DISABLE"] = "1"
-        env["TORCH_COMPILE_DISABLE"] = "1"
-    env["NVTE_FUSED_ATTN"] = "1" if nvte_fused_attn else "0"
+    env["TORCHDYNAMO_DISABLE"] = "1"
+    env["TORCH_COMPILE_DISABLE"] = "1"
+    env["NVTE_FUSED_ATTN"] = "0"
     env.setdefault("CUDA_VISIBLE_DEVICES", "0")
-    if te_use_dpa:
-        env["TE_USE_DPA"] = "1"
-    else:
-        env.pop("TE_USE_DPA", None)
-    if dflash_fused_ce_chunk > 0:
-        env["DFLASH_FUSED_CE_CHUNK"] = str(dflash_fused_ce_chunk)
-    else:
-        env.pop("DFLASH_FUSED_CE_CHUNK", None)
-    if te_fp8_params:
-        env["TE_FP8_PARAMS"] = "1"
-    else:
-        env.pop("TE_FP8_PARAMS", None)
-    if compile_flex_attention:
-        env["DFLASH_COMPILE_FLEX"] = "1"
-    else:
-        env.pop("DFLASH_COMPILE_FLEX", None)
     if disable_extended_te:
         env["TE_DISABLE_EXTENDED_FUSION"] = "1"
     else:
@@ -562,9 +370,6 @@ def _build_train_cmd(
     max_anchors: int,
     val_every_steps: int,
     val_in_epoch_max_batches: int,
-    seq_len_per_micro: int,
-    num_workers: int,
-    prefetch_factor: int,
 ) -> list[str]:
     use_torchrun = config.fp8_recipe_kind in ("", "bf16", "none")
     cmd: list[str]
@@ -591,11 +396,13 @@ def _build_train_cmd(
         "--epochs",
         "1",
         "--total-seq-len",
-        str(seq_len_per_micro * micro_bs),
+        str(BASE_TOTAL_SEQ_LEN * micro_bs),
         "--max-anchors",
         str(max_anchors),
         "--num-workers",
-        str(num_workers),
+        "1",
+        "--prefetch-factor",
+        "1",
         "--on-missing",
         "skip",
         "--target-layer-ids",
@@ -627,8 +434,6 @@ def _build_train_cmd(
         "--log-freq",
         str(LOG_FREQ),
     ]
-    if num_workers > 0:
-        cmd += ["--prefetch-factor", str(prefetch_factor)]
     if data_sources_path is not None:
         cmd += ["--data-sources", str(data_sources_path)]
     if val_every_steps > 0:
@@ -771,48 +576,37 @@ def _run_cell(
     train_log = run_root / "train.log"
     save_path = run_root / "ckpt"
     save_path.mkdir(parents=True, exist_ok=True)
-    val_json = None
-    if args.val_every_steps > 0 and args.val_in_epoch_max_batches > 0:
-        val_json = save_path / "val_in_epoch" / f"step_{args.target_step:08d}.json"
+    val_json = save_path / "val_in_epoch" / f"step_{args.target_step:08d}.json"
     env = _build_env(
         speculators_repo=args.speculators_repo,
         disable_extended_te=config.disable_extended_te,
-        te_use_dpa=config.te_use_dpa,
-        dflash_fused_ce_chunk=config.dflash_fused_ce_chunk,
-        te_fp8_params=config.te_fp8_params,
-        nvte_fused_attn=config.nvte_fused_attn,
-        compile_flex_attention=config.compile_flex_attention,
     )
-    smoke_ok = True
-    smoke_text = ""
-    if not args.skip_smoke:
-        smoke_cmd = _build_train_cmd(
-            python_bin=args.python_bin,
-            torchrun_bin=args.torchrun_bin,
-            train_script=args.train_script,
-            verifier_path=args.verifier_path,
-            vocab_data_path=args.vocab_data_path,
-            default_hidden_states_path=args.default_hidden_states_path,
-            data_sources_path=args.data_sources_path,
-            save_path=save_path / "smoke",
-            config=config,
-            micro_bs=micro_bs,
-            master_port=args.base_port + micro_bs,
+    smoke_cmd = _build_train_cmd(
+        python_bin=args.python_bin,
+        torchrun_bin=args.torchrun_bin,
+        train_script=args.train_script,
+        verifier_path=args.verifier_path,
+        vocab_data_path=args.vocab_data_path,
+        default_hidden_states_path=args.default_hidden_states_path,
+        data_sources_path=args.data_sources_path,
+        save_path=save_path / "smoke",
+        config=config,
+        micro_bs=micro_bs,
+        master_port=args.base_port + micro_bs,
         max_anchors=64,
         val_every_steps=0,
         val_in_epoch_max_batches=0,
-        seq_len_per_micro=args.seq_len_per_micro,
     )
-        smoke_ok, smoke_text = _run_smoke(
-            cmd=smoke_cmd,
-            env=env,
-            log_path=smoke_log,
-            timeout_sec=args.smoke_timeout_sec,
-        )
+    smoke_ok, smoke_text = _run_smoke(
+        cmd=smoke_cmd,
+        env=env,
+        log_path=smoke_log,
+        timeout_sec=args.smoke_timeout_sec,
+    )
+    fp8_receipt = _parse_fp8_receipt(smoke_text)
     fp8_receipt_ok = True
     split_acc_ok = True
-    fp8_receipt = _parse_fp8_receipt(smoke_text)
-    if not args.skip_smoke and config.fp8_recipe_kind:
+    if config.fp8_recipe_kind:
         fp8_receipt_ok = fp8_receipt["has_fp8_line"]
         split_acc_ok = fp8_receipt["split_accumulator_ok"]
         if config.te_use_fused and not fp8_receipt["has_te_mlp"]:
@@ -863,11 +657,8 @@ def _run_cell(
         micro_bs=micro_bs,
         master_port=args.base_port + 100 + micro_bs,
         max_anchors=args.max_anchors,
-        val_every_steps=args.val_every_steps,
+        val_every_steps=args.target_step,
         val_in_epoch_max_batches=args.val_in_epoch_max_batches,
-        seq_len_per_micro=args.seq_len_per_micro,
-        num_workers=args.num_workers,
-        prefetch_factor=args.prefetch_factor,
     )
     poller = MemoryPoller(interval_sec=5.0)
     start_time = time.time()
@@ -895,16 +686,6 @@ def _run_cell(
             _terminate_process_group(proc)
     poller.stop()
     log_text = train_log.read_text(errors="replace") if train_log.exists() else log_text
-    if args.skip_smoke and config.fp8_recipe_kind:
-        fp8_receipt = _parse_fp8_receipt(log_text)
-        fp8_receipt_ok = fp8_receipt["has_fp8_line"]
-        split_acc_ok = fp8_receipt["split_accumulator_ok"]
-        if config.te_use_fused and not fp8_receipt["has_te_mlp"]:
-            fp8_receipt_ok = False
-        if not config.disable_extended_te and not fp8_receipt["has_te_ln_linear"]:
-            fp8_receipt_ok = False
-        if (config.liger_fused_linear_ce or config.liger_rope) and not fp8_receipt["has_liger"]:
-            fp8_receipt_ok = False
     status = "OK" if reached else _status_from_log(log_text)
     points = _parse_train_points(log_text)
     loss_0 = None
@@ -946,10 +727,10 @@ def _run_cell(
             elapsed = _seconds_between(str(start_point["timestamp"]), trigger_time)
             if elapsed > 0:
                 throughput = (
-                    args.seq_len_per_micro * args.max_anchors * micro_bs * args.target_step
+                    BASE_TOTAL_SEQ_LEN * args.max_anchors * micro_bs * args.target_step
                 ) / elapsed
     nan_skips = log_text.count("NaN-SKIP")
-    if val_json is not None and val_json.exists():
+    if val_json.exists():
         val_metrics = json.loads(val_json.read_text())
         tau = _tau_from_val_metrics(val_metrics)
     loss_descending = (
@@ -957,13 +738,7 @@ def _run_cell(
         and loss_final is not None
         and loss_final < loss_0
     )
-    if not fp8_receipt_ok:
-        status = "other"
-        fail_reason = "fp8_receipt_missing"
-    elif not split_acc_ok:
-        status = "other"
-        fail_reason = "split_accumulator_missing"
-    elif not reached:
+    if not reached:
         fail_reason = "target_step_not_reached"
     elif nan_skips > 5:
         status = "NaN"
@@ -974,13 +749,8 @@ def _run_cell(
     elif config.fp8_recipe_kind and not fp8_receipt["split_accumulator_ok"]:
         status = "other"
         fail_reason = "split_accumulator_missing"
-    baseline_tok_s = None
-    if baseline is not None:
-        baseline_tok_s = baseline.throughput_tok_s
-    elif args.baseline_throughput_tok_s:
-        baseline_tok_s = args.baseline_throughput_tok_s
-    if baseline_tok_s and throughput:
-        delta_vs_bf16_bs1 = throughput / baseline_tok_s
+    if baseline is not None and baseline.throughput_tok_s and throughput:
+        delta_vs_bf16_bs1 = throughput / baseline.throughput_tok_s
     else:
         delta_vs_bf16_bs1 = None
     if baseline is not None and baseline.tau is not None and tau is not None and config.config_id != "C1":
@@ -1006,7 +776,7 @@ def _run_cell(
         split_accumulator_ok=split_acc_ok,
         fail_reason=fail_reason,
         log_path=str(train_log),
-        val_json=str(val_json) if val_json is not None and val_json.exists() else None,
+        val_json=str(val_json) if val_json.exists() else None,
         wall_time_sec=round(end_time - start_time, 3),
     )
 
@@ -1040,55 +810,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--micro-bs", nargs="+", type=int, default=list(MICRO_BS_DEFAULT))
     parser.add_argument("--run-root", type=Path, default=REPO_ROOT / "repro" / "artifacts" / f"perf_sweep_{_timestamp_utc()}")
     parser.add_argument("--results-prefix", type=str, default=f"perf_sweep_{_timestamp_utc()}")
-    parser.add_argument("--speculators-repo", type=Path, default=DEFAULT_SPECULATORS_REPO)
-    parser.add_argument("--train-script", type=Path, default=DEFAULT_TRAIN_SCRIPT)
-    parser.add_argument("--python-bin", type=Path, default=DEFAULT_PYTHON_BIN)
-    parser.add_argument("--torchrun-bin", type=Path, default=DEFAULT_TORCHRUN_BIN)
-    parser.add_argument("--verifier-path", type=Path, default=DEFAULT_VERIFIER_PATH)
-    parser.add_argument("--vocab-data-path", type=Path, default=DEFAULT_VOCAB_DATA_PATH)
-    parser.add_argument("--default-hidden-states-path", type=Path, default=DEFAULT_HIDDEN_STATES_PATH)
+    parser.add_argument("--speculators-repo", type=Path, default=Path("/home/user/speculators-phase2"))
+    parser.add_argument("--train-script", type=Path, default=Path("/home/user/speculators-phase2/scripts/train.py"))
+    parser.add_argument("--python-bin", type=Path, default=Path("/home/user/venvs/vllm/bin/python"))
+    parser.add_argument("--torchrun-bin", type=Path, default=Path("/home/user/venvs/vllm/bin/torchrun"))
+    parser.add_argument("--verifier-path", type=Path, default=Path("/home/user/iq4_full_run/verifier_meta_v11"))
+    parser.add_argument("--vocab-data-path", type=Path, default=Path("/home/user/iq4_full_run/iq4_v10/prompts"))
+    parser.add_argument("--default-hidden-states-path", type=Path, default=Path("/home/user/iq4_full_run/iq4_v10/hidden_states"))
     parser.add_argument("--data-sources-path", type=Path, default=None)
     parser.add_argument("--base-port", type=int, default=29540)
     parser.add_argument("--max-anchors", type=int, default=MAX_ANCHORS)
-    parser.add_argument("--seq-len-per-micro", type=int, default=BASE_TOTAL_SEQ_LEN)
-    parser.add_argument("--num-workers", type=int, default=1)
-    parser.add_argument("--prefetch-factor", type=int, default=1)
     parser.add_argument("--val-in-epoch-max-batches", type=int, default=VAL_MAX_BATCHES)
     parser.add_argument("--target-step", type=int, default=TARGET_STEP_DEFAULT)
-    parser.add_argument("--val-every-steps", type=int, default=0, help="Validation cadence for train runs; 0 disables validation")
-    parser.add_argument(
-        "--baseline-throughput-tok-s",
-        type=float,
-        default=None,
-        help="Optional external bf16 bs=1 baseline throughput for delta computation",
-    )
     parser.add_argument("--smoke-timeout-sec", type=int, default=60)
     parser.add_argument("--cell-timeout-sec", type=int, default=3600)
-    parser.add_argument("--skip-smoke", action="store_true", help="Run a single train process per cell and validate FP8 receipt from train.log")
-    parser.add_argument(
-        "--reuse-pool-from",
-        type=Path,
-        default=None,
-        help="Existing combined-pool root containing combined_prompts/ and combined_hidden_states/",
-    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     args.run_root.mkdir(parents=True, exist_ok=True)
-    if args.reuse_pool_from is not None:
-        args.vocab_data_path = args.reuse_pool_from / "combined_prompts"
-        args.default_hidden_states_path = args.reuse_pool_from / "combined_hidden_states"
-        args.data_sources_path = None
-    else:
-        should_materialize_default_pool = (
-            args.data_sources_path is None
-            and args.vocab_data_path == DEFAULT_VOCAB_DATA_PATH
-            and args.default_hidden_states_path == DEFAULT_HIDDEN_STATES_PATH
-        )
-        if should_materialize_default_pool:
-            args.data_sources_path = _build_default_data_sources_json(args.run_root / "full_55k_sources.json")
+    if args.data_sources_path is None:
+        args.data_sources_path = _build_default_data_sources_json(args.run_root / "full_55k_sources.json")
     if args.data_sources_path is not None:
         prompts_path, hidden_states_path = _materialize_combined_pool(
             data_sources_path=args.data_sources_path,
@@ -1097,7 +840,7 @@ def main() -> int:
         args.vocab_data_path = prompts_path
         args.default_hidden_states_path = hidden_states_path
         args.data_sources_path = None
-    config_order = args.config_id or ["C1", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "C13", "C14", "C15", "C16", "C17", "C18", "C19", "C20"]
+    config_order = args.config_id or ["C1", "C3", "C4", "C5", "C6"]
     jsonl_path = args.run_root / f"{args.results_prefix}.jsonl"
     md_path = args.run_root / f"{args.results_prefix}.md"
     results: list[CellResult] = []

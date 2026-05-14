@@ -24,10 +24,8 @@ logger = logging.getLogger(__name__)
 
 try:
     import liger_kernel
-    from liger_kernel.ops.fused_linear_cross_entropy import (
-        LigerFusedLinearCrossEntropyFunction,
-    )
     from liger_kernel.transformers import (
+        LigerFusedLinearCrossEntropyLoss,
         LigerRMSNorm,
         liger_rotary_pos_emb,
     )
@@ -143,25 +141,19 @@ def dflash_weighted_ce_liger(
         )
 
     batch, length, hidden = hidden_states.shape
-    token_loss, _z_loss, _token_accuracy, predicted_tokens = LigerFusedLinearCrossEntropyFunction.apply(
-        hidden_states.reshape(batch * length, hidden),
-        lm_head_weight,
-        target_ids.reshape(batch * length),
-        bias,
-        None,
-        -100,
-        0.0,
-        0.0,
-        "none",
-        None,
-        False,
-        None,
-        False,
-        False,
-        True,
+    fused = LigerFusedLinearCrossEntropyLoss(
+        ignore_index=-100,
+        reduction="none",
+        return_predicted_tokens=True,
     )
-    token_loss = token_loss.view(batch, length)
-    predicted_tokens = predicted_tokens.view(batch, length)
+    result = fused(
+        lm_head_weight,
+        hidden_states.reshape(batch * length, hidden),
+        target_ids.reshape(batch * length),
+        bias=bias,
+    )
+    token_loss = result.loss.view(batch, length)
+    predicted_tokens = result.predicted_tokens.view(batch, length)
     weights = _in_block_weights(length, block_size=block_size, gamma=gamma, device=hidden_states.device, dtype=hidden_states.dtype)
     weights = weights.view(1, length)
     mask = loss_mask.to(hidden_states.dtype).view(batch, length)
