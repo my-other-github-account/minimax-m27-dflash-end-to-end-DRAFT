@@ -38,10 +38,12 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-from typing import Optional
+from types import MethodType
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
+from torch.nn.attention.flex_attention import flex_attention as torch_flex_attention
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +149,312 @@ def fp8_context(recipe):
         yield
 
 
+def _env_flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default) == "1"
+
+
+@contextlib.contextmanager
+def _te_param_init_context():
+    """Optionally allocate TE modules with fp8 parameter storage."""
+    if not TE_AVAILABLE or not _env_flag("TE_FP8_PARAMS"):
+        yield
+        return
+    recipe = None
+    try:
+        recipe = get_recipe("current_fp8")
+    except Exception:
+        recipe = None
+    with te.fp8_model_init(
+        enabled=True,
+        recipe=recipe,
+        preserve_high_precision_init_val=True,
+    ):
+        yield
+
+
+def _dense_attention_mask(
+    attention_mask: Any,
+    *,
+    batch_size: int,
+    q_len: int,
+    kv_len: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    """Normalize HF/flex-attention masks to the dense bool layout TE DPA accepts."""
+    if attention_mask is None:
+        return None
+    if hasattr(attention_mask, "mask_mod") and hasattr(attention_mask, "seq_lengths"):
+        batch_idx = torch.zeros((), device=device, dtype=torch.long)
+        head_idx = torch.zeros((), device=device, dtype=torch.long)
+        q_idx = torch.arange(q_len, device=device, dtype=torch.long).view(q_len, 1)
+        kv_idx = torch.arange(kv_len, device=device, dtype=torch.long).view(1, kv_len)
+        mask = attention_mask.mask_mod(batch_idx, head_idx, q_idx, kv_idx)
+        return mask.to(torch.bool).unsqueeze(0).unsqueeze(0).contiguous()
+    if hasattr(attention_mask, "to_dense"):
+        attention_mask = attention_mask.to_dense()
+    if not isinstance(attention_mask, torch.Tensor):
+        raise TypeError(
+            "TE DPA requires a tensor-like attention_mask; "
+            f"got {type(attention_mask)!r}"
+        )
+    mask = attention_mask.to(device=device)
+    if mask.ndim == 2:
+        mask = mask.unsqueeze(0).unsqueeze(0)
+    elif mask.ndim == 3:
+        mask = mask.unsqueeze(1)
+    elif mask.ndim != 4:
+        raise ValueError(
+            "TE DPA requires a 2D/3D/4D attention mask after densification; "
+            f"got shape {tuple(mask.shape)}"
+        )
+    if mask.shape[-2:] != (q_len, kv_len):
+        raise ValueError(
+            "TE DPA attention mask has unexpected trailing dims: "
+            f"{tuple(mask.shape)} vs expected (*, *, {q_len}, {kv_len})"
+        )
+    if mask.shape[0] not in (1, batch_size):
+        raise ValueError(
+            "TE DPA attention mask batch dim must broadcast to the query batch: "
+            f"{tuple(mask.shape)} for batch_size={batch_size}"
+        )
+    return mask.to(torch.bool).contiguous()
+
+
+def _in_block_weights(
+    length: int,
+    *,
+    block_size: int = 8,
+    gamma: float = 4.0,
+    device=None,
+    dtype=None,
+) -> torch.Tensor:
+    idx = torch.arange(length, device=device)
+    in_block_idx = idx % block_size
+    weights = torch.exp(-((in_block_idx - 1).clamp(min=0)).to(dtype or torch.float32) / gamma)
+    return weights * (in_block_idx != 0).to(dtype or torch.float32)
+
+
+def _compute_accuracy_from_predictions(
+    predicted_tokens: torch.Tensor,
+    targets: torch.Tensor,
+    loss_mask: torch.Tensor,
+    *,
+    block_size: int = 8,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    correct = (predicted_tokens == targets) & loss_mask.to(torch.bool)
+    correct = correct.reshape(1, -1, block_size)
+    mask = loss_mask.to(torch.bool).reshape(1, -1, block_size)
+    per_block_idx_sum = correct.float().sum(dim=1)
+    per_block_idx_denom = mask.float().sum(dim=1)
+    total_sum = per_block_idx_sum.sum()
+    total_denom = per_block_idx_denom.sum()
+    return total_sum / (total_denom + 1e-5), (per_block_idx_sum / (per_block_idx_denom + 1e-5)).reshape(-1)
+
+
+def dflash_weighted_ce_reference(
+    hidden_states: torch.Tensor,
+    lm_head_weight: torch.Tensor,
+    target_ids: torch.Tensor,
+    loss_mask: torch.Tensor,
+    *,
+    block_size: int = 8,
+    gamma: float = 4.0,
+    bias: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor], torch.Tensor]:
+    logits = hidden_states @ lm_head_weight.t()
+    if bias is not None and bias.numel() > 0:
+        logits = logits + bias
+    batch, length, vocab = logits.shape
+    ce = torch.nn.functional.cross_entropy(
+        logits.reshape(batch * length, vocab),
+        target_ids.reshape(batch * length),
+        reduction="none",
+        ignore_index=-100,
+    ).view(batch, length)
+    weights = _in_block_weights(length, block_size=block_size, gamma=gamma, device=logits.device, dtype=logits.dtype)
+    weights = weights.view(1, length)
+    mask = loss_mask.to(logits.dtype).view(batch, length)
+    weighted_ce = ce * weights * mask
+    denom = (weights * mask).sum(dim=1) + 1e-5
+    loss = (weighted_ce.sum(dim=1) / denom).mean()
+    predicted_tokens = torch.argmax(logits, dim=-1)
+    full_acc, per_position_acc = _compute_accuracy_from_predictions(
+        predicted_tokens,
+        target_ids,
+        loss_mask,
+        block_size=block_size,
+    )
+    metrics: dict[str, torch.Tensor] = {
+        "loss": loss.detach().clone(),
+        "full_acc": full_acc,
+    }
+    for pos in range(1, len(per_position_acc)):
+        metrics[f"position {pos} acc"] = per_position_acc[pos]
+    return loss, metrics, predicted_tokens
+
+
+def dflash_weighted_ce_chunked(
+    hidden_states: torch.Tensor,
+    lm_head_weight: torch.Tensor,
+    target_ids: torch.Tensor,
+    loss_mask: torch.Tensor,
+    *,
+    chunk_size: int,
+    block_size: int = 8,
+    gamma: float = 4.0,
+    bias: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor], torch.Tensor]:
+    if chunk_size <= 0:
+        return dflash_weighted_ce_reference(
+            hidden_states,
+            lm_head_weight,
+            target_ids,
+            loss_mask,
+            block_size=block_size,
+            gamma=gamma,
+            bias=bias,
+        )
+    batch, length, _hidden = hidden_states.shape
+    weights = _in_block_weights(
+        length,
+        block_size=block_size,
+        gamma=gamma,
+        device=hidden_states.device,
+        dtype=hidden_states.dtype,
+    ).view(1, length)
+    mask = loss_mask.to(hidden_states.dtype).view(batch, length)
+    weighted_ce_sum = hidden_states.new_zeros(batch)
+    denom = (weights * mask).sum(dim=1) + 1e-5
+    predicted_chunks: list[torch.Tensor] = []
+    vocab = lm_head_weight.shape[0]
+    for start in range(0, length, chunk_size):
+        end = min(start + chunk_size, length)
+        chunk_hidden = hidden_states[:, start:end, :]
+        chunk_logits = chunk_hidden @ lm_head_weight.t()
+        if bias is not None and bias.numel() > 0:
+            chunk_logits = chunk_logits + bias
+        chunk_targets = target_ids[:, start:end]
+        chunk_ce = torch.nn.functional.cross_entropy(
+            chunk_logits.reshape(batch * (end - start), vocab),
+            chunk_targets.reshape(batch * (end - start)),
+            reduction="none",
+            ignore_index=-100,
+        ).view(batch, end - start)
+        weighted_ce_sum = weighted_ce_sum + (
+            chunk_ce
+            * weights[:, start:end]
+            * mask[:, start:end]
+        ).sum(dim=1)
+        predicted_chunks.append(torch.argmax(chunk_logits, dim=-1))
+    loss = (weighted_ce_sum / denom).mean()
+    predicted_tokens = torch.cat(predicted_chunks, dim=1)
+    full_acc, per_position_acc = _compute_accuracy_from_predictions(
+        predicted_tokens,
+        target_ids,
+        loss_mask,
+        block_size=block_size,
+    )
+    metrics: dict[str, torch.Tensor] = {
+        "loss": loss.detach().clone(),
+        "full_acc": full_acc,
+    }
+    for pos in range(1, len(per_position_acc)):
+        metrics[f"position {pos} acc"] = per_position_acc[pos]
+    return loss, metrics, predicted_tokens
+
+
+def _apply_chunked_ce(model: nn.Module, *, chunk_size: int) -> None:
+    if chunk_size <= 0 or getattr(model, "_dflash_chunked_ce_size", 0) == chunk_size:
+        return
+
+    def _chunked_forward(
+        self,
+        hidden_states,
+        input_ids,
+        loss_mask,
+        verifier_last_hidden_states,
+        lengths=None,
+        position_ids=None,
+        **kwargs,
+    ):
+        from speculators.models.dflash.core import (
+            create_anchor_block_mask_mod,
+            create_block_mask,
+            get_base_indices_for_anchored_blocks,
+            select_anchors,
+        )
+
+        device = hidden_states.device
+        total_seq_len = hidden_states.shape[1]
+        num_anchors = self.config.max_anchors
+        if lengths is None:
+            lengths = torch.tensor([total_seq_len], dtype=torch.long, device=device)
+        if position_ids is None:
+            position_ids = 1 + torch.arange(total_seq_len, dtype=torch.long, device=device).unsqueeze(0)
+
+        anchor_positions, anchor_valid = select_anchors(loss_mask, num_anchors, self.block_size)
+        anchor_positions = anchor_positions[anchor_valid]
+        if anchor_positions.numel() == 0:
+            raise ValueError("No valid anchors were selected for this batch")
+
+        mask_mod, q_len, kv_len = create_anchor_block_mask_mod(
+            lengths=lengths.to(device),
+            total_seq_len=total_seq_len,
+            anchor_positions=anchor_positions,
+            block_size=self.block_size,
+        )
+        attention_mask = create_block_mask(mask_mod, B=None, H=None, Q_LEN=q_len, KV_LEN=kv_len, device=device)
+
+        mask_tokens_size = anchor_positions.numel() * self.block_size
+        mask_token_ids = torch.full((1, mask_tokens_size), self.mask_token_id, dtype=torch.long, device=device)
+        mask_token_ids[:, :: self.block_size] = input_ids[:, anchor_positions]
+        noise_embedding = self.embed_tokens(mask_token_ids)
+
+        fc_output = self.fc(hidden_states)
+        fc_output = self.hidden_norm(fc_output)
+        mask_position_ids = get_base_indices_for_anchored_blocks(
+            position_ids[:, anchor_positions], self.block_size, input_ids.numel()
+        )
+        position_ids = torch.cat([position_ids, mask_position_ids.unsqueeze(0)], dim=1)
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        anchored_block_indices = get_base_indices_for_anchored_blocks(
+            anchor_positions, self.block_size, input_ids.numel()
+        )
+        with torch.no_grad():
+            verifier_logits = self.verifier_lm_head(self.verifier_norm(verifier_last_hidden_states))
+        verifier_preds = torch.argmax(verifier_logits, dim=-1)
+        verifier_preds = torch.cat([verifier_preds.new_zeros(1, 1), verifier_preds[:, :-1]], dim=1)
+        targets = verifier_preds[:, anchored_block_indices]
+
+        for layer in self.layers:
+            noise_embedding = layer(
+                hidden_states=noise_embedding,
+                target_hidden=fc_output,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                use_cache=False,
+                position_embeddings=position_embeddings,
+                **kwargs,
+            )
+
+        final_hidden = self.norm(noise_embedding)
+        aligned_loss_mask = loss_mask.clone()[:, anchored_block_indices]
+        aligned_loss_mask[:, :: self.block_size] = 0
+        loss, metrics, predicted_tokens = dflash_weighted_ce_chunked(
+            final_hidden,
+            self.lm_head.weight,
+            targets,
+            aligned_loss_mask,
+            chunk_size=chunk_size,
+            block_size=self.block_size,
+            bias=getattr(self.lm_head, "bias", None),
+        )
+        return predicted_tokens, loss, metrics
+
+    model.forward = MethodType(_chunked_forward, model)
+    model._dflash_chunked_ce_size = chunk_size
+
+
 # ---- Fused MLP swap helpers --------------------------------------------------
 def _is_qwen3_mlp(m: nn.Module) -> bool:
     """Detect a Qwen3MLP-shaped module: has gate_proj, up_proj, down_proj as nn.Linear."""
@@ -194,16 +502,17 @@ def _build_layernorm_mlp_from(post_norm: nn.Module, mlp: nn.Module) -> "te.Layer
     dtype = mlp.gate_proj.weight.dtype
     device = mlp.gate_proj.weight.device
 
-    fused = te.LayerNormMLP(
-        hidden_size=hidden_size,
-        ffn_hidden_size=ffn_hidden,
-        eps=eps,
-        bias=has_bias,
-        normalization="RMSNorm",
-        activation="swiglu",
-        params_dtype=dtype,
-        device=device,
-    )
+    with _te_param_init_context():
+        fused = te.LayerNormMLP(
+            hidden_size=hidden_size,
+            ffn_hidden_size=ffn_hidden,
+            eps=eps,
+            bias=has_bias,
+            normalization="RMSNorm",
+            activation="swiglu",
+            params_dtype=dtype,
+            device=device,
+        )
     with torch.no_grad():
         fused.layer_norm_weight.copy_(post_norm.weight.detach().to(dtype))
         # fc1_weight: [gate; up] concatenated along output dim
@@ -231,16 +540,17 @@ def _build_layernorm_linear_from(
     eps = _rmsnorm_eps(norm)
     dtype = linear.weight.dtype
     device = linear.weight.device
-    fused = te.LayerNormLinear(
-        linear.in_features,
-        linear.out_features,
-        eps=eps,
-        bias=has_bias,
-        normalization="RMSNorm",
-        params_dtype=dtype,
-        device=device,
-        return_layernorm_output=return_layernorm_output,
-    )
+    with _te_param_init_context():
+        fused = te.LayerNormLinear(
+            linear.in_features,
+            linear.out_features,
+            eps=eps,
+            bias=has_bias,
+            normalization="RMSNorm",
+            params_dtype=dtype,
+            device=device,
+            return_layernorm_output=return_layernorm_output,
+        )
     with torch.no_grad():
         fused.layer_norm_weight.copy_(norm.weight.detach().to(dtype))
         if hasattr(fused, "layer_norm_bias") and getattr(fused, "layer_norm_bias") is not None:
@@ -285,6 +595,45 @@ class _Qwen3DFlashFusedQProjAttention(nn.Module):
         self._apply_rotary_pos_emb = g["apply_rotary_pos_emb"]
         self._eager_attention_forward = g["eager_attention_forward"]
         self._all_attention_functions = g["ALL_ATTENTION_FUNCTIONS"]
+        self._use_te_dpa = bool(
+            TE_AVAILABLE and hasattr(te, "DotProductAttention") and _env_flag("TE_USE_DPA")
+        )
+        self._compile_flex = bool(hasattr(torch, "compile") and _env_flag("DFLASH_COMPILE_FLEX"))
+        self._te_dpa = None
+        self._compiled_flex_attention = None
+        if self._use_te_dpa:
+            self._te_dpa = te.DotProductAttention(
+                num_attention_heads=attn.q_proj.out_features // self.head_dim,
+                kv_channels=self.head_dim,
+                num_gqa_groups=attn.k_proj.out_features // self.head_dim,
+                attention_dropout=0.0,
+                qkv_format="bshd",
+                attn_mask_type="arbitrary",
+                softmax_scale=self.scaling,
+            )
+        elif self._compile_flex:
+            def _flex_compiled(
+                query: torch.Tensor,
+                key: torch.Tensor,
+                value: torch.Tensor,
+                block_mask,
+                scale: float,
+            ):
+                return torch_flex_attention(
+                    query,
+                    key,
+                    value,
+                    score_mod=None,
+                    block_mask=block_mask,
+                    enable_gqa=query.shape[1] != key.shape[1],
+                    scale=scale,
+                )
+
+            self._compiled_flex_attention = torch.compile(
+                _flex_compiled,
+                fullgraph=False,
+                dynamic=False,
+            )
 
     def forward(
         self,
@@ -308,7 +657,7 @@ class _Qwen3DFlashFusedQProjAttention(nn.Module):
         q, normed_hidden = q_proj_out[0], q_proj_out[1]
 
         q = q.view(bsz, q_len, -1, self.head_dim)
-        q = self.q_norm(q).transpose(1, 2)
+        q = self.q_norm(q)
 
         k_ctx = self.k_proj(target_hidden)
         k_noise = self.k_proj(normed_hidden)
@@ -316,34 +665,68 @@ class _Qwen3DFlashFusedQProjAttention(nn.Module):
         v_noise = self.v_proj(normed_hidden)
         k = torch.cat([k_ctx, k_noise], dim=1).view(bsz, ctx_len + q_len, -1, self.head_dim)
         v = torch.cat([v_ctx, v_noise], dim=1).view(bsz, ctx_len + q_len, -1, self.head_dim)
-        k = self.k_norm(k).transpose(1, 2)
-        v = v.transpose(1, 2)
+        k = self.k_norm(k)
+
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v_h = v.transpose(1, 2)
 
         cos, sin = position_embeddings
         q, k = self._apply_rotary_pos_emb(q, k, cos, sin)
 
         if past_key_values is not None:
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            k, v = past_key_values.update(k, v, self.layer_idx, cache_kwargs)
+            k, v_h = past_key_values.update(k, v_h, self.layer_idx, cache_kwargs)
 
-        attn_fn = self._eager_attention_forward
-        if (
-            getattr(self.config, "_attn_implementation", None) is not None
-            and self.config._attn_implementation != "eager"
-        ):
-            attn_fn = self._all_attention_functions[self.config._attn_implementation]
+        if self._te_dpa is not None:
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v_h.transpose(1, 2)
+            dense_mask = _dense_attention_mask(
+                attention_mask,
+                batch_size=bsz,
+                q_len=q_len,
+                kv_len=ctx_len + q_len,
+                device=q.device,
+            )
+            attn_output = self._te_dpa(
+                q,
+                k,
+                v,
+                attention_mask=dense_mask,
+                attn_mask_type="arbitrary",
+            )
+            attn_weights = None
+        else:
+            if self._compiled_flex_attention is not None and attention_mask is not None:
+                flex_out = self._compiled_flex_attention(
+                    q.contiguous(),
+                    k.contiguous(),
+                    v_h.contiguous(),
+                    attention_mask,
+                    self.scaling,
+                )
+                attn_output = flex_out.transpose(1, 2).contiguous()
+                attn_weights = None
+            else:
+                attn_fn = self._eager_attention_forward
+                if (
+                    getattr(self.config, "_attn_implementation", None) is not None
+                    and self.config._attn_implementation != "eager"
+                ):
+                    attn_fn = self._all_attention_functions[self.config._attn_implementation]
 
-        attn_output, attn_weights = attn_fn(
-            self,
-            q,
-            k,
-            v,
-            attention_mask,
-            dropout=0.0 if not self.training else self.attention_dropout,
-            scaling=self.scaling,
-            sliding_window=self.sliding_window,
-            **kwargs,
-        )
+                attn_output, attn_weights = attn_fn(
+                    self,
+                    q,
+                    k,
+                    v_h,
+                    attention_mask,
+                    dropout=0.0 if not self.training else self.attention_dropout,
+                    scaling=self.scaling,
+                    sliding_window=self.sliding_window,
+                    **kwargs,
+                )
         attn_output = attn_output.reshape(bsz, q_len, -1)
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
@@ -428,9 +811,10 @@ def _replace_linear(module: nn.Module, parent_name: str = "") -> int:
         if isinstance(child, nn.Linear) and not isinstance(child, te.Linear):
             in_f, out_f = child.in_features, child.out_features
             bias = child.bias is not None
-            new = te.Linear(in_f, out_f, bias=bias,
-                            params_dtype=child.weight.dtype,
-                            device=child.weight.device)
+            with _te_param_init_context():
+                new = te.Linear(in_f, out_f, bias=bias,
+                                params_dtype=child.weight.dtype,
+                                device=child.weight.device)
             with torch.no_grad():
                 new.weight.copy_(child.weight.detach())
                 if bias:
@@ -462,6 +846,7 @@ def wrap_with_te(model: nn.Module, fp8: bool = True) -> nn.Module:
 
     use_fused = os.environ.get("TE_USE_FUSED", "0") == "1"
     use_extended_fusion = os.environ.get("TE_DISABLE_EXTENDED_FUSION", "0") != "1"
+    chunked_ce_size = int(os.environ.get("DFLASH_FUSED_CE_CHUNK", "0") or "0")
     n_fused_mlp = 0
     n_fused_attn = 0
     n_fused_lm_head = 0
@@ -493,6 +878,11 @@ def wrap_with_te(model: nn.Module, fp8: bool = True) -> nn.Module:
 
     n = _replace_linear(model)
     logger.info(f"[te_wrap] replaced {n} nn.Linear with te.Linear")
+    if _env_flag("TE_FP8_PARAMS"):
+        logger.info("[te_wrap] enabled TE fp8_model_init parameter storage")
+    if chunked_ce_size > 0:
+        _apply_chunked_ce(model, chunk_size=chunked_ce_size)
+        logger.info("[te_wrap] enabled DFlash chunked CE with chunk_size=%s", chunked_ce_size)
     return model
 
 
@@ -672,6 +1062,8 @@ __all__ = [
     "get_recipe",
     "fp8_context",
     "wrap_with_te",
+    "dflash_weighted_ce_reference",
+    "dflash_weighted_ce_chunked",
     "fusion_coverage",
     "count_linears",
     "unfused_to_fused_state_dict",
