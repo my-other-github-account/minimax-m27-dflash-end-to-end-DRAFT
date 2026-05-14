@@ -55,6 +55,11 @@ class SweepConfig:
     disable_extended_te: bool
     liger_fused_linear_ce: bool
     liger_rope: bool
+    te_use_dpa: bool = False
+    dflash_fused_ce_chunk: int = 0
+    te_fp8_params: bool = False
+    nvte_fused_attn: bool = False
+    compile_flex_attention: bool = False
     liger_rms_norm: bool = False
 
 
@@ -103,6 +108,157 @@ CONFIGS: dict[str, SweepConfig] = {
         disable_extended_te=False,
         liger_fused_linear_ce=True,
         liger_rope=True,
+    ),
+    "C7": SweepConfig(
+        config_id="C7",
+        description="FP8 full TE fusion + TE DPA",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        te_use_dpa=True,
+    ),
+    "C8": SweepConfig(
+        config_id="C8",
+        description="FP8 full TE fusion + chunked CE",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        dflash_fused_ce_chunk=128,
+    ),
+    "C9": SweepConfig(
+        config_id="C9",
+        description="FP8 full TE fusion + fp8_model_init params",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        te_fp8_params=True,
+    ),
+    "C10": SweepConfig(
+        config_id="C10",
+        description="FP8 full TE fusion + DPA + chunked CE + fp8 params",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        te_use_dpa=True,
+        dflash_fused_ce_chunk=128,
+        te_fp8_params=True,
+    ),
+    "C11": SweepConfig(
+        config_id="C11",
+        description="FP8 full TE fusion + chunked CE + fp8 params",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        dflash_fused_ce_chunk=128,
+        te_fp8_params=True,
+    ),
+    "C12": SweepConfig(
+        config_id="C12",
+        description="FP8 full TE fusion + chunked CE + fp8 params (high-bs slot)",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        dflash_fused_ce_chunk=128,
+        te_fp8_params=True,
+    ),
+    "C13": SweepConfig(
+        config_id="C13",
+        description="FP8 full TE fusion + TE DPA with NVTE fused attention",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        te_use_dpa=True,
+        nvte_fused_attn=True,
+    ),
+    "C14": SweepConfig(
+        config_id="C14",
+        description="FP8 full TE fusion + DPA + chunked CE + fp8 params + NVTE fused attention",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        te_use_dpa=True,
+        dflash_fused_ce_chunk=128,
+        te_fp8_params=True,
+        nvte_fused_attn=True,
+    ),
+    "C15": SweepConfig(
+        config_id="C15",
+        description="FP8 full TE fusion + fp8 params + compiled flex attention",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        te_fp8_params=True,
+        compile_flex_attention=True,
+    ),
+    "C16": SweepConfig(
+        config_id="C16",
+        description="FP8 full TE fusion + chunked CE + fp8 params + compiled flex attention",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+        dflash_fused_ce_chunk=128,
+        te_fp8_params=True,
+        compile_flex_attention=True,
+    ),
+    "C17": SweepConfig(
+        config_id="C17",
+        description="NVFP4 safe recipe on full TE fusion",
+        fp8_recipe_kind="nvfp4_safe",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=False,
+        liger_rope=False,
+    ),
+    "C18": SweepConfig(
+        config_id="C18",
+        description="FP8 full TE fusion + fp8 params + exact Liger CE path",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=True,
+        liger_rope=False,
+        te_fp8_params=True,
+    ),
+    "C19": SweepConfig(
+        config_id="C19",
+        description="FP8 full TE fusion + fp8 params + Liger CE + compiled flex attention",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=True,
+        liger_rope=False,
+        te_fp8_params=True,
+        compile_flex_attention=True,
+    ),
+    "C20": SweepConfig(
+        config_id="C20",
+        description="FP8 full TE fusion + fp8 params + Liger CE + Liger RoPE",
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        disable_extended_te=False,
+        liger_fused_linear_ce=True,
+        liger_rope=True,
+        te_fp8_params=True,
     ),
 }
 
@@ -316,6 +472,11 @@ def _build_env(
     *,
     speculators_repo: Path,
     disable_extended_te: bool,
+    te_use_dpa: bool,
+    dflash_fused_ce_chunk: int,
+    te_fp8_params: bool,
+    nvte_fused_attn: bool,
+    compile_flex_attention: bool,
 ) -> dict[str, str]:
     env = os.environ.copy()
     py_parts = [str(SRC_ROOT), str(speculators_repo / "src")]
@@ -336,8 +497,24 @@ def _build_env(
     )
     env["TORCHDYNAMO_DISABLE"] = "1"
     env["TORCH_COMPILE_DISABLE"] = "1"
-    env["NVTE_FUSED_ATTN"] = "0"
+    env["NVTE_FUSED_ATTN"] = "1" if nvte_fused_attn else "0"
     env.setdefault("CUDA_VISIBLE_DEVICES", "0")
+    if te_use_dpa:
+        env["TE_USE_DPA"] = "1"
+    else:
+        env.pop("TE_USE_DPA", None)
+    if dflash_fused_ce_chunk > 0:
+        env["DFLASH_FUSED_CE_CHUNK"] = str(dflash_fused_ce_chunk)
+    else:
+        env.pop("DFLASH_FUSED_CE_CHUNK", None)
+    if te_fp8_params:
+        env["TE_FP8_PARAMS"] = "1"
+    else:
+        env.pop("TE_FP8_PARAMS", None)
+    if compile_flex_attention:
+        env["DFLASH_COMPILE_FLEX"] = "1"
+    else:
+        env.pop("DFLASH_COMPILE_FLEX", None)
     if disable_extended_te:
         env["TE_DISABLE_EXTENDED_FUSION"] = "1"
     else:
@@ -580,6 +757,11 @@ def _run_cell(
     env = _build_env(
         speculators_repo=args.speculators_repo,
         disable_extended_te=config.disable_extended_te,
+        te_use_dpa=config.te_use_dpa,
+        dflash_fused_ce_chunk=config.dflash_fused_ce_chunk,
+        te_fp8_params=config.te_fp8_params,
+        nvte_fused_attn=config.nvte_fused_attn,
+        compile_flex_attention=config.compile_flex_attention,
     )
     smoke_cmd = _build_train_cmd(
         python_bin=args.python_bin,
@@ -840,7 +1022,7 @@ def main() -> int:
         args.vocab_data_path = prompts_path
         args.default_hidden_states_path = hidden_states_path
         args.data_sources_path = None
-    config_order = args.config_id or ["C1", "C3", "C4", "C5", "C6"]
+    config_order = args.config_id or ["C1", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "C13", "C14", "C15", "C16", "C17", "C18", "C19", "C20"]
     jsonl_path = args.run_root / f"{args.results_prefix}.jsonl"
     md_path = args.run_root / f"{args.results_prefix}.md"
     results: list[CellResult] = []
