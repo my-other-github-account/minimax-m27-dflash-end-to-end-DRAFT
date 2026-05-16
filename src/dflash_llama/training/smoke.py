@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..verifiers.base import BaseVerifier
+from .launch import build_training_env
 
 
 CANONICAL_FAILURE_MARKERS = (
@@ -40,6 +41,7 @@ class SmokeResult:
     rc: int
     timed_out: bool
     log_path: str
+    env: dict | None = None
     saw_global_step: bool = False
     failure_markers_hit: list = field(default_factory=list)
     passed: bool = False
@@ -50,6 +52,7 @@ class SmokeResult:
             "rc": self.rc,
             "timed_out": self.timed_out,
             "log_path": self.log_path,
+            "env": self.env,
             "saw_global_step": self.saw_global_step,
             "failure_markers_hit": list(self.failure_markers_hit),
             "passed": self.passed,
@@ -85,6 +88,8 @@ def run_smoke_test(
     # === DFlash FP8 / TransformerEngine wrap (optional) ===
     fp8_recipe_kind: str = "",
     te_use_fused: bool = False,
+    te_fp8_params: bool = False,
+    compile_flex_attention: bool = False,
     liger_fused_linear_ce: bool = False,
     liger_rope: bool = False,
     liger_rms_norm: bool = False,
@@ -158,19 +163,21 @@ def run_smoke_test(
     if liger_rms_norm:
         cmd.append("--liger-rms-norm")
     cmd_with_timeout = ["timeout", str(timeout_sec), *cmd]
+    env = build_training_env(
+        te_fp8_params=te_fp8_params,
+        compile_flex_attention=compile_flex_attention,
+        extra_env=extra_env,
+    )
 
     if dry_run:
         return SmokeResult(
             rc=0,
             timed_out=False,
             log_path=log_path,
+            env=env,
             passed=True,
             message="dry_run=True; would run: " + " ".join(shlex.quote(c) for c in cmd_with_timeout),
         )
-
-    env = os.environ.copy()
-    if extra_env:
-        env.update({str(k): str(v) for k, v in extra_env.items()})
 
     print(f"[smoke] cmd: {' '.join(shlex.quote(c) for c in cmd_with_timeout)}", flush=True)
     with open(log_path, "wb") as logf:
@@ -198,6 +205,7 @@ def run_smoke_test(
         rc=rc,
         timed_out=timed_out,
         log_path=log_path,
+        env=env,
         saw_global_step=saw_step,
         failure_markers_hit=hits,
         passed=passed,

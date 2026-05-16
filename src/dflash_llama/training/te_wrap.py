@@ -147,6 +147,30 @@ def fp8_context(recipe):
         yield
 
 
+def _env_flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default) == "1"
+
+
+@contextlib.contextmanager
+def _te_param_init_context(enabled: Optional[bool] = None):
+    """Optionally allocate TE modules with fp8 parameter storage."""
+    enabled = _env_flag("TE_FP8_PARAMS") if enabled is None else enabled
+    if not TE_AVAILABLE or not enabled:
+        yield
+        return
+    recipe = None
+    try:
+        recipe = get_recipe("current_fp8")
+    except Exception:
+        recipe = None
+    with te.fp8_model_init(
+        enabled=True,
+        recipe=recipe,
+        preserve_high_precision_init_val=True,
+    ):
+        yield
+
+
 # ---- Fused MLP swap helpers --------------------------------------------------
 def _is_qwen3_mlp(m: nn.Module) -> bool:
     """Detect a Qwen3MLP-shaped module: has gate_proj, up_proj, down_proj as nn.Linear."""
@@ -174,7 +198,12 @@ def _rmsnorm_eps(norm: nn.Module) -> float:
     return 1e-6
 
 
-def _build_layernorm_mlp_from(post_norm: nn.Module, mlp: nn.Module) -> "te.LayerNormMLP":
+def _build_layernorm_mlp_from(
+    post_norm: nn.Module,
+    mlp: nn.Module,
+    *,
+    te_fp8_params: Optional[bool] = None,
+) -> "te.LayerNormMLP":
     """Construct a te.LayerNormMLP that mirrors (RMSNorm + Qwen3MLP).
 
     Qwen3MLP forward: down_proj(silu(gate_proj(x)) * up_proj(x))
@@ -194,16 +223,17 @@ def _build_layernorm_mlp_from(post_norm: nn.Module, mlp: nn.Module) -> "te.Layer
     dtype = mlp.gate_proj.weight.dtype
     device = mlp.gate_proj.weight.device
 
-    fused = te.LayerNormMLP(
-        hidden_size=hidden_size,
-        ffn_hidden_size=ffn_hidden,
-        eps=eps,
-        bias=has_bias,
-        normalization="RMSNorm",
-        activation="swiglu",
-        params_dtype=dtype,
-        device=device,
-    )
+    with _te_param_init_context(te_fp8_params):
+        fused = te.LayerNormMLP(
+            hidden_size=hidden_size,
+            ffn_hidden_size=ffn_hidden,
+            eps=eps,
+            bias=has_bias,
+            normalization="RMSNorm",
+            activation="swiglu",
+            params_dtype=dtype,
+            device=device,
+        )
     with torch.no_grad():
         fused.layer_norm_weight.copy_(post_norm.weight.detach().to(dtype))
         # fc1_weight: [gate; up] concatenated along output dim
@@ -224,6 +254,7 @@ def _build_layernorm_linear_from(
     linear: nn.Module,
     *,
     return_layernorm_output: bool = False,
+    te_fp8_params: Optional[bool] = None,
 ) -> "te.LayerNormLinear":
     """Construct a te.LayerNormLinear mirroring (RMSNorm + Linear)."""
     assert TE_AVAILABLE
@@ -231,16 +262,17 @@ def _build_layernorm_linear_from(
     eps = _rmsnorm_eps(norm)
     dtype = linear.weight.dtype
     device = linear.weight.device
-    fused = te.LayerNormLinear(
-        linear.in_features,
-        linear.out_features,
-        eps=eps,
-        bias=has_bias,
-        normalization="RMSNorm",
-        params_dtype=dtype,
-        device=device,
-        return_layernorm_output=return_layernorm_output,
-    )
+    with _te_param_init_context(te_fp8_params):
+        fused = te.LayerNormLinear(
+            linear.in_features,
+            linear.out_features,
+            eps=eps,
+            bias=has_bias,
+            normalization="RMSNorm",
+            params_dtype=dtype,
+            device=device,
+            return_layernorm_output=return_layernorm_output,
+        )
     with torch.no_grad():
         fused.layer_norm_weight.copy_(norm.weight.detach().to(dtype))
         if hasattr(fused, "layer_norm_bias") and getattr(fused, "layer_norm_bias") is not None:
@@ -259,7 +291,13 @@ class _Qwen3DFlashFusedQProjAttention(nn.Module):
     is still fusion-eligible because it consumes only the noise hidden states.
     """
 
-    def __init__(self, input_layernorm: nn.Module, attn: nn.Module):
+    def __init__(
+        self,
+        input_layernorm: nn.Module,
+        attn: nn.Module,
+        *,
+        te_fp8_params: Optional[bool] = None,
+    ):
         super().__init__()
         self.config = attn.config
         self.layer_idx = attn.layer_idx
@@ -274,6 +312,7 @@ class _Qwen3DFlashFusedQProjAttention(nn.Module):
             input_layernorm,
             attn.q_proj,
             return_layernorm_output=True,
+            te_fp8_params=te_fp8_params,
         )
         self.k_proj = attn.k_proj
         self.v_proj = attn.v_proj
@@ -349,7 +388,11 @@ class _Qwen3DFlashFusedQProjAttention(nn.Module):
         return attn_output, attn_weights
 
 
-def _fuse_qwen3_decoder_mlp_blocks(model: nn.Module) -> int:
+def _fuse_qwen3_decoder_mlp_blocks(
+    model: nn.Module,
+    *,
+    te_fp8_params: Optional[bool] = None,
+) -> int:
     """Walk the model and replace every (post_attention_layernorm + mlp) pair on a
     Qwen3 decoder layer with (Identity + te.LayerNormMLP). Returns count of fusions.
 
@@ -365,7 +408,7 @@ def _fuse_qwen3_decoder_mlp_blocks(model: nn.Module) -> int:
             continue
         if not _is_rmsnorm(post_norm) or not _is_qwen3_mlp(mlp):
             continue
-        fused = _build_layernorm_mlp_from(post_norm, mlp)
+        fused = _build_layernorm_mlp_from(post_norm, mlp, te_fp8_params=te_fp8_params)
         # Replace mlp first (so post_norm reference is still valid for build above);
         # then replace post_attention_layernorm with Identity.
         module.mlp = fused
@@ -374,7 +417,11 @@ def _fuse_qwen3_decoder_mlp_blocks(model: nn.Module) -> int:
     return n
 
 
-def _fuse_qwen3_attention_qkv(model: nn.Module) -> int:
+def _fuse_qwen3_attention_qkv(
+    model: nn.Module,
+    *,
+    te_fp8_params: Optional[bool] = None,
+) -> int:
     """Fuse the DFlash attention block's input RMSNorm + q_proj path.
 
     DFlash reuses the same k/v projection weights for both verifier-hidden and
@@ -398,13 +445,21 @@ def _fuse_qwen3_attention_qkv(model: nn.Module) -> int:
         o_proj = getattr(attn, "o_proj", None)
         if not all(isinstance(m, nn.Linear) for m in (q_proj, k_proj, v_proj, o_proj)):
             continue
-        module.self_attn = _Qwen3DFlashFusedQProjAttention(input_norm, attn)
+        module.self_attn = _Qwen3DFlashFusedQProjAttention(
+            input_norm,
+            attn,
+            te_fp8_params=te_fp8_params,
+        )
         module.input_layernorm = nn.Identity()
         n += 1
     return n
 
 
-def _fuse_final_norm_lm_head(model: nn.Module) -> int:
+def _fuse_final_norm_lm_head(
+    model: nn.Module,
+    *,
+    te_fp8_params: Optional[bool] = None,
+) -> int:
     """Fuse the top-level RMSNorm + lm_head into te.LayerNormLinear."""
     if not TE_AVAILABLE:
         return 0
@@ -412,13 +467,22 @@ def _fuse_final_norm_lm_head(model: nn.Module) -> int:
     lm_head = getattr(model, "lm_head", None)
     if not _is_rmsnorm(norm) or not isinstance(lm_head, nn.Linear):
         return 0
-    model.lm_head = _build_layernorm_linear_from(norm, lm_head)
+    model.lm_head = _build_layernorm_linear_from(
+        norm,
+        lm_head,
+        te_fp8_params=te_fp8_params,
+    )
     model.norm = nn.Identity()
     return 1
 
 
 # ---- nn.Linear -> te.Linear monkey-patch -------------------------------------
-def _replace_linear(module: nn.Module, parent_name: str = "") -> int:
+def _replace_linear(
+    module: nn.Module,
+    parent_name: str = "",
+    *,
+    te_fp8_params: Optional[bool] = None,
+) -> int:
     """Recursively replace nn.Linear children with te.Linear, copying weights."""
     if not TE_AVAILABLE:
         return 0
@@ -428,9 +492,14 @@ def _replace_linear(module: nn.Module, parent_name: str = "") -> int:
         if isinstance(child, nn.Linear) and not isinstance(child, te.Linear):
             in_f, out_f = child.in_features, child.out_features
             bias = child.bias is not None
-            new = te.Linear(in_f, out_f, bias=bias,
-                            params_dtype=child.weight.dtype,
-                            device=child.weight.device)
+            with _te_param_init_context(te_fp8_params):
+                new = te.Linear(
+                    in_f,
+                    out_f,
+                    bias=bias,
+                    params_dtype=child.weight.dtype,
+                    device=child.weight.device,
+                )
             with torch.no_grad():
                 new.weight.copy_(child.weight.detach())
                 if bias:
@@ -438,11 +507,16 @@ def _replace_linear(module: nn.Module, parent_name: str = "") -> int:
             setattr(module, name, new)
             n_replaced += 1
         else:
-            n_replaced += _replace_linear(child, full)
+            n_replaced += _replace_linear(child, full, te_fp8_params=te_fp8_params)
     return n_replaced
 
 
-def wrap_with_te(model: nn.Module, fp8: bool = True) -> nn.Module:
+def wrap_with_te(
+    model: nn.Module,
+    fp8: bool = True,
+    *,
+    te_fp8_params: Optional[bool] = None,
+) -> nn.Module:
     """In-place wrap: replace every nn.Linear in `model` with te.Linear.
 
     If env TE_USE_FUSED=1, also fuses Qwen3 (post_attention_layernorm + mlp)
@@ -460,16 +534,18 @@ def wrap_with_te(model: nn.Module, fp8: bool = True) -> nn.Module:
         logger.warning("TE not available; returning model unwrapped")
         return model
 
+    if te_fp8_params is None:
+        te_fp8_params = _env_flag("TE_FP8_PARAMS")
     use_fused = os.environ.get("TE_USE_FUSED", "0") == "1"
     use_extended_fusion = os.environ.get("TE_DISABLE_EXTENDED_FUSION", "0") != "1"
     n_fused_mlp = 0
     n_fused_attn = 0
     n_fused_lm_head = 0
     if use_fused:
-        n_fused_mlp = _fuse_qwen3_decoder_mlp_blocks(model)
+        n_fused_mlp = _fuse_qwen3_decoder_mlp_blocks(model, te_fp8_params=te_fp8_params)
         if use_extended_fusion:
-            n_fused_attn = _fuse_qwen3_attention_qkv(model)
-            n_fused_lm_head = _fuse_final_norm_lm_head(model)
+            n_fused_attn = _fuse_qwen3_attention_qkv(model, te_fp8_params=te_fp8_params)
+            n_fused_lm_head = _fuse_final_norm_lm_head(model, te_fp8_params=te_fp8_params)
         logger.info(f"[te_wrap] fused {n_fused_mlp} Qwen3 (post_norm+mlp) -> te.LayerNormMLP")
         if use_extended_fusion:
             logger.info(
@@ -491,8 +567,10 @@ def wrap_with_te(model: nn.Module, fp8: bool = True) -> nn.Module:
         else:
             print("[te_wrap] extended TE fusion disabled by TE_DISABLE_EXTENDED_FUSION=1", flush=True)
 
-    n = _replace_linear(model)
+    n = _replace_linear(model, te_fp8_params=te_fp8_params)
     logger.info(f"[te_wrap] replaced {n} nn.Linear with te.Linear")
+    if te_fp8_params:
+        logger.info("[te_wrap] enabled TE fp8_model_init parameter storage")
     return model
 
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..verifiers.base import BaseVerifier
+from .launch import build_training_env
 from .prompts import assemble_prompts_arrow
 from .vocab_maps import build_vocab_maps
 from .smoke import run_smoke_test, SmokeResult
@@ -173,6 +174,8 @@ class DFlashTrainer:
         # === DFlash FP8 / TransformerEngine wrap ===
         fp8_recipe_kind: str = "",
         te_use_fused: bool = False,
+        te_fp8_params: bool = False,
+        compile_flex_attention: bool = False,
         liger_fused_linear_ce: bool = False,
         liger_rope: bool = False,
         liger_rms_norm: bool = False,
@@ -279,6 +282,8 @@ class DFlashTrainer:
         # === DFlash FP8 / TransformerEngine wrap ===
         fp8_recipe_kind: str = "",
         te_use_fused: bool = False,
+        te_fp8_params: bool = False,
+        compile_flex_attention: bool = False,
         liger_fused_linear_ce: bool = False,
         liger_rope: bool = False,
         liger_rms_norm: bool = False,
@@ -287,11 +292,13 @@ class DFlashTrainer:
     ) -> dict:
         """Run a full training job.
 
-        Returns ``{"rc": int, "log_path": str, "cmd": [...]}``. ``dry_run=True``
-        returns the exact command that would be invoked without executing it.
+        Returns ``{"rc": int, "log_path": str, "cmd": [...], "env": {...}}``.
+        ``dry_run=True`` returns the exact command/env that would be invoked
+        without executing it.
 
         FP8 training (DGX Spark sm_121a verified-stable):
-            fp8_recipe_kind="current_fp8", te_use_fused=True
+            fp8_recipe_kind="current_fp8", te_use_fused=True,
+            te_fp8_params=True, compile_flex_attention=True
 
         Liger add-ons (apply after TE wrap):
             liger_fused_linear_ce=True, liger_rope=True
@@ -327,20 +334,38 @@ class DFlashTrainer:
             save_every_n_vals=save_every_n_vals,
             fp8_recipe_kind=fp8_recipe_kind,
             te_use_fused=te_use_fused,
+            te_fp8_params=te_fp8_params,
+            compile_flex_attention=compile_flex_attention,
             liger_fused_linear_ce=liger_fused_linear_ce,
             liger_rope=liger_rope,
             liger_rms_norm=liger_rms_norm,
             use_torchrun=use_torchrun,
         )
+        env = build_training_env(
+            te_fp8_params=te_fp8_params,
+            compile_flex_attention=compile_flex_attention,
+        )
 
         if dry_run:
-            return {"rc": 0, "log_path": log_path, "cmd": cmd, "dry_run": True}
+            return {
+                "rc": 0,
+                "log_path": log_path,
+                "cmd": cmd,
+                "env": env,
+                "dry_run": True,
+            }
 
         print(f"[train] cmd: {' '.join(shlex.quote(c) for c in cmd)}", flush=True)
         with open(log_path, "wb") as logf:
-            proc = subprocess.run(cmd, stdout=logf, stderr=subprocess.STDOUT)
+            proc = subprocess.run(cmd, stdout=logf, stderr=subprocess.STDOUT, env=env)
         rc = proc.returncode
-        return {"rc": rc, "log_path": log_path, "cmd": cmd, "save_path": str(save_to_p)}
+        return {
+            "rc": rc,
+            "log_path": log_path,
+            "cmd": cmd,
+            "env": env,
+            "save_path": str(save_to_p),
+        }
 
     # -----------------------------------------------------------------
     def smoke(
@@ -354,6 +379,8 @@ class DFlashTrainer:
         dry_run: bool = False,
         fp8_recipe_kind: str = "",
         te_use_fused: bool = False,
+        te_fp8_params: bool = False,
+        compile_flex_attention: bool = False,
         liger_fused_linear_ce: bool = False,
         liger_rope: bool = False,
         liger_rms_norm: bool = False,
@@ -371,6 +398,8 @@ class DFlashTrainer:
             dry_run=dry_run,
             fp8_recipe_kind=fp8_recipe_kind,
             te_use_fused=te_use_fused,
+            te_fp8_params=te_fp8_params,
+            compile_flex_attention=compile_flex_attention,
             liger_fused_linear_ce=liger_fused_linear_ce,
             liger_rope=liger_rope,
             liger_rms_norm=liger_rms_norm,

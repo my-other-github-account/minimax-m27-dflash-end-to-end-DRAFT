@@ -110,7 +110,7 @@ diff --git a/src/speculators/train/trainer.py b/src/speculators/train/trainer.py
 +        )
 +        if self.local_rank == 0:
 +            # Print on rank 0 too — the logger may be filtered in some configs and this
-+            # line is the verification marker the operator greps for at launch.
++            # line is the verification marker we grep for at launch.
 +            print(
 +                f"[FP8] TE_VERSION={TE_VERSION} recipe={self._fp8_recipe} "
 +                f"fused={self.config.te_use_fused} "

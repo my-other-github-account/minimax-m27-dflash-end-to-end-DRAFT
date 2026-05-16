@@ -113,9 +113,14 @@ def test_train_dryrun_default_uses_torchrun_no_fp8_flags(prepared_trainer, tmp_p
     res = prepared_trainer.train(save_to=str(tmp_path / "ckpt"), dry_run=True, epochs=1)
     assert res["dry_run"] is True
     cmd = res["cmd"]
+    env = res["env"]
     cmd_str = " ".join(cmd)
     # Launcher: torchrun
     assert "torchrun" in cmd[0]
+    assert env["TORCHDYNAMO_DISABLE"] == "1"
+    assert env["TORCH_COMPILE_DISABLE"] == "1"
+    assert "TE_FP8_PARAMS" not in env
+    assert "DFLASH_COMPILE_FLEX" not in env
     # No FP8 flags
     assert "--fp8-recipe-kind" not in cmd_str
     assert "--te-use-fused" not in cmd_str
@@ -147,6 +152,26 @@ def test_train_dryrun_fp8_drops_torchrun(prepared_trainer, tmp_path):
     # No master_port (that's torchrun-only)
     assert "--master_port" not in cmd_str
     assert "--nproc-per-node" not in cmd_str
+    assert res["env"]["TORCHDYNAMO_DISABLE"] == "1"
+    assert res["env"]["TORCH_COMPILE_DISABLE"] == "1"
+
+
+def test_train_dryrun_fp8_param_storage_sets_env(prepared_trainer, tmp_path):
+    """te_fp8_params=True must set the env bit without changing the CLI shape."""
+    res = prepared_trainer.train(
+        save_to=str(tmp_path / "ckpt"),
+        dry_run=True,
+        epochs=1,
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        te_fp8_params=True,
+    )
+    cmd_str = " ".join(res["cmd"])
+    assert "--fp8-recipe-kind current_fp8" in cmd_str
+    assert "--te-use-fused" in cmd_str
+    assert res["env"]["TE_FP8_PARAMS"] == "1"
+    assert res["env"]["TORCHDYNAMO_DISABLE"] == "1"
+    assert res["env"]["TORCH_COMPILE_DISABLE"] == "1"
 
 
 def test_train_dryrun_in_epoch_val_flags(prepared_trainer, tmp_path):
@@ -227,6 +252,9 @@ def test_smoke_dryrun_fp8_drops_torchrun(prepared_trainer, tmp_path):
     assert "torchrun" not in res.message.split("would run:", 1)[1].split()[0:2][0]
     assert "--fp8-recipe-kind current_fp8" in res.message
     assert "--te-use-fused" in res.message
+    assert res.env is not None
+    assert res.env["TORCHDYNAMO_DISABLE"] == "1"
+    assert res.env["TORCH_COMPILE_DISABLE"] == "1"
 
 
 def test_smoke_dryrun_liger_flags(prepared_trainer, tmp_path):
@@ -243,6 +271,21 @@ def test_smoke_dryrun_liger_flags(prepared_trainer, tmp_path):
     assert "--liger-fused-linear-ce" in res.message
     assert "--liger-rope" in res.message
     assert "--liger-rms-norm" in res.message
+
+
+def test_smoke_dryrun_fp8_param_storage_sets_env(prepared_trainer, tmp_path):
+    """Smoke launches must expose the same TE fp8 parameter-storage env flag."""
+    res = prepared_trainer.smoke(
+        dry_run=True,
+        timeout_sec=15,
+        fp8_recipe_kind="current_fp8",
+        te_use_fused=True,
+        te_fp8_params=True,
+    )
+    assert res.env is not None
+    assert res.env["TE_FP8_PARAMS"] == "1"
+    assert res.env["TORCHDYNAMO_DISABLE"] == "1"
+    assert res.env["TORCH_COMPILE_DISABLE"] == "1"
 
 
 # ---- Patch well-formedness tests ----------------------------------------------
