@@ -1,0 +1,14 @@
+diff --git a/src/speculators/train/checkpointer.py b/src/speculators/train/checkpointer.py
+--- a/src/speculators/train/checkpointer.py
++++ b/src/speculators/train/checkpointer.py
+@@ -180,7 +180,9 @@
+ def convert_float_dtype(sd: pytree.PyTree, dtype: torch.dtype) -> pytree.PyTree:
+     def convert_fn(x):
+         if isinstance(x, torch.Tensor) and x.is_floating_point():
+-            return x.to(dtype)
++            if type(x) is not torch.Tensor and hasattr(x, "dequantize"):
++                return x.dequantize(dtype=dtype).detach().cpu().clone()
++            return x.detach().to(device="cpu", dtype=dtype).clone()
+         return x
+ 
+     return pytree.tree_map(convert_fn, sd)

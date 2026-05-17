@@ -12,6 +12,28 @@ from pathlib import Path
 from typing import Optional
 
 
+def _load_checkpoint_state_dict(checkpoint: Path) -> dict:
+    from safetensors import safe_open
+
+    from .te_wrap import fused_to_unfused_state_dict
+
+    state_dict = {}
+    with safe_open(str(checkpoint / "model.safetensors"), framework="pt", device="cpu") as f:
+        for key in f.keys():
+            state_dict[key] = f.get_tensor(key)
+    state_dict = {
+        key: value
+        for key, value in state_dict.items()
+        if not key.endswith("._extra_state")
+    }
+    if any(
+        key.endswith("layer_norm_weight") or key.endswith("fc1_weight") or key.endswith("fc2_weight")
+        for key in state_dict
+    ):
+        state_dict = fused_to_unfused_state_dict(state_dict, model_arch="qwen3")
+    return state_dict
+
+
 def offline_eval(
     *,
     checkpoint: str,
@@ -55,19 +77,38 @@ def offline_eval(
     except Exception:
         pass
 
-    model = DFlashDraftModel.from_pretrained(checkpoint, torch_dtype=torch.bfloat16)
+    checkpoint_path = Path(checkpoint)
+    state_dict = _load_checkpoint_state_dict(checkpoint_path)
+    t2d = state_dict.pop("t2d", None)
+    d2t = state_dict.pop("d2t", None)
+    config = DFlashDraftModel.config_class.from_pretrained(checkpoint)
+    model = DFlashDraftModel.from_pretrained(
+        None,
+        config=config,
+        torch_dtype=torch.bfloat16,
+        state_dict=state_dict,
+        t2d=t2d,
+        d2t=d2t,
+    )
     if hasattr(model, "load_verifier_weights"):
-        model.load_verifier_weights(verifier_path)
+        try:
+            model.config.speculators_config.verifier.name_or_path = verifier_path
+        except Exception:
+            pass
+        model.load_verifier_weights()
     model = model.to(device).eval()
 
     paired = Path(paired_dir)
     ds = ArrowDataset(
-        data_path=str(paired / "prompts"),
+        max_len=total_seq_len,
+        datapath=str(paired / "prompts"),
         hidden_states_path=str(paired / "hidden_states"),
-        total_seq_len=total_seq_len,
         split_ratio=val_split_ratio,
     )
-    collate = create_collate_fn()
+    hidden_size = getattr(getattr(model.config, "transformer_layer_config", None), "hidden_size", None)
+    if hidden_size is None:
+        hidden_size = getattr(model.config, "hidden_size")
+    collate = create_collate_fn(max_len=total_seq_len, hidden_size=hidden_size)
     loader = torch.utils.data.DataLoader(ds, batch_size=1, collate_fn=collate)
 
     correct = [0] * 8
@@ -76,9 +117,17 @@ def offline_eval(
     for batch in loader:
         if batches_seen >= max_batches:
             break
-        batch = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in batch.items()}
+        gpu_batch = {}
+        for key, value in batch.items():
+            if hasattr(value, "to"):
+                if isinstance(value, torch.Tensor) and value.is_floating_point():
+                    gpu_batch[key] = value.to(device=device, dtype=torch.bfloat16)
+                else:
+                    gpu_batch[key] = value.to(device)
+            else:
+                gpu_batch[key] = value
         with torch.no_grad():
-            preds = model(**batch)
+            preds = model(**gpu_batch)
         # Best-effort metric extraction: look for predicted/target pairs.
         if isinstance(preds, dict) and "pred" in preds and "target" in preds:
             pred = preds["pred"]

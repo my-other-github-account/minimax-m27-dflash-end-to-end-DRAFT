@@ -2,7 +2,7 @@
 
 End-to-end recipe to train a 5-layer DFlash drafter from a directory of self-describing traces (§1) using `dflash-llama train` (or the `DFlashTrainer` Python API).
 
-> **Looking for FP8 training?** This page covers the bf16 path (the v11 baseline). For Float8CurrentScaling(HYBRID) + fused TE LayerNormMLP on DGX Spark sm_121a (+18% throughput, verified step-for-step ≥ bf16 through step 2,610), see [§6 — FP8 training](06-fp8-training.md).
+> **Looking for FP8 training or the C15 fast path?** This page covers the bf16-oriented baseline path. For Float8CurrentScaling(HYBRID) + fused TE LayerNormMLP, plus the high-level API's `te_fp8_params=True` / `compile_flex_attention=True` fast path, see [§6 — FP8 training](06-fp8-training.md).
 
 > **No pairing step.** v2 required a brittle `build_paired_dataset.py` that sha256-matched hidden-state files against a separate prompts dataset. The new self-describing trace format makes this a 30-second enumeration: `assemble_prompts_arrow` walks the directory and reads the `input_ids` / `loss_mask` / `source_row_idx` directly off each safetensor.
 
@@ -78,6 +78,45 @@ trainer.offline_eval(
     max_batches=60,
 )
 ```
+
+## C15 fast-training delta
+
+The high-level API exposes the proven phase3 "C15" recipe directly. Relative to
+the baseline FP8 path, the delta is two kwargs on both `smoke()` and `train()`:
+
+```python
+smoke = trainer.smoke(
+    timeout_sec=90,
+    fp8_recipe_kind="current_fp8",
+    te_use_fused=True,
+    te_fp8_params=True,
+    compile_flex_attention=True,
+)
+assert smoke.passed, smoke.message
+
+trainer.train(
+    save_to="/path/to/checkpoint",
+    epochs=1,
+    lr=3e-4,
+    max_anchors=1024,
+    fp8_recipe_kind="current_fp8",
+    te_use_fused=True,
+    te_fp8_params=True,
+    compile_flex_attention=True,
+)
+```
+
+What these flags do:
+
+- `te_fp8_params=True` enables TransformerEngine `fp8_model_init`, so wrapped TE
+  weights are created in the FP8-resident container instead of bf16.
+- `compile_flex_attention=True` sets `DFLASH_COMPILE_FLEX=1` and removes
+  `TORCHDYNAMO_DISABLE=1` / `TORCH_COMPILE_DISABLE=1` from the launched
+  subprocess env, allowing the existing `@torch.compile`-decorated flex-attn
+  path to run instead of being silently neutered.
+
+The rest of the training call shape is unchanged: same trace pool, same model
+capacity, same validation flow, same eager `offline_eval()` path after training.
 
 ## Hyperparameters (production defaults)
 

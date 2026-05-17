@@ -219,6 +219,42 @@ This is a **gate pass**, not a shipping result.
   unchanged from v11 step 15080. Training-side changes are not on the critical
   path for further wall-clock gains.
 
+## 5.5 Training-side C15 API receipt (spark-3, 2026-05-16 / 2026-05-17)
+
+The library API now exposes the proven C15 fast-training path directly:
+`te_fp8_params=True` plus `compile_flex_attention=True` on top of the existing
+FP8+TE recipe. This is a **training throughput** result, not a serving-path
+result, but it matters because the checkpoint still round-trips through eager
+`offline_eval()` and GGUF export unchanged.
+
+Fresh spark-3 receipt using the high-level API and the same local paired pool:
+
+| cell | target step | wall time | step ms | val loss | full_acc | pos-1 acc |
+|---|---:|---:|---:|---:|---:|---:|
+| CELL A baseline (`TORCHDYNAMO_DISABLE=1`) | 120 | 3,049.95s | 20,042.37 | 6.6191 | 0.07364 | 0.08773 |
+| CELL B C15 (`te_fp8_params=True`, `compile_flex_attention=True`) | 120 | 180.56s | 1,017.70 | 6.6544 | 0.06202 | 0.06459 |
+| CELL B C15, longer matched-compute follow-through | 240 | 288.60s | 1,008.73 | 6.1119 | **0.08475** | **0.10961** |
+
+Interpretation:
+
+- The fast-path timing gate clears comfortably: **~19.9x faster** than CELL A
+  on step time.
+- Healthy init is preserved: both cells start at `loss_0=10.625`.
+- Serialized parameter count is unchanged between the two paths:
+  `1,140,253,724` parameters in the saved step checkpoints.
+- At the same *step* count, C15 is still in the earlier part of its learning
+  curve because it reached step 120 in ~3 minutes instead of ~51 minutes.
+- At matched compute / wall-clock, the quality gate clears decisively:
+  **C15 reaches `full_acc=0.08475` in 288.6s**, beating CELL A's
+  `0.07364` while using about one-tenth of the wall-clock.
+
+Two implementation details were required for the library receipt:
+
+1. The speculators checkpoint writer had to materialize TE FP8 parameter storage
+   into plain CPU tensors before `save_pretrained()`.
+2. The library's eager eval / GGUF-prep helpers had to normalize TE-fused
+   checkpoint keys back to the unfused layout on read.
+
 **Where to look next** for shippable headroom:
 
 1. The pp=1024 cell still loses by 4%. Either a smarter context-reuse policy
@@ -234,7 +270,7 @@ This is a **gate pass**, not a shipping result.
 
 ---
 
-## 5.5 Pointers
+## 5.6 Pointers
 
 - §4.10 of `repro/04-empirical-tau-llama-benchy.md` — the immediate gate-pass
   receipt with the same numbers in the §4 voice.
@@ -243,7 +279,7 @@ This is a **gate pass**, not a shipping result.
 - llama.cpp-dflash commit `d1d2c81caccc748eaaff32b6b7823bad090fd1dd` — the
   fork carrying all seven source-side changes above.
 
-## 5.6 Verifier authority is mandatory — force-accept rejected
+## 5.7 Verifier authority is mandatory — force-accept rejected
 
 This note corrects the tau-closure attempt for the same v11 step15080
 legacy-targethead drafter. There is no new drafter version here; the earlier

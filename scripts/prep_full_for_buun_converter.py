@@ -38,6 +38,22 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 
+def _normalize_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    from dflash_llama.training.te_wrap import fused_to_unfused_state_dict
+
+    state_dict = {
+        key: value
+        for key, value in state_dict.items()
+        if not key.endswith("._extra_state")
+    }
+    if any(
+        key.endswith("layer_norm_weight") or key.endswith("fc1_weight") or key.endswith("fc2_weight")
+        for key in state_dict
+    ):
+        state_dict = fused_to_unfused_state_dict(state_dict, model_arch="qwen3")
+    return state_dict
+
+
 def prep_for_buun_converter(
     src_dir: str | Path,
     out_dir: str | Path,
@@ -76,53 +92,62 @@ def prep_for_buun_converter(
     with open(src / "config.json") as f:
         cfg = json.load(f)
 
-    target_vocab = cfg["transformer_layer_config"]["vocab_size"]
     draft_vocab = cfg["draft_vocab_size"]
     hidden_size = cfg["transformer_layer_config"]["hidden_size"]
     target_layer_ids = cfg["aux_hidden_state_layer_ids"]
-    log(f"target_vocab={target_vocab}, draft_vocab={draft_vocab}, hidden={hidden_size}")
-    log(f"target_layer_ids={target_layer_ids}")
+    target_vocab = cfg["transformer_layer_config"]["vocab_size"]
 
     # 2. Load tensors, rebake lm_head, drop d2t/t2d
     src_st = src / "model.safetensors"
-    new_tensors = {}
     with safe_open(str(src_st), "pt") as f:
-        keys = list(f.keys())
-        d2t = f.get_tensor("d2t") if "d2t" in keys else None
-        t2d = f.get_tensor("t2d") if "t2d" in keys else None
-        lm_head = f.get_tensor("lm_head.weight") if "lm_head.weight" in keys else None
+        raw_tensors = {key: f.get_tensor(key) for key in f.keys()}
+    raw_tensors = _normalize_state_dict(raw_tensors)
+    keys = list(raw_tensors)
+    d2t = raw_tensors.get("d2t")
+    t2d = raw_tensors.get("t2d")
+    lm_head = raw_tensors.get("lm_head.weight")
+    if d2t is not None:
+        inferred_target_vocab = int(
+            (torch.arange(draft_vocab, dtype=torch.long) + d2t.to(torch.long)).max().item()
+        ) + 1
+        if inferred_target_vocab > target_vocab:
+            log(f"target_vocab expanded from {target_vocab} -> {inferred_target_vocab} to cover d2t")
+            target_vocab = inferred_target_vocab
+    log(f"target_vocab={target_vocab}, draft_vocab={draft_vocab}, hidden={hidden_size}")
+    log(f"target_layer_ids={target_layer_ids}")
 
-        if d2t is not None and lm_head is not None and lm_head.shape[0] == draft_vocab:
-            log(f"REBAKE: lm_head {list(lm_head.shape)} -> [{target_vocab}, {hidden_size}] "
-                f"with {rebake_floor} floor")
-            if t2d is not None:
-                t_true = int(t2d.sum().item())
-                ok = "OK" if t_true == draft_vocab else "MISMATCH"
-                log(f"  t2d.sum() = {t_true} (expected {draft_vocab}: {ok})")
+    new_tensors = {}
+    if d2t is not None and lm_head is not None and lm_head.shape[0] == draft_vocab:
+        log(f"REBAKE: lm_head {list(lm_head.shape)} -> [{target_vocab}, {hidden_size}] "
+            f"with {rebake_floor} floor")
+        if t2d is not None:
+            t_true = int(t2d.sum().item())
+            ok = "OK" if t_true == draft_vocab else "MISMATCH"
+            log(f"  t2d.sum() = {t_true} (expected {draft_vocab}: {ok})")
 
-            target_ids = torch.arange(draft_vocab, dtype=torch.long) + d2t.to(torch.long)
-            assert target_ids.min() >= 0, f"negative target id {target_ids.min()}"
-            assert target_ids.max() < target_vocab, (
-                f"target_id {target_ids.max()} >= vocab {target_vocab}"
-            )
+        target_ids = torch.arange(draft_vocab, dtype=torch.long) + d2t.to(torch.long)
+        assert target_ids.min() >= 0, f"negative target id {target_ids.min()}"
+        assert target_ids.max() < target_vocab, (
+            f"target_id {target_ids.max()} >= vocab {target_vocab}"
+        )
 
-            new_lm_head = torch.full(
-                (target_vocab, hidden_size),
-                float(rebake_floor),
-                dtype=lm_head.dtype,
-            )
-            new_lm_head[target_ids] = lm_head
-            new_tensors["lm_head.weight"] = new_lm_head
-            log(f"  rebaked: scattered {draft_vocab} rows into {target_vocab}-row tensor")
-        elif lm_head is not None:
-            log(f"lm_head already at target shape {list(lm_head.shape)} - no rebake")
-            new_tensors["lm_head.weight"] = lm_head
+        new_lm_head = torch.full(
+            (target_vocab, hidden_size),
+            float(rebake_floor),
+            dtype=lm_head.dtype,
+        )
+        new_lm_head[target_ids] = lm_head
+        new_tensors["lm_head.weight"] = new_lm_head
+        log(f"  rebaked: scattered {draft_vocab} rows into {target_vocab}-row tensor")
+    elif lm_head is not None:
+        log(f"lm_head already at target shape {list(lm_head.shape)} - no rebake")
+        new_tensors["lm_head.weight"] = lm_head
 
-        # Copy other tensors except d2t/t2d/lm_head (already handled)
-        for k in keys:
-            if k in ("d2t", "t2d", "lm_head.weight"):
-                continue
-            new_tensors[k] = f.get_tensor(k)
+    # Copy other tensors except d2t/t2d/lm_head (already handled)
+    for k in keys:
+        if k in ("d2t", "t2d", "lm_head.weight"):
+            continue
+        new_tensors[k] = raw_tensors[k]
 
     log(f"Output tensors: {len(new_tensors)} (was {len(keys)})")
 
@@ -135,6 +160,7 @@ def prep_for_buun_converter(
     tlc = cfg.get("transformer_layer_config", {})
     for k, v in tlc.items():
         new_cfg[k] = v
+    new_cfg["vocab_size"] = target_vocab
     new_cfg["block_size"] = cfg["block_size"]
     new_cfg["mask_token_id"] = cfg["mask_token_id"]
     new_cfg["target_layer_ids"] = target_layer_ids

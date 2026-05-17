@@ -16,6 +16,9 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import torch
+from safetensors import safe_open
+from safetensors.torch import save_file
 
 
 # Real llama-speculative-simple output fragment from the May-2 bench.
@@ -209,3 +212,84 @@ def test_llama_server_no_drafter_disables_spec():
     assert "-md" not in cmd
     assert "--spec-type" not in cmd
     assert "--draft-max" not in cmd
+
+
+def test_load_checkpoint_state_dict_unfuses_te_keys(tmp_path):
+    from dflash_llama.training.eval import _load_checkpoint_state_dict
+
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    save_file(
+        {
+            "layers.0.self_attn.q_proj.layer_norm_weight": torch.ones(4, dtype=torch.bfloat16),
+            "layers.0.mlp.layer_norm_weight": torch.full((4,), 2, dtype=torch.bfloat16),
+            "layers.0.mlp.fc1_weight": torch.arange(0, 16, dtype=torch.bfloat16).reshape(4, 4),
+            "layers.0.mlp.fc2_weight": torch.arange(0, 8, dtype=torch.bfloat16).reshape(2, 4),
+            "layers.0.mlp._extra_state": torch.tensor([1], dtype=torch.uint8),
+            "lm_head.layer_norm_weight": torch.full((4,), 3, dtype=torch.bfloat16),
+        },
+        str(ckpt / "model.safetensors"),
+    )
+
+    state_dict = _load_checkpoint_state_dict(ckpt)
+
+    assert "layers.0.input_layernorm.weight" in state_dict
+    assert "layers.0.post_attention_layernorm.weight" in state_dict
+    assert "layers.0.mlp.gate_proj.weight" in state_dict
+    assert "layers.0.mlp.up_proj.weight" in state_dict
+    assert "layers.0.mlp.down_proj.weight" in state_dict
+    assert "norm.weight" in state_dict
+    assert not any(key.endswith("._extra_state") for key in state_dict)
+
+
+def test_prep_for_buun_converter_normalizes_te_checkpoint_and_expands_vocab(tmp_path):
+    from dflash_llama.inference import prep_for_buun_converter
+
+    src = tmp_path / "src"
+    out = tmp_path / "out"
+    verifier = tmp_path / "verifier"
+    src.mkdir()
+    verifier.mkdir()
+
+    (verifier / "tokenizer.json").write_text("{}")
+
+    cfg = {
+        "draft_vocab_size": 4,
+        "block_size": 8,
+        "mask_token_id": 200054,
+        "aux_hidden_state_layer_ids": [2, 16, 30, 45, 59],
+        "transformer_layer_config": {
+            "vocab_size": 6,
+            "hidden_size": 3,
+            "model_type": "qwen3",
+        },
+    }
+    (src / "config.json").write_text(json.dumps(cfg))
+
+    save_file(
+        {
+            "d2t": torch.tensor([0, 1, 4, 4], dtype=torch.int64),
+            "t2d": torch.tensor([1, 1, 1, 1], dtype=torch.bool),
+            "lm_head.weight": torch.arange(0, 12, dtype=torch.bfloat16).reshape(4, 3),
+            "layers.0.mlp.layer_norm_weight": torch.ones(3, dtype=torch.bfloat16),
+            "layers.0.mlp.fc1_weight": torch.arange(0, 12, dtype=torch.bfloat16).reshape(4, 3),
+            "layers.0.mlp.fc2_weight": torch.arange(0, 6, dtype=torch.bfloat16).reshape(2, 3),
+            "layers.0.mlp._extra_state": torch.tensor([1], dtype=torch.uint8),
+        },
+        str(src / "model.safetensors"),
+    )
+
+    prep_for_buun_converter(src, out, verifier_meta_dir=verifier, verbose=False)
+
+    out_cfg = json.loads((out / "config.json").read_text())
+    assert out_cfg["vocab_size"] == 8
+    assert out_cfg["draft_vocab_size"] == 8
+
+    with safe_open(str(out / "model.safetensors"), framework="pt", device="cpu") as f:
+        keys = list(f.keys())
+        assert "layers.0.post_attention_layernorm.weight" in keys
+        assert "layers.0.mlp.gate_proj.weight" in keys
+        assert "layers.0.mlp.up_proj.weight" in keys
+        assert "layers.0.mlp.down_proj.weight" in keys
+        assert not any(key.endswith("._extra_state") for key in keys)
+        assert list(f.get_tensor("lm_head.weight").shape) == [8, 3]

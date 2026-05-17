@@ -162,7 +162,12 @@ trainer = DFlashTrainer(
 trainer.prepare()
 
 # Optional but recommended: 90-second smoke first
-smoke = trainer.smoke(fp8_recipe_kind="current_fp8", te_use_fused=True)
+smoke = trainer.smoke(
+    fp8_recipe_kind="current_fp8",
+    te_use_fused=True,
+    te_fp8_params=True,
+    compile_flex_attention=True,
+)
 assert smoke.passed, smoke.message
 
 # Full training run
@@ -178,6 +183,8 @@ result = trainer.train(
     # FP8 / TE
     fp8_recipe_kind="current_fp8",
     te_use_fused=True,
+    te_fp8_params=True,
+    compile_flex_attention=True,
     # In-epoch validation (recommended for long runs)
     val_every_steps=145,
     val_in_epoch_max_batches=80,
@@ -189,10 +196,21 @@ print(result)  # {"rc": 0, "log_path": ..., "save_path": ...}
 When `fp8_recipe_kind` is non-empty, `DFlashTrainer.train()`:
 1. Drops torchrun in favor of direct `python scripts/train.py` invocation (Bug A fix).
 2. Passes `--fp8-recipe-kind current_fp8 --te-use-fused` to the underlying trainer.
-3. The trainer's patched `setup_model()` calls `_maybe_wrap_te()` after `model.to(local_rank)`.
-4. `_maybe_wrap_te()` calls `wrap_with_te(model)` and `get_recipe("current_fp8")` from `dflash_llama.training.te_wrap` — both producing the production-stable split-accumulator recipe (Bug B fix).
-5. Every train/val forward pass runs under `te.fp8_autocast(enabled=True, fp8_recipe=recipe)`.
-6. The gradient-level NaN-skip guard (patch 04) sits between `clip_grad_norm_` and `optimizer.step()`.
+3. `te_fp8_params=True` sets `TE_FP8_PARAMS=1`, and `wrap_with_te(model, te_fp8_params=True)` creates TE layers under `te.fp8_model_init(...)` so weight storage uses TE's FP8-resident container.
+4. `compile_flex_attention=True` sets `DFLASH_COMPILE_FLEX=1` and removes `TORCHDYNAMO_DISABLE=1` / `TORCH_COMPILE_DISABLE=1` from the launched subprocess env, which is the switch that lets the pre-existing compiled flex-attn path actually run.
+5. The trainer's patched `setup_model()` calls `_maybe_wrap_te()` after `model.to(local_rank)`.
+6. `_maybe_wrap_te()` calls `wrap_with_te(model)` and `get_recipe("current_fp8")` from `dflash_llama.training.te_wrap` — both producing the production-stable split-accumulator recipe (Bug B fix).
+7. Every train/val forward pass runs under `te.fp8_autocast(enabled=True, fp8_recipe=recipe)`.
+8. The gradient-level NaN-skip guard (patch 04) sits between `clip_grad_norm_` and `optimizer.step()`.
+
+Saved C15 checkpoints remain usable by the library inference path:
+
+- The speculators checkpointer materializes TE FP8 tensors to plain CPU tensors
+  before `save_pretrained()`.
+- `DFlashTrainer.offline_eval()` normalizes TE-fused checkpoint keys back to the
+  eager layout before loading.
+- `export_to_gguf()` uses the same normalization on read, so GGUF export stays a
+  weights-only transform with no dependency on training-time compile state.
 
 ## 6.4 — Verification checklist (run AT LAUNCH, do not skip)
 
@@ -311,4 +329,5 @@ the first resume attempt; if you see "unexpected keys" the wrap order is wrong).
 - [`patches/speculators/04-trainer-nan-guard-and-midepoch-ckpt.patch`](../patches/speculators/04-trainer-nan-guard-and-midepoch-ckpt.patch) — in-epoch val + grad-level NaN-skip
 - [`patches/speculators/05-trainer-te-fp8-wrap.patch`](../patches/speculators/05-trainer-te-fp8-wrap.patch) — TE wrap + fp8_autocast forward
 - [`patches/speculators/06-train-script-fp8-flags.patch`](../patches/speculators/06-train-script-fp8-flags.patch) — `--fp8-recipe-kind` / `--te-use-fused` CLI flags
+- [`patches/speculators/08-checkpointer-te-fp8-save.patch`](../patches/speculators/08-checkpointer-te-fp8-save.patch) — materialize TE FP8 tensors before checkpoint save
 - [`repro/scripts/training/launch_full_fp8.sh`](scripts/training/launch_full_fp8.sh) — reference launcher
