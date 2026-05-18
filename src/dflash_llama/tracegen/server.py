@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import threading
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Sequence
 
 from ..generation.backends.llamacpp_gguf import LlamaCppGGUFBackend
 
@@ -54,6 +54,7 @@ class _PersistentWorker:
         ctx: int,
         ngl: int,
         override_tensor: Optional[str],
+        worker_args: Optional[Sequence[str]],
         startup_timeout: float,
         request_timeout: float,
         log_path: Optional[str | Path],
@@ -63,6 +64,7 @@ class _PersistentWorker:
         self.ctx = int(ctx)
         self.ngl = int(ngl)
         self.override_tensor = override_tensor
+        self.worker_args = [str(arg) for arg in (worker_args or [])]
         self.startup_timeout = float(startup_timeout)
         self.request_timeout = float(request_timeout)
         self.log_path = Path(log_path) if log_path else None
@@ -84,6 +86,7 @@ class _PersistentWorker:
         ]
         if self.override_tensor:
             cmd += ["-ot", self.override_tensor]
+        cmd += self.worker_args
         return cmd
 
     @staticmethod
@@ -203,6 +206,7 @@ class TraceServer:
         n_gpu_layers: int = 99,
         override_tensor: Optional[str] = "exps=CPU",
         binary: str = "llama-dump-hiddens-worker",
+        worker_args: Optional[Sequence[str]] = None,
         temp_root: Optional[str | Path] = None,
         startup_timeout: float = 900.0,
         request_timeout: float = 900.0,
@@ -216,6 +220,7 @@ class TraceServer:
         self.n_gpu_layers = int(n_gpu_layers)
         self.override_tensor = override_tensor
         self.binary = str(binary)
+        self.worker_args = [str(arg) for arg in (worker_args or [])]
         self.temp_root = Path(temp_root) if temp_root else None
         self.startup_timeout = float(startup_timeout)
         self.request_timeout = float(request_timeout)
@@ -226,6 +231,7 @@ class TraceServer:
             ctx=self.n_ctx,
             ngl=self.n_gpu_layers,
             override_tensor=self.override_tensor,
+            worker_args=self.worker_args,
             startup_timeout=self.startup_timeout,
             request_timeout=self.request_timeout,
             log_path=self.worker_log_path,

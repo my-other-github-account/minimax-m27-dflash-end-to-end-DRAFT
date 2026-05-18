@@ -37,6 +37,7 @@ class TraceClient:
         ctx: int = 4096,
         ngl: int = 99,
         override_tensor: Optional[str] = "exps=CPU",
+        worker_args: Optional[Sequence[str]] = None,
         server_log_path: Optional[str | Path] = None,
         storage: str = "fp8_per_tensor_scale",
         restart_retries: int = 1,
@@ -54,6 +55,7 @@ class TraceClient:
         self.ctx = int(ctx)
         self.ngl = int(ngl)
         self.override_tensor = override_tensor
+        self.worker_args = [str(arg) for arg in (worker_args or [])]
         self.server_log_path = Path(server_log_path) if server_log_path else None
         self.storage = storage
         self.restart_retries = int(restart_retries)
@@ -117,6 +119,8 @@ class TraceClient:
             cmd += ["--layer-ids", ",".join(str(layer) for layer in self.layer_ids)]
         if self.override_tensor:
             cmd += ["--override-tensor", self.override_tensor]
+        for arg in self.worker_args:
+            cmd += ["--worker-arg", arg]
         if self.server_log_path:
             cmd += ["--log", str(self.server_log_path)]
         return cmd

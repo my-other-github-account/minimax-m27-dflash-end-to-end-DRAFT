@@ -86,6 +86,7 @@ def cmd_generate(args) -> int:
             "ctx": args.ctx,
             "ngl": args.ngl,
             "override_tensor": args.override_tensor,
+            "worker_args": args.worker_arg,
             "server_log_path": args.server_log,
         }
     gen = TraceGenerator(
@@ -301,6 +302,7 @@ def cmd_trace_server(args) -> int:
         n_gpu_layers=args.ngl,
         override_tensor=args.override_tensor,
         binary=args.binary,
+        worker_args=args.worker_arg,
         worker_log_path=args.log,
         request_timeout=args.timeout,
         startup_timeout=args.startup_timeout,
@@ -382,6 +384,8 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--socket", default="unix:///tmp/dflash_tracegen.sock")
     sg.add_argument("--auto-start-server", action="store_true")
     sg.add_argument("--override-tensor", default="exps=CPU")
+    sg.add_argument("--worker-arg", action="append", default=None,
+                    help="extra argument to pass through to llama-dump-hiddens-worker; repeatable")
     sg.add_argument("--server-log", default=None)
     sg.add_argument("--source-name", default=None)
     sg.set_defaults(func=cmd_generate)
@@ -528,6 +532,8 @@ def build_parser() -> argparse.ArgumentParser:
     stg.add_argument("--ngl", type=int, default=99)
     stg.add_argument("--override-tensor", default="exps=CPU")
     stg.add_argument("--binary", default="llama-dump-hiddens-worker")
+    stg.add_argument("--worker-arg", action="append", default=None,
+                     help="extra argument to pass through to llama-dump-hiddens-worker; repeatable")
     stg.add_argument("--timeout", type=float, default=900.0)
     stg.add_argument("--startup-timeout", type=float, default=900.0)
     stg.add_argument("--log", default=None, help="optional worker stderr log path")

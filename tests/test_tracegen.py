@@ -183,3 +183,24 @@ def test_trace_generator_tracegen_client_backend(tmp_path):
     finally:
         server.stop()
         thread.join(timeout=5)
+
+
+def test_trace_client_build_server_cmd_includes_worker_args(tmp_path):
+    from dflash_llama.tracegen import TraceClient
+
+    log_path = tmp_path / "tracegen.log"
+    client = TraceClient(
+        socket_path=f"unix://{_short_socket_path('tracegen_autostart')}",
+        auto_start=True,
+        gguf_path="/tmp/fake.gguf",
+        layer_ids=[2, 16],
+        binary="/tmp/fake-worker",
+        override_tensor="exps=CPU",
+        worker_args=["--no-mmap", "--mlock"],
+        server_log_path=log_path,
+    )
+    cmd = client._build_server_cmd()
+    assert "--worker-arg" in cmd
+    assert cmd.count("--worker-arg") == 2
+    assert cmd[cmd.index("--worker-arg") + 1] == "--no-mmap"
+    assert cmd[cmd.index("--worker-arg", cmd.index("--worker-arg") + 1) + 1] == "--mlock"

@@ -28,6 +28,7 @@ class TracegenClientBackend(BaseBackend):
         ctx: int = 4096,
         ngl: int = 99,
         override_tensor: Optional[str] = "exps=CPU",
+        worker_args: Optional[Sequence[str]] = None,
         server_log_path: Optional[str] = None,
         restart_retries: int = 1,
     ):
@@ -43,6 +44,7 @@ class TracegenClientBackend(BaseBackend):
             ctx=ctx,
             ngl=ngl,
             override_tensor=override_tensor,
+            worker_args=worker_args,
             server_log_path=server_log_path,
             restart_retries=restart_retries,
         )
