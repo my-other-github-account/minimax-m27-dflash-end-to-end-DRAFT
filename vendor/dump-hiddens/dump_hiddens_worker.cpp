@@ -12,6 +12,7 @@
 #include "common.h"
 #include "ggml.h"
 #include "llama.h"
+#include "../../src/llama-context.h"
 
 #include <cstdio>
 #include <cstdint>
@@ -164,6 +165,7 @@ int main(int argc, char ** argv) {
     std::cout << "READY\t" << params.n_ctx << std::endl;
 
     std::string line;
+    std::vector<int32_t> current_capture_layers;
     while (std::getline(std::cin, line)) {
         if (line == "QUIT") {
             break;
@@ -183,7 +185,11 @@ int main(int argc, char ** argv) {
             continue;
         }
 
-        llama_set_dflash_capture(ctx, capture_layers.data(), (int32_t) capture_layers.size());
+        if (capture_layers != current_capture_layers) {
+            llama_set_dflash_capture(ctx, capture_layers.data(), (int32_t) capture_layers.size());
+            current_capture_layers = capture_layers;
+        }
+        ctx->dflash_reset_hidden_capture();
         llama_memory_t mem = llama_get_memory(ctx);
         if (mem) {
             llama_memory_clear(mem, true);

@@ -231,6 +231,8 @@ class TraceClient:
                 last_exc = exc
                 if attempt + 1 >= attempts:
                     break
+                if not (self.auto_start or self._server_proc is not None):
+                    break
                 self._restart_server()
                 continue
             finally:
