@@ -207,6 +207,13 @@ def test_trace_client_build_server_cmd_includes_worker_args(tmp_path):
     assert cmd[cmd.index("--worker-arg", cmd.index("--worker-arg") + 1) + 1] == "--mlock"
 
 
+def test_trace_client_rewrites_spawn_binary_path_to_worker_path():
+    from dflash_llama.tracegen import TraceClient
+
+    client = TraceClient(binary="/tmp/bin/llama-dump-hiddens")
+    assert client.binary == "/tmp/bin/llama-dump-hiddens-worker"
+
+
 def test_parent_deathsig_preexec_linux_hook(monkeypatch):
     from dflash_llama.tracegen import _proc
 

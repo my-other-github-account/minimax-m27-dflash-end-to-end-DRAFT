@@ -20,6 +20,15 @@ from ._proc import parent_deathsig_preexec
 from .server import SOCKET_PREFIX, _normalize_socket_path
 
 
+def _normalize_worker_binary(binary: str) -> str:
+    path = Path(binary)
+    if path.name == "llama-dump-hiddens":
+        return str(path.with_name("llama-dump-hiddens-worker"))
+    if binary == "llama-dump-hiddens":
+        return "llama-dump-hiddens-worker"
+    return str(binary)
+
+
 class TraceClient:
     """Client that talks to ``TraceServer`` and mirrors ``generate_one``."""
 
@@ -52,7 +61,7 @@ class TraceClient:
         self.auto_start = bool(auto_start)
         self.gguf_path = gguf_path
         self.layer_ids = [int(layer) for layer in layer_ids] if layer_ids is not None else None
-        self.binary = str(binary)
+        self.binary = _normalize_worker_binary(binary)
         self.ctx = int(ctx)
         self.ngl = int(ngl)
         self.override_tensor = override_tensor
