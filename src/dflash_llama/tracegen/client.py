@@ -16,6 +16,7 @@ import torch
 
 from ..generation.backends.llamacpp_gguf import LlamaCppGGUFBackend
 from ..generation.format import VALID_STORAGE, save_trace
+from ._proc import parent_deathsig_preexec
 from .server import SOCKET_PREFIX, _normalize_socket_path
 
 
@@ -142,7 +143,13 @@ class TraceClient:
         else:
             stdout = subprocess.DEVNULL
             stderr = subprocess.DEVNULL
-        self._server_proc = subprocess.Popen(cmd, env=env, stdout=stdout, stderr=stderr)
+        self._server_proc = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=stdout,
+            stderr=stderr,
+            preexec_fn=parent_deathsig_preexec(),
+        )
         deadline = time.time() + self.startup_timeout
         while time.time() < deadline:
             if self._server_proc.poll() is not None:

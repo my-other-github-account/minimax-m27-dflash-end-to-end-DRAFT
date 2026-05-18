@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import threading
 import time
 from pathlib import Path
@@ -204,3 +205,49 @@ def test_trace_client_build_server_cmd_includes_worker_args(tmp_path):
     assert cmd.count("--worker-arg") == 2
     assert cmd[cmd.index("--worker-arg") + 1] == "--no-mmap"
     assert cmd[cmd.index("--worker-arg", cmd.index("--worker-arg") + 1) + 1] == "--mlock"
+
+
+def test_parent_deathsig_preexec_linux_hook(monkeypatch):
+    from dflash_llama.tracegen import _proc
+
+    calls = []
+
+    class _FakeLibc:
+        def prctl(self, *args):
+            calls.append(("prctl", args))
+            return 0
+
+    monkeypatch.setattr(_proc.sys, "platform", "linux")
+    monkeypatch.setattr(_proc.ctypes, "CDLL", lambda *a, **k: _FakeLibc())
+    monkeypatch.setattr(_proc.os, "getppid", lambda: 123)
+    monkeypatch.setattr(_proc.os, "kill", lambda *a, **k: calls.append(("kill", a)))
+
+    hook = _proc.parent_deathsig_preexec()
+    assert callable(hook)
+    hook()
+    assert calls == [("prctl", (1, signal.SIGKILL, 0, 0, 0))]
+
+
+def test_parent_deathsig_preexec_kills_if_parent_already_gone(monkeypatch):
+    from dflash_llama.tracegen import _proc
+
+    calls = []
+
+    class _FakeLibc:
+        def prctl(self, *args):
+            calls.append(("prctl", args))
+            return 0
+
+    monkeypatch.setattr(_proc.sys, "platform", "linux")
+    monkeypatch.setattr(_proc.ctypes, "CDLL", lambda *a, **k: _FakeLibc())
+    monkeypatch.setattr(_proc.os, "getppid", lambda: 1)
+    monkeypatch.setattr(_proc.os, "getpid", lambda: 999)
+    monkeypatch.setattr(_proc.os, "kill", lambda *a, **k: calls.append(("kill", a)))
+
+    hook = _proc.parent_deathsig_preexec()
+    assert callable(hook)
+    hook()
+    assert calls == [
+        ("prctl", (1, signal.SIGKILL, 0, 0, 0)),
+        ("kill", (999, signal.SIGKILL)),
+    ]

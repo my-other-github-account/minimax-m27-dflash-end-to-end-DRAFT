@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
 from ..generation.backends.llamacpp_gguf import LlamaCppGGUFBackend
+from ._proc import parent_deathsig_preexec
 
 SOCKET_PREFIX = "unix://"
 
@@ -117,6 +118,7 @@ class _PersistentWorker:
             stderr=stderr,
             text=True,
             bufsize=1,
+            preexec_fn=parent_deathsig_preexec(),
         )
         ready = self._readline_with_timeout(self._proc.stdout, self.startup_timeout)
         if not ready.startswith("READY\t"):
