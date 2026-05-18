@@ -14,6 +14,7 @@ from .verifiers import (
 from .hub import cache_root, resolve_hf_repo, resolve_gguf_repo
 from .generation import TraceGenerator
 from .generation.format import load_trace, save_trace, saturating_fp8_cast
+from .tracegen import TraceClient, TraceServer
 from .training import DFlashTrainer, SelfDescribingTraceDataset
 from .training.prompts import assemble_prompts_arrow
 from .training.vocab_maps import build_vocab_maps
@@ -46,6 +47,8 @@ __all__ = [
     "resolve_gguf_repo",
     # generation
     "TraceGenerator",
+    "TraceClient",
+    "TraceServer",
     "save_trace",
     "load_trace",
     "saturating_fp8_cast",

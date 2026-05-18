@@ -170,6 +170,7 @@ def test_top_level_public_api_exports():
 
     expected = {
         "TraceGenerator", "DFlashTrainer", "SelfDescribingTraceDataset",
+        "TraceClient", "TraceServer",
         "load_verifier", "list_verifiers", "register_verifier", "BaseVerifier",
         "save_trace", "load_trace", "saturating_fp8_cast",
         "assemble_prompts_arrow", "build_vocab_maps",

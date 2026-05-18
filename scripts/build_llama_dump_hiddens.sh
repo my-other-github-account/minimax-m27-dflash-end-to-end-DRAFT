@@ -62,6 +62,7 @@ cd "$BUILD_DIR"
 mkdir -p examples/dump-hiddens
 cp -f "$VENDOR_DIR/dump_hiddens.cpp"        examples/dump-hiddens/
 cp -f "$VENDOR_DIR/dump_hiddens_batch.cpp"  examples/dump-hiddens/
+cp -f "$VENDOR_DIR/dump_hiddens_worker.cpp" examples/dump-hiddens/
 cp -f "$VENDOR_DIR/CMakeLists.txt"          examples/dump-hiddens/
 
 # 3. register the example in examples/CMakeLists.txt (idempotent)
@@ -86,8 +87,8 @@ CMAKE_FLAGS+=("-DLLAMA_BUILD_TESTS=OFF" "-DLLAMA_BUILD_SERVER=OFF")
 echo "[build] cmake ${CMAKE_FLAGS[*]} .."
 cmake "${CMAKE_FLAGS[@]}" ..
 
-echo "[build] make -j$JOBS llama-dump-hiddens llama-dump-hiddens-batch"
-cmake --build . -j "$JOBS" --target llama-dump-hiddens llama-dump-hiddens-batch
+echo "[build] make -j$JOBS llama-dump-hiddens llama-dump-hiddens-batch llama-dump-hiddens-worker"
+cmake --build . -j "$JOBS" --target llama-dump-hiddens llama-dump-hiddens-batch llama-dump-hiddens-worker
 
 BIN_PATH="$BUILD_DIR/build/bin/llama-dump-hiddens"
 if [ ! -x "$BIN_PATH" ]; then
