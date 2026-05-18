@@ -350,10 +350,22 @@ class TraceServer:
                 conn.settimeout(self.request_timeout)
                 try:
                     request = _recv_json_line(conn)
+                except EOFError:
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    try:
+                        _send_json_line(conn, {"ok": False, "error": str(exc)})
+                    except OSError:
+                        pass
+                    continue
+                try:
                     response = self._handle_request(request)
                 except Exception as exc:  # noqa: BLE001
                     response = {"ok": False, "error": str(exc)}
-                _send_json_line(conn, response)
+                try:
+                    _send_json_line(conn, response)
+                except OSError:
+                    continue
 
 
 __all__ = ["TraceServer", "SOCKET_PREFIX"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
 import threading
 import time
 from pathlib import Path
@@ -131,6 +132,41 @@ def test_trace_client_generate_one_writes_fp8_trace(tmp_path):
         with safe_open(str(out_path), framework="pt") as f:
             assert "hidden_states_scale" in f.keys()
             assert f.metadata()["storage"] == "fp8_per_tensor_scale"
+    finally:
+        server.stop()
+        thread.join(timeout=5)
+
+
+def test_trace_server_survives_empty_client_disconnect(tmp_path):
+    from dflash_llama.tracegen import TraceClient, TraceServer
+
+    worker = tmp_path / "fake_worker.py"
+    _write_fake_worker(worker)
+    socket_path = _short_socket_path("tracegen_disconnect")
+    server = TraceServer(
+        gguf_path="/tmp/fake.gguf",
+        layer_ids=[2, 16],
+        bind=f"unix://{socket_path}",
+        binary=str(worker),
+        request_timeout=5,
+        startup_timeout=5,
+    )
+    thread = _start_server(server)
+    try:
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.connect(socket_path)
+        probe.close()
+        time.sleep(0.1)
+
+        client = TraceClient(
+            socket_path=f"unix://{socket_path}",
+            layer_ids=[2, 16],
+            request_timeout=5,
+        )
+        result = client.dump_hiddens(input_ids=[11, 12], max_seq_len=16)
+        assert result["token_ids"] == [11, 12]
+        assert tuple(result["hidden_states"].shape) == (2, 2, 4)
+        assert thread.is_alive()
     finally:
         server.stop()
         thread.join(timeout=5)
