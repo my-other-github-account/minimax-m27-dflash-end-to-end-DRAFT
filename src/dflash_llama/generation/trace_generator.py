@@ -329,6 +329,7 @@ class TraceGenerator:
         log_every: int = 10,
         batch_width: int = DEFAULT_BATCH_WIDTH,
         flush_after_rows: int = 256,
+        max_batch_tokens: int = 2048,
     ) -> dict:
         """Walk an HF prompts dataset and write one trace per row, batched.
 
@@ -368,9 +369,8 @@ class TraceGenerator:
         buckets: dict[int, list] = {}
         rows_examined = 0
 
-        def _flush_bucket(seq_len: int) -> None:
+        def _flush_bucket_chunk(seq_len: int, group: list) -> None:
             nonlocal completed, failed
-            group = buckets.pop(seq_len, [])
             if not group:
                 return
             try:
@@ -406,13 +406,33 @@ class TraceGenerator:
                 print(f"[gen] completed={completed} skipped={skipped} failed={failed} "
                       f"(batch seq_len={seq_len} n={len(group)})", flush=True)
 
+        def _effective_k(seq_len: int) -> int:
+            # llama.cpp n_batch caps total tokens per decode call.
+            if seq_len <= 0:
+                return batch_width
+            cap = max(1, max_batch_tokens // seq_len)
+            return max(1, min(batch_width, cap))
+
         def _flush_full_buckets() -> None:
-            for k in [k for k, v in buckets.items() if len(v) >= batch_width]:
-                _flush_bucket(k)
+            for k in list(buckets.keys()):
+                ek = _effective_k(k)
+                while len(buckets.get(k, [])) >= ek:
+                    # Pop exactly ek and fire one batch
+                    group = buckets[k][:ek]
+                    buckets[k] = buckets[k][ek:]
+                    if not buckets[k]:
+                        del buckets[k]
+                    _flush_bucket_chunk(k, group)
 
         def _flush_all_buckets() -> None:
             for k in list(buckets.keys()):
-                _flush_bucket(k)
+                ek = _effective_k(k)
+                while buckets.get(k):
+                    group = buckets[k][:ek]
+                    buckets[k] = buckets[k][ek:]
+                    if not buckets[k]:
+                        del buckets[k]
+                    _flush_bucket_chunk(k, group)
 
         try:
             for i in rows:
@@ -453,6 +473,7 @@ class TraceGenerator:
             "output_dir": str(out),
             "state_path": str(sp),
             "batch_width": batch_width,
+            "max_batch_tokens": max_batch_tokens,
         }
         print(f"[gen] done: {summary}", flush=True)
         return summary
