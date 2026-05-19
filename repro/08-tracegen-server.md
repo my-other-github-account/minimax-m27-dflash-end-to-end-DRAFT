@@ -10,7 +10,7 @@ on a DGX Spark GB10.
 
 | backend | throughput on 100-prompt MiniMax-M2.7 sample | notes |
 |---|---|---|
-| `llamacpp_gguf` (legacy, fork-per-prompt) | ~26.7 traces/min | reloads 215 GB of weights per prompt |
+| `llamacpp_gguf` (REMOVED — historical, fork-per-prompt) | ~26.7 traces/min | reloaded 215 GB of weights per prompt; deleted from the library |
 | `tracegen_client` (this doc, single-seq) | ~33 traces/min | one persistent worker, one seq at a time |
 | `tracegen_client` (this doc, batch width 4, same-length) | **~68 traces/min** | shipped — verified 10/10 bit-identical |
 
@@ -23,8 +23,8 @@ drawn from `iq4_tracegen_v13_pool/traces/`.
 
 A single trace generation request loads tokens → runs prefill → captures
 hidden states at the configured layers → writes a `hs_<i>.safetensors`
-file. With the legacy `llamacpp_gguf` backend, every prompt spawns a
-fresh `llama-dump-hiddens` process, which means:
+file. The library used to ship a `llamacpp_gguf` backend that spawned a
+fresh `llama-dump-hiddens` process per prompt. That meant:
 
 - The entire ~215 GB MiniMax-M2.7 UD-IQ4_XS GGUF is `mmap`-faulted into
   the CPU-side MoE expert buffer **on every request**.

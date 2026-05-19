@@ -149,10 +149,14 @@ def main() -> int:
     gen = TraceGenerator(
         verifier=verifier,
         storage="fp8_per_tensor_scale",
-        backend="llamacpp_gguf",
+        backend="tracegen_client",
         backend_kwargs={
             "binary": args.binary,
-            "timeout": args.per_trace_timeout,
+            "request_timeout": args.per_trace_timeout,
+            "auto_start": True,
+            "ctx": 16384,
+            "ngl": 99,
+            "override_tensor": "exps=CPU",
         },
     )
     print(f"[api-worker {args.shard_id}] TraceGenerator constructed", flush=True)

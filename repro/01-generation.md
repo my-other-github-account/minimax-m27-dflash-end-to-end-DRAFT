@@ -63,7 +63,14 @@ verifier = load_verifier(
 gen = TraceGenerator(
     verifier=verifier,
     storage="fp8_per_tensor_scale",
-    backend="llamacpp_gguf",
+    backend="tracegen_client",
+    backend_kwargs={
+        "binary": "/path/to/llama-dump-hiddens-worker",
+        "auto_start": True,
+        "ctx": 16384,
+        "ngl": 99,
+        "override_tensor": "exps=CPU",
+    },
 )
 gen.generate(
     prompts="/path/to/prompts_arrow_dir",
@@ -71,6 +78,7 @@ gen.generate(
     rows=range(0, 1000),
     state_path="/path/to/output/state.json",
     max_seq_len=2048,
+    batch_width=8,
 )
 ```
 
@@ -85,28 +93,46 @@ For experimental factories (`kimi_k25`, `qwen3*`, `deepseek_v4_*`,
 plausible shape metadata but have NOT been end-to-end validated by this
 library — opt in explicitly with `register_verifier(...)`.
 
-The `layer_ids` list is what the generator passes to `llama-dump-hiddens`. The trainer auto-appends a final tap, so the speculators `--target-layer-ids` flag receives `layer_ids[:-1]`.
+The `layer_ids` list is what the generator passes to `llama-dump-hiddens-worker`. The trainer auto-appends a final tap, so the speculators `--target-layer-ids` flag receives `layer_ids[:-1]`.
 
-## Backend: `llamacpp_gguf`
+## Backend: `tracegen_client` (the only backend)
 
-> **🚀 For production trace generation, prefer the persistent batched-decode trace server (~2.5× faster, same outputs).** See [§8 — Persistent batched-decode trace server](08-tracegen-server.md). The `llamacpp_gguf` backend documented below is kept as the simple/portable path for one-off jobs and CI.
+`tracegen_client` talks to a persistent ``TraceServer`` over a Unix
+socket. The server holds the GGUF mmap and the verifier's CUDA context
+across the entire run, and `run_many` packs up to `n_seq_max=8`
+same-length prompts into a single `llama_decode()` call. That's where
+the ~60+ traces/min headline rate comes from — see §8 for the bench.
 
-Wraps the `llama-dump-hiddens` binary (a forked `llama.cpp` build that captures hidden states). The binary is invoked once per row with `TOKENS_BIN`/`OUT_BIN`/`CAPTURE_LAYERS` env vars and a fixed model file.
+Earlier versions of the library shipped a `llamacpp_gguf` backend that
+spawned one `llama-dump-hiddens` subprocess per row. It has been
+**removed** in favor of the persistent server. The bench-validated
+speedup is ~2.4× over the old path and we now treat the legacy spawn
+path as a misfeature, not a configurable.
 
 Default arguments (override via `backend_kwargs={...}`):
 
 ```
-binary  = "llama-dump-hiddens"
-ctx     = 4096
-ngl     = 99
-extras  = ("-ot", "exps=CPU")
-timeout = 600  # per row
+socket_path     = "unix:///tmp/dflash_tracegen.sock"
+binary          = "llama-dump-hiddens-worker"
+ctx             = 16384       # >= max_seq_len * n_seq_max
+ngl             = 99
+override_tensor = "exps=CPU"
+auto_start      = False       # set True to spawn the server on first call
+request_timeout = 120.0       # per dump_hiddens / dump_hiddens_many call
+restart_retries = 1
 ```
 
-If the binary lives elsewhere:
+Single-binary CLI form:
 
 ```bash
-dflash-llama generate ... --binary /home/user/iq4_tracegen/buun-llama-cpp/build/bin/llama-dump-hiddens
+dflash-llama generate \
+  --verifier minimax-m2.7-iq4-xs \
+  --gguf-path /path/to/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf \
+  --prompts /path/to/prompts_tulu3 \
+  --out /path/to/output/traces \
+  --binary /path/to/llama-dump-hiddens-worker \
+  --auto-start-server \
+  --batch-width 8
 ```
 
 ## Verifying a trace

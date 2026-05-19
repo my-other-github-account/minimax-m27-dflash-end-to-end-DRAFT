@@ -113,18 +113,26 @@ verifier = load_verifier(
     gguf_quant="UD-IQ4_XS",
 )
 
-# 1. Generate traces (one safetensors file per prompt)
+# 1. Generate traces (one safetensors file per prompt) via the persistent
+#    batched-decode trace-server — ~60+ traces/min on a single GB10 host.
 gen = TraceGenerator(
     verifier=verifier,
     storage="fp8_per_tensor_scale",
-    backend="llamacpp_gguf",
-    backend_kwargs={"binary": "build/llama.cpp-dflash/build/bin/llama-dump-hiddens"},
+    backend="tracegen_client",
+    backend_kwargs={
+        "binary": "build/llama.cpp-dflash/build/bin/llama-dump-hiddens-worker",
+        "auto_start": True,        # spawn the trace-server on first request
+        "ctx": 16384,              # >= max_seq_len * n_seq_max (2048 * 8)
+        "ngl": 99,
+        "override_tensor": "exps=CPU",
+    },
 )
 gen.generate(
     prompts="data/prompts_tulu3",
     output_dir="data/traces",
     rows=range(0, 6500),
     state_path="data/gen_state.json",
+    batch_width=8,                  # batched decode unlocks the fast path
 )
 
 # 2. Train (no separate "build paired dataset" step — trainer.prepare() does it)
@@ -377,9 +385,13 @@ src/dflash_llama/
 │       └── nemotron3.py
 ├── generation/                # trace generation
 │   ├── format.py              # save_trace, load_trace, saturating_fp8_cast
-│   ├── trace_generator.py     # TraceGenerator high-level API
+│   ├── trace_generator.py     # TraceGenerator high-level API (batched generate/generate_many)
 │   └── backends/              # verifier-execution backends
-│       └── llamacpp_gguf.py   # wraps llama-dump-hiddens binary
+│       └── tracegen_client.py # talks to the persistent trace-server (only backend)
+├── tracegen/                  # persistent batched-decode trace-server
+│   ├── server.py              # `dflash-llama trace-server` entry point
+│   ├── client.py              # TraceClient (used by TracegenClientBackend)
+│   └── _binformat.py          # llama-dump-hiddens-worker bin-protocol helpers
 ├── training/                  # drafter training
 │   ├── prompts.py             # assemble_prompts_arrow
 │   ├── vocab_maps.py          # build_vocab_maps

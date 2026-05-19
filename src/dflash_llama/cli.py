@@ -67,32 +67,27 @@ def cmd_generate(args) -> int:
 
     verifier = _build_verifier(args)
     binary = args.binary
-    if args.backend == "tracegen_client" and binary == "llama-dump-hiddens":
+    # Legacy users may pass the one-shot binary name; the persistent server
+    # needs the JSONL-protocol worker variant.
+    if binary == "llama-dump-hiddens":
         binary = "llama-dump-hiddens-worker"
-    if args.backend == "llamacpp_gguf":
-        backend_kwargs = {
-            "binary": binary,
-            "ctx": args.ctx,
-            "timeout": args.timeout,
-        }
-    else:
-        backend_kwargs = {
-            "socket_path": args.socket,
-            "request_timeout": args.timeout,
-            "connect_timeout": args.connect_timeout,
-            "startup_timeout": args.startup_timeout,
-            "auto_start": args.auto_start_server,
-            "binary": binary,
-            "ctx": args.ctx,
-            "ngl": args.ngl,
-            "override_tensor": args.override_tensor,
-            "worker_args": args.worker_arg,
-            "server_log_path": args.server_log,
-        }
+    backend_kwargs = {
+        "socket_path": args.socket,
+        "request_timeout": args.timeout,
+        "connect_timeout": args.connect_timeout,
+        "startup_timeout": args.startup_timeout,
+        "auto_start": args.auto_start_server,
+        "binary": binary,
+        "ctx": args.ctx,
+        "ngl": args.ngl,
+        "override_tensor": args.override_tensor,
+        "worker_args": args.worker_arg,
+        "server_log_path": args.server_log,
+    }
     gen = TraceGenerator(
         verifier=verifier,
         storage=args.storage,
-        backend=args.backend,
+        backend="tracegen_client",
         backend_kwargs=backend_kwargs,
     )
     rows = _parse_rows(args.rows)
@@ -103,6 +98,7 @@ def cmd_generate(args) -> int:
         state_path=args.state,
         max_seq_len=args.max_seq_len,
         source_name=args.source_name,
+        batch_width=args.batch_width,
     )
     print(json.dumps(summary, indent=2))
     return 0
@@ -374,25 +370,25 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--state", default=None, help="state.json path for resumability")
     sg.add_argument("--max-seq-len", type=int, default=2048)
     sg.add_argument("--storage", default="fp8_per_tensor_scale", choices=["fp8_per_tensor_scale", "bf16"])
-    sg.add_argument("--backend", default="llamacpp_gguf",
-                    choices=["llamacpp_gguf", "tracegen_client"],
-                    help="'llamacpp_gguf' spawns one llama-dump-hiddens per row "
-                         "(simple, slow). 'tracegen_client' talks to a persistent "
-                         "trace-server (start it with 'dflash-llama trace-server' "
-                         "first, or pass --auto-start-server) for ~2.5× speedup "
-                         "via multi-prompt batching. See repro/08-tracegen-server.md.")
-    sg.add_argument("--binary", default="llama-dump-hiddens")
-    sg.add_argument("--ctx", type=int, default=4096)
+    sg.add_argument("--binary", default="llama-dump-hiddens-worker",
+                    help="path to the JSONL-protocol worker binary (the "
+                         "persistent server's child process). Legacy name "
+                         "'llama-dump-hiddens' is auto-promoted to '-worker'.")
+    sg.add_argument("--ctx", type=int, default=16384,
+                    help="worker context (must be >= max_seq_len * n_seq_max; "
+                         "the default 16384 covers max_seq_len=2048 at n_seq_max=8)")
     sg.add_argument("--ngl", type=int, default=99)
-    sg.add_argument("--timeout", type=int, default=600)
+    sg.add_argument("--timeout", type=int, default=600,
+                    help="per-request timeout (sec); covers a single run_one/run_many call")
+    sg.add_argument("--batch-width", type=int, default=8,
+                    help="prompts per run_many call; must be <= worker n_seq_max")
     # tracegen_client backend options:
     sg.add_argument("--connect-timeout", type=float, default=5.0)
     sg.add_argument("--startup-timeout", type=float, default=900.0)
     sg.add_argument("--socket", default="unix:///tmp/dflash_tracegen.sock",
-                    help="socket address for the trace-server (tracegen_client backend)")
+                    help="socket address for the persistent trace-server")
     sg.add_argument("--auto-start-server", action="store_true",
-                    help="for tracegen_client backend: auto-spawn the trace-server "
-                         "if no socket is listening")
+                    help="auto-spawn the trace-server if no socket is listening")
     sg.add_argument("--override-tensor", default="exps=CPU",
                     help="llama.cpp -ot argument forwarded to the worker (default 'exps=CPU')")
     sg.add_argument("--worker-arg", action="append", default=None,

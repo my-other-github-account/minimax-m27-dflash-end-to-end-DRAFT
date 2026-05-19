@@ -43,11 +43,9 @@ What this does:
 1. Clones [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) at a **pinned tag** (default `master-fff0e0e`) into `build/llama.cpp-dflash/`.
 2. Drops our vendored [`vendor/dump-hiddens/`](../vendor/dump-hiddens/) source files into `build/llama.cpp-dflash/examples/dump-hiddens/`.
 3. Wires it into the cmake graph (idempotent — appends one `add_subdirectory(...)` line if not already there).
-4. Builds with CUDA + Release. Two binaries land in `build/llama.cpp-dflash/build/bin/`:
-   - `llama-dump-hiddens` — the one-shot binary used by the `llamacpp_gguf` backend.
-   - `llama-dump-hiddens-worker` — the persistent JSONL stdin/stdout worker used by the batched trace-server (see [§8 — Persistent batched-decode trace server](08-tracegen-server.md)). **~2.5× faster trace generation; numerically equivalent output.**
+4. Builds with CUDA + Release. The binary that lands in `build/llama.cpp-dflash/build/bin/` is `llama-dump-hiddens-worker` — the persistent JSONL stdin/stdout worker used by the batched trace-server (see [§8 — Persistent batched-decode trace server](08-tracegen-server.md)). It is the only execution path the library ships, and it produces ~60+ traces/min single-host on a GB10 — ~2.5× faster than the legacy spawn-per-prompt path that used to exist.
 
-Output: `build/llama.cpp-dflash/build/bin/llama-dump-hiddens`. The script prints this path on stdout for piping:
+Output: `build/llama.cpp-dflash/build/bin/llama-dump-hiddens-worker`. The script prints this path on stdout for piping:
 
 ```bash
 LLAMA_DUMP_BIN=$(bash scripts/build_llama_dump_hiddens.sh | tail -1)
@@ -198,10 +196,14 @@ verifier = load_verifier(
 gen = TraceGenerator(
     verifier=verifier,
     storage="fp8_per_tensor_scale",
-    backend="llamacpp_gguf",
+    backend="tracegen_client",
     backend_kwargs={
-        "binary": "build/llama.cpp-dflash/build/bin/llama-dump-hiddens",
-        "timeout": 600,
+        "binary": "build/llama.cpp-dflash/build/bin/llama-dump-hiddens-worker",
+        "auto_start": True,
+        "ctx": 16384,
+        "ngl": 99,
+        "override_tensor": "exps=CPU",
+        "request_timeout": 600,
     },
 )
 gen.generate(
@@ -209,6 +211,7 @@ gen.generate(
     output_dir="data/traces",
     rows=range(0, 6500),
     state_path="data/state/gen_state.json",
+    batch_width=8,
 )
 ```
 

@@ -9,7 +9,7 @@ from .format import (
     validate_trace,
 )
 from .trace_generator import TraceGenerator
-from .backends import BaseBackend, LlamaCppGGUFBackend, TracegenClientBackend
+from .backends import BaseBackend, TracegenClientBackend
 
 __all__ = [
     "TraceGenerator",
@@ -21,6 +21,5 @@ __all__ = [
     "load_trace",
     "validate_trace",
     "BaseBackend",
-    "LlamaCppGGUFBackend",
     "TracegenClientBackend",
 ]

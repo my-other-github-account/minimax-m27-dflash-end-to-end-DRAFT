@@ -31,7 +31,7 @@ from dflash_llama import DFlashTrainer, TraceGenerator, load_verifier
 
 # ---- environment paths — edit these ----
 GGUF       = "/home/user/clawd/iq4_models/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf"
-LLAMA_BIN  = "/home/user/iq4_tracegen/buun-llama-cpp/build/bin/llama-dump-hiddens"
+LLAMA_BIN  = "/home/user/iq4_tracegen/buun-llama-cpp/build/bin/llama-dump-hiddens-worker"
 PROMPTS    = "/home/user/iq4_tracegen/prompts_tulu3"
 HF_VERIFIER = "/home/user/models/MiniMax-M2.7-FP8"
 WORK       = Path("/home/user/dflash_runs/minimax_m27_full")
@@ -50,8 +50,14 @@ print(f"\n[1/4] generating {N_TRACES} traces over rows [0, {N_TRACES})")
 gen = TraceGenerator(
     verifier=verifier,
     storage="fp8_per_tensor_scale",
-    backend="llamacpp_gguf",
-    backend_kwargs={"binary": LLAMA_BIN},
+    backend="tracegen_client",
+    backend_kwargs={
+        "binary": LLAMA_BIN,
+        "auto_start": True,
+        "ctx": 16384,
+        "ngl": 99,
+        "override_tensor": "exps=CPU",
+    },
 )
 gen_report = gen.generate(
     prompts=PROMPTS,

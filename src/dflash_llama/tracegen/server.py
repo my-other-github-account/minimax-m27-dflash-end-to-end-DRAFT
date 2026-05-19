@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from ..generation.backends.llamacpp_gguf import LlamaCppGGUFBackend
+from ._binformat import write_tokens_bin
 from ._proc import parent_deathsig_preexec
 
 SOCKET_PREFIX = "unix://"
@@ -361,7 +361,7 @@ class TraceServer:
         )
         tokens_bin = td / "tokens.bin"
         try:
-            LlamaCppGGUFBackend._write_tokens_bin(input_ids, str(tokens_bin))
+            write_tokens_bin(input_ids, str(tokens_bin))
             worker_meta = self._worker.run_job(
                 request_id=req_id,
                 tokens_bin=str(tokens_bin),
@@ -419,7 +419,7 @@ class TraceServer:
                 input_ids = list(job["input_ids"])
                 token_path = td / f"tokens_{idx}.bin"
                 token_paths.append(token_path)
-                LlamaCppGGUFBackend._write_tokens_bin(input_ids, str(token_path))
+                write_tokens_bin(input_ids, str(token_path))
                 manifest_lines.append(f"{req_id}\t{token_path}\t{out_bin}\n")
                 request_ids.append(req_id)
             manifest_path.write_text("".join(manifest_lines), encoding="utf-8")

@@ -32,4 +32,4 @@ int32[n_tokens_in] token_ids
 float32[n_layers, n_tokens, n_embd]   row-major
 ```
 
-This is consumed by `dflash_llama.generation.backends.llamacpp_gguf.LlamaCppGGUFBackend`.
+This is consumed by the persistent server (`dflash_llama.tracegen.server`) via the bin-format helpers in `dflash_llama.tracegen._binformat`.

@@ -14,8 +14,8 @@ from typing import Iterable, Optional, Sequence
 
 import torch
 
-from ..generation.backends.llamacpp_gguf import LlamaCppGGUFBackend
 from ..generation.format import VALID_STORAGE, save_trace
+from ._binformat import parse_hidden_bin
 from ._proc import parent_deathsig_preexec
 from .server import SOCKET_PREFIX, _normalize_socket_path
 
@@ -212,7 +212,7 @@ class TraceClient:
         requested_layers: Sequence[int],
         response: dict,
     ) -> dict:
-        hs_f32, tok_out, cap_out = LlamaCppGGUFBackend._parse_hidden_bin(str(out_bin))
+        hs_f32, tok_out, cap_out = parse_hidden_bin(str(out_bin))
         if list(cap_out) != list(requested_layers):
             raise RuntimeError(
                 f"layer-id mismatch from server: requested {requested_layers} got {cap_out}"

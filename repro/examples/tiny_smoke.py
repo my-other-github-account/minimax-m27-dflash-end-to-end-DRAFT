@@ -36,7 +36,7 @@ from dflash_llama import (
 
 # --- edit these for your environment ---
 GGUF       = "/home/user/clawd/iq4_models/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf"
-LLAMA_BIN  = "/home/user/iq4_tracegen/buun-llama-cpp/build/bin/llama-dump-hiddens"
+LLAMA_BIN  = "/home/user/iq4_tracegen/buun-llama-cpp/build/bin/llama-dump-hiddens-worker"
 PROMPTS    = "/home/user/iq4_tracegen/prompts_tulu3"   # any HF Dataset dir with input_ids, loss_mask
 HF_VERIFIER = "/home/user/models/MiniMax-M2.7-FP8"     # optional, only needed for smoke train
 WORK       = Path("/tmp/dflash_llama_tiny_smoke")
@@ -52,8 +52,14 @@ print(f"[1/4] verifier {verifier.name} loaded "
 gen = TraceGenerator(
     verifier=verifier,
     storage="fp8_per_tensor_scale",
-    backend="llamacpp_gguf",
-    backend_kwargs={"binary": LLAMA_BIN},
+    backend="tracegen_client",
+    backend_kwargs={
+        "binary": LLAMA_BIN,
+        "auto_start": True,
+        "ctx": 16384,
+        "ngl": 99,
+        "override_tensor": "exps=CPU",
+    },
 )
 traces_dir = WORK / "traces"
 traces_dir.mkdir(parents=True, exist_ok=True)

@@ -56,14 +56,20 @@ def test_tracegen_client_normalizes_legacy_binary_name() -> None:
 
 
 def test_tracegen_client_backend_is_registered() -> None:
-    """The generation backend registry should accept 'tracegen_client'."""
+    """The generation backend registry should accept 'tracegen_client'.
+
+    The legacy 'llamacpp_gguf' spawn-per-prompt backend was removed; only
+    one backend ships now.
+    """
     from dflash_llama.generation import TracegenClientBackend
-    from dflash_llama.generation.backends import LlamaCppGGUFBackend
+    from dflash_llama.generation.backends import BaseBackend
 
     assert TracegenClientBackend is not None
-    # Both backends share the same base interface.
+    # Backend implements both the single-prompt and batched APIs.
     assert hasattr(TracegenClientBackend, "run_one")
-    assert hasattr(LlamaCppGGUFBackend, "run_one")
+    assert hasattr(TracegenClientBackend, "run_many")
+    # And inherits from the documented base.
+    assert issubclass(TracegenClientBackend, BaseBackend)
 
 
 def test_cli_exposes_trace_server_subcommand() -> None:
@@ -82,22 +88,24 @@ def test_cli_exposes_trace_server_subcommand() -> None:
         assert required in arg_names, f"trace-server parser missing --{required}"
 
 
-def test_cli_generate_supports_tracegen_client_backend() -> None:
-    """`dflash-llama generate --backend tracegen_client` should be valid."""
+def test_cli_generate_uses_tracegen_client_backend() -> None:
+    """`dflash-llama generate` no longer takes a --backend flag — the
+    persistent-server path is the only path. Verify the argparse surface
+    accepts a minimal generate invocation without --backend.
+    """
     from dflash_llama.cli import build_parser
 
     parser = build_parser()
-    # Parse a minimal valid command that uses the new backend; should not raise.
     args = parser.parse_args([
         "generate",
         "--verifier", "minimax-m2.7-iq4-xs",
         "--gguf-path", "/tmp/does_not_exist.gguf",
         "--prompts", "/tmp/does_not_exist_prompts",
         "--out", "/tmp/does_not_exist_out",
-        "--backend", "tracegen_client",
     ])
-    assert args.backend == "tracegen_client"
     assert args.socket.startswith("unix://") or args.socket.startswith("tcp://")
+    assert args.batch_width >= 1
+    assert args.binary == "llama-dump-hiddens-worker"
 
 
 def test_make_backend_rejects_unknown_names() -> None:
