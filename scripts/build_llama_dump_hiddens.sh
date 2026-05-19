@@ -33,6 +33,28 @@ LLAMACPP_PIN="${LLAMACPP_PIN:-b97ebdc98f6053604a19d861c08d8087601b96e0}"
 BUILD_CUDA="${BUILD_CUDA:-1}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
+# Auto-discover nvcc when BUILD_CUDA=1. cmake's CUDA detection requires nvcc
+# on PATH or CUDACXX/CMAKE_CUDA_COMPILER set explicitly. On fresh-rebooted
+# Spark hosts /usr/local/cuda/bin is often missing from PATH, causing a hard
+# cmake error: "No CMAKE_CUDA_COMPILER could be found". Fix it transparently.
+if [ "$BUILD_CUDA" = "1" ] && [ -z "${CUDACXX:-}" ]; then
+    for _cuda_bin in /usr/local/cuda/bin/nvcc /usr/local/cuda-13/bin/nvcc \
+                     /usr/local/cuda-13.0/bin/nvcc /usr/local/cuda-12/bin/nvcc \
+                     /opt/cuda/bin/nvcc; do
+        if [ -x "$_cuda_bin" ]; then
+            export CUDACXX="$_cuda_bin"
+            export PATH="$(dirname "$_cuda_bin"):$PATH"
+            echo "[build] auto-discovered nvcc: $CUDACXX"
+            break
+        fi
+    done
+    if [ -z "${CUDACXX:-}" ] && ! command -v nvcc >/dev/null 2>&1; then
+        echo "[build] WARNING: BUILD_CUDA=1 but nvcc not found on PATH or in" >&2
+        echo "[build] /usr/local/cuda*/bin. Either install CUDA, set BUILD_CUDA=0," >&2
+        echo "[build] or set CUDACXX=/path/to/nvcc explicitly." >&2
+    fi
+fi
+
 VENDOR_DIR="$REPO_ROOT/vendor/dump-hiddens"
 BUILD_DIR="$REPO_ROOT/build/llama.cpp-dflash"
 
