@@ -13,6 +13,7 @@ from typing import Iterable, Optional, Union
 from ..verifiers.base import BaseVerifier
 from .backends.base import BaseBackend
 from .backends.llamacpp_gguf import LlamaCppGGUFBackend
+from .backends.tracegen_client import TracegenClientBackend
 from .format import save_trace, VALID_STORAGE
 
 
@@ -62,8 +63,16 @@ def _make_backend(name: str, *, verifier: BaseVerifier, **kwargs) -> BaseBackend
         if not verifier.gguf_path:
             raise ValueError("backend=llamacpp_gguf requires verifier.gguf_path to be set")
         return LlamaCppGGUFBackend(gguf_path=verifier.gguf_path, **kwargs)
+    if name in ("tracegen_client", "trace_server", "server"):
+        if not verifier.gguf_path:
+            raise ValueError("backend=tracegen_client requires verifier.gguf_path to be set")
+        return TracegenClientBackend(
+            gguf_path=verifier.gguf_path,
+            layer_ids=verifier.layer_ids,
+            **kwargs,
+        )
     raise ValueError(
-        f"unknown backend {name!r}; supported: 'llamacpp_gguf'"
+        f"unknown backend {name!r}; supported: 'llamacpp_gguf', 'tracegen_client'"
     )
 
 

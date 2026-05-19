@@ -41,6 +41,8 @@ and require explicit opt-in. See **Experimental factories** below.
 | §4 — Empirical tau against llama-benchy / Project Gutenberg traffic | [`repro/04-empirical-tau-llama-benchy.md`](repro/04-empirical-tau-llama-benchy.md) |
 | §5 — Runtime perf notes: how the v11.1 wall-clock gate was cleared | [`repro/05-runtime-perf-notes.md`](repro/05-runtime-perf-notes.md) |
 | §6 — FP8 training (Float8CurrentScaling HYBRID + fused TE LayerNormMLP) | [`repro/06-fp8-training.md`](repro/06-fp8-training.md) |
+| §7 — Phase 2 training perf optimization (2.3× over bf16 baseline) | [`repro/07-perf-optimization.md`](repro/07-perf-optimization.md) |
+| §8 — Persistent batched-decode trace server (2.5× faster trace generation) | [`repro/08-tracegen-server.md`](repro/08-tracegen-server.md) |
 
 ## What you get
 
