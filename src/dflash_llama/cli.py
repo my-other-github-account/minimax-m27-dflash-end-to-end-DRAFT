@@ -66,12 +66,34 @@ def cmd_generate(args) -> int:
     from .generation import TraceGenerator
 
     verifier = _build_verifier(args)
+    binary = args.binary
+    if args.backend == "tracegen_client" and binary == "llama-dump-hiddens":
+        binary = "llama-dump-hiddens-worker"
+    if args.backend == "llamacpp_gguf":
+        backend_kwargs = {
+            "binary": binary,
+            "ctx": args.ctx,
+            "timeout": args.timeout,
+        }
+    else:
+        backend_kwargs = {
+            "socket_path": args.socket,
+            "request_timeout": args.timeout,
+            "connect_timeout": args.connect_timeout,
+            "startup_timeout": args.startup_timeout,
+            "auto_start": args.auto_start_server,
+            "binary": binary,
+            "ctx": args.ctx,
+            "ngl": args.ngl,
+            "override_tensor": args.override_tensor,
+            "worker_args": args.worker_arg,
+            "server_log_path": args.server_log,
+        }
     gen = TraceGenerator(
         verifier=verifier,
         storage=args.storage,
         backend=args.backend,
-        backend_kwargs={"binary": args.binary, "ctx": args.ctx, "timeout": args.timeout}
-                      if args.backend == "llamacpp_gguf" else None,
+        backend_kwargs=backend_kwargs,
     )
     rows = _parse_rows(args.rows)
     summary = gen.generate(
@@ -266,6 +288,34 @@ def cmd_benchmark(args) -> int:
     return 0
 
 
+def cmd_trace_server(args) -> int:
+    from .tracegen import TraceServer
+
+    layer_ids = _parse_layer_ids_arg(args.layer_ids)
+    if not layer_ids:
+        raise ValueError("--layer-ids is required for trace-server")
+    server = TraceServer(
+        gguf_path=args.gguf_path,
+        layer_ids=layer_ids,
+        bind=args.socket,
+        n_ctx=args.ctx,
+        n_gpu_layers=args.ngl,
+        override_tensor=args.override_tensor,
+        binary=args.binary,
+        worker_args=args.worker_arg,
+        worker_log_path=args.log,
+        request_timeout=args.timeout,
+        startup_timeout=args.startup_timeout,
+    )
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.stop()
+    return 0
+
+
 # ----- arg-parser -----
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dflash-llama", description=__doc__)
@@ -324,10 +374,31 @@ def build_parser() -> argparse.ArgumentParser:
     sg.add_argument("--state", default=None, help="state.json path for resumability")
     sg.add_argument("--max-seq-len", type=int, default=2048)
     sg.add_argument("--storage", default="fp8_per_tensor_scale", choices=["fp8_per_tensor_scale", "bf16"])
-    sg.add_argument("--backend", default="llamacpp_gguf", choices=["llamacpp_gguf"])
+    sg.add_argument("--backend", default="llamacpp_gguf",
+                    choices=["llamacpp_gguf", "tracegen_client"],
+                    help="'llamacpp_gguf' spawns one llama-dump-hiddens per row "
+                         "(simple, slow). 'tracegen_client' talks to a persistent "
+                         "trace-server (start it with 'dflash-llama trace-server' "
+                         "first, or pass --auto-start-server) for ~2.5× speedup "
+                         "via multi-prompt batching. See repro/08-tracegen-server.md.")
     sg.add_argument("--binary", default="llama-dump-hiddens")
     sg.add_argument("--ctx", type=int, default=4096)
+    sg.add_argument("--ngl", type=int, default=99)
     sg.add_argument("--timeout", type=int, default=600)
+    # tracegen_client backend options:
+    sg.add_argument("--connect-timeout", type=float, default=5.0)
+    sg.add_argument("--startup-timeout", type=float, default=900.0)
+    sg.add_argument("--socket", default="unix:///tmp/dflash_tracegen.sock",
+                    help="socket address for the trace-server (tracegen_client backend)")
+    sg.add_argument("--auto-start-server", action="store_true",
+                    help="for tracegen_client backend: auto-spawn the trace-server "
+                         "if no socket is listening")
+    sg.add_argument("--override-tensor", default="exps=CPU",
+                    help="llama.cpp -ot argument forwarded to the worker (default 'exps=CPU')")
+    sg.add_argument("--worker-arg", action="append", default=None,
+                    help="extra argument to pass through to llama-dump-hiddens-worker; repeatable")
+    sg.add_argument("--server-log", default=None,
+                    help="path to write the auto-started trace-server's stderr")
     sg.add_argument("--source-name", default=None)
     sg.set_defaults(func=cmd_generate)
 
@@ -463,6 +534,35 @@ def build_parser() -> argparse.ArgumentParser:
                     help="emit machine-readable JSON instead of markdown")
     sb.add_argument("--json-out", default=None, help="also write JSON to file")
     sb.set_defaults(func=cmd_benchmark)
+
+    # trace-server (persistent batched-decode hidden-state extractor)
+    stg = sub.add_parser("trace-server",
+        help="run the persistent batched-decode hidden-state trace server "
+             "(use `--backend tracegen_client` from `generate` to talk to it)")
+    stg.add_argument("--gguf-path", required=True)
+    stg.add_argument("--layer-ids", required=True,
+                     help="comma-separated layer indices to capture, "
+                          "e.g. '2,16,30,45,59,61' for MiniMax-M2.7")
+    stg.add_argument("--socket", default="unix:///tmp/dflash_tracegen.sock",
+                     help="socket address to listen on")
+    stg.add_argument("--ctx", type=int, default=4096,
+                     help="llama.cpp context window (default 4096)")
+    stg.add_argument("--ngl", type=int, default=99,
+                     help="--n-gpu-layers passed to the worker (default 99)")
+    stg.add_argument("--override-tensor", default="exps=CPU",
+                     help="llama.cpp -ot argument (default 'exps=CPU' for MoE on CPU)")
+    stg.add_argument("--binary", default="llama-dump-hiddens-worker",
+                     help="path or name of the worker binary built by "
+                          "scripts/build_llama_dump_hiddens.sh")
+    stg.add_argument("--worker-arg", action="append", default=None,
+                     help="extra argument forwarded to the worker; repeatable")
+    stg.add_argument("--timeout", type=float, default=900.0,
+                     help="per-request timeout in seconds (default 900)")
+    stg.add_argument("--startup-timeout", type=float, default=900.0,
+                     help="how long to wait for the worker to print READY (default 900)")
+    stg.add_argument("--log", default=None,
+                     help="optional path to write the worker's stderr/stdout")
+    stg.set_defaults(func=cmd_trace_server)
 
     return p
 

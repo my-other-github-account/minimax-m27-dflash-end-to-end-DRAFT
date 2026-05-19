@@ -89,6 +89,8 @@ The `layer_ids` list is what the generator passes to `llama-dump-hiddens`. The t
 
 ## Backend: `llamacpp_gguf`
 
+> **🚀 For production trace generation, prefer the persistent batched-decode trace server (~2.5× faster, same outputs).** See [§8 — Persistent batched-decode trace server](08-tracegen-server.md). The `llamacpp_gguf` backend documented below is kept as the simple/portable path for one-off jobs and CI.
+
 Wraps the `llama-dump-hiddens` binary (a forked `llama.cpp` build that captures hidden states). The binary is invoked once per row with `TOKENS_BIN`/`OUT_BIN`/`CAPTURE_LAYERS` env vars and a fixed model file.
 
 Default arguments (override via `backend_kwargs={...}`):
