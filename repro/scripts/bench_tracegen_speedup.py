@@ -220,6 +220,47 @@ def main() -> int:
         storage="fp8_per_tensor_scale",
     )
 
+    # Validate the worker binary actually has the n_seq_max=8 patch baked in.
+    # Without it (n_seq_max=1) the batched code path runs but silently
+    # corrupts every batched seq beyond seq_id=0, AND can pass the small
+    # warmup equivalence check while failing at scale. Fail loud HERE so
+    # nobody trusts a bad binary's numbers.
+    server_log_path = out_dir / "server.log"
+    n_seq_max_observed = None
+    # Worker writes n_seq_max in its startup log right after model load. Give
+    # it up to args.startup_timeout seconds to appear; if the model isn't
+    # loaded yet the line just isn't there yet.
+    deadline = time.time() + max(args.startup_timeout, 60)
+    while time.time() < deadline:
+        if server_log_path.exists():
+            try:
+                txt = server_log_path.read_text(errors="replace")
+            except Exception:
+                txt = ""
+            # llama_context emits e.g. "llama_context: n_seq_max     = 8"
+            import re as _re
+            m = _re.search(r"n_seq_max\s*=\s*(\d+)", txt)
+            if m:
+                n_seq_max_observed = int(m.group(1))
+                break
+        time.sleep(2)
+
+    if n_seq_max_observed is None:
+        log("WARNING: could not find n_seq_max in worker startup log within "
+            f"{max(args.startup_timeout, 60)}s — proceeding anyway, but the "
+            "binary's batched-decode capability has not been verified.")
+    elif n_seq_max_observed < args.batch_width:
+        log(f"FATAL: worker started with n_seq_max={n_seq_max_observed}, but "
+            f"this bench runs at batch_width={args.batch_width}. The worker "
+            f"binary at {args.binary} is missing the n_seq_max=8 patch — "
+            f"batched output will be silently corrupted beyond seq_id=0. "
+            f"Rebuild the worker via scripts/build_llama_dump_hiddens.sh "
+            f"from this repo, NOT a pre-existing binary.")
+        return 4
+    else:
+        log(f"Worker startup OK: n_seq_max={n_seq_max_observed} >= "
+            f"batch_width={args.batch_width}")
+
     final: dict = {
         "batch_width": args.batch_width,
         "n_equiv": args.n_equiv,
