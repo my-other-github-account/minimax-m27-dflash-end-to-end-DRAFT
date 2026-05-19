@@ -43,7 +43,9 @@ What this does:
 1. Clones [`ggml-org/llama.cpp`](https://github.com/ggml-org/llama.cpp) at a **pinned tag** (default `master-fff0e0e`) into `build/llama.cpp-dflash/`.
 2. Drops our vendored [`vendor/dump-hiddens/`](../vendor/dump-hiddens/) source files into `build/llama.cpp-dflash/examples/dump-hiddens/`.
 3. Wires it into the cmake graph (idempotent — appends one `add_subdirectory(...)` line if not already there).
-4. Builds with CUDA + Release.
+4. Builds with CUDA + Release. Two binaries land in `build/llama.cpp-dflash/build/bin/`:
+   - `llama-dump-hiddens` — the one-shot binary used by the `llamacpp_gguf` backend.
+   - `llama-dump-hiddens-worker` — the persistent JSONL stdin/stdout worker used by the batched trace-server (see [§8 — Persistent batched-decode trace server](08-tracegen-server.md)). **~2.5× faster trace generation; numerically equivalent output.**
 
 Output: `build/llama.cpp-dflash/build/bin/llama-dump-hiddens`. The script prints this path on stdout for piping:
 

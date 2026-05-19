@@ -25,6 +25,7 @@ from .inference import (
     parse_speculative_log,
     chain_pred_from_val,
 )
+from .tracegen import TraceClient, TraceServer
 
 __all__ = [
     # version + schema
@@ -61,4 +62,7 @@ __all__ = [
     "SpeculativeReport",
     "parse_speculative_log",
     "chain_pred_from_val",
+    # tracegen (persistent batched-decode trace server)
+    "TraceClient",
+    "TraceServer",
 ]
