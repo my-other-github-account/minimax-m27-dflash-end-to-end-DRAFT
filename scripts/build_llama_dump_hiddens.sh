@@ -2,20 +2,29 @@
 # Build llama-dump-hiddens reproducibly from public sources.
 #
 # Strategy:
-#   1. Clone a pinned upstream ggml-org/llama.cpp commit
+#   1. Clone a pinned commit of spiritbuun/buun-llama-cpp (the DFlash-enabled
+#      llama.cpp fork that already has PR #22105 + the minimax-m2 cb-hook
+#      patches merged). The vendored dump_hiddens.cpp / dump_hiddens_worker.cpp
+#      use DFlash-specific APIs (llama_set_dflash_capture, llama_get_layer_hidden,
+#      llama_get_n_layer_hiddens, etc.) that only exist in this fork — vanilla
+#      ggml-org/llama.cpp does NOT have these symbols, so building against it
+#      fails with 'llama_set_dflash_capture was not declared in this scope'.
 #   2. Drop in our vendored examples/dump-hiddens/ source
 #   3. Wire it into the cmake graph
 #   4. Build with CUDA (or CPU-only via env var)
 #
-# Output: ./build/llama.cpp-dflash/build/bin/llama-dump-hiddens
+# Output:
+#   ./build/llama.cpp-dflash/build/bin/llama-dump-hiddens
+#   ./build/llama.cpp-dflash/build/bin/llama-dump-hiddens-worker (used by trace-server)
 #
 # Idempotent — safe to re-run; it will skip the clone if the target dir exists
 # and just rebuild. To start fresh, delete build/llama.cpp-dflash/.
 #
 # Knobs (env vars):
-#   LLAMACPP_PIN     upstream commit/tag to pin to (default: current master HEAD
-#                    at time-of-write; pin to a SHA for reproducibility, or set
-#                    to a tag like 'b1234' for a release build)
+#   LLAMACPP_REPO    upstream repo to clone
+#                    (default: https://github.com/spiritbuun/buun-llama-cpp.git)
+#   LLAMACPP_PIN     commit SHA or branch to check out
+#                    (default: a known-good buun-llama-cpp master SHA)
 #   BUILD_CUDA       1 (default) or 0 for CPU-only
 #   JOBS             parallel build jobs (default: nproc)
 #
@@ -29,7 +38,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-LLAMACPP_PIN="${LLAMACPP_PIN:-b97ebdc98f6053604a19d861c08d8087601b96e0}"
+LLAMACPP_REPO="${LLAMACPP_REPO:-https://github.com/spiritbuun/buun-llama-cpp.git}"
+LLAMACPP_PIN="${LLAMACPP_PIN:-1c47881923}"
 BUILD_CUDA="${BUILD_CUDA:-1}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
@@ -58,6 +68,7 @@ fi
 VENDOR_DIR="$REPO_ROOT/vendor/dump-hiddens"
 BUILD_DIR="$REPO_ROOT/build/llama.cpp-dflash"
 
+echo "[build] upstream repo     : $LLAMACPP_REPO"
 echo "[build] pinned commit/tag : $LLAMACPP_PIN"
 echo "[build] cuda              : $BUILD_CUDA"
 echo "[build] jobs              : $JOBS"
@@ -66,14 +77,15 @@ echo "[build] build_dir         : $BUILD_DIR"
 
 # 1. clone (if needed)
 if [ ! -d "$BUILD_DIR/.git" ]; then
-    echo "[build] cloning ggml-org/llama.cpp and checking out $LLAMACPP_PIN"
+    echo "[build] cloning $LLAMACPP_REPO and checking out $LLAMACPP_PIN"
     mkdir -p "$(dirname "$BUILD_DIR")"
-    # Try shallow-by-branch first (works for tags); on failure, fall back to
-    # full clone + checkout (works for arbitrary commit SHAs).
+    # Try shallow-by-branch first (works for tags and branch names); on
+    # failure, fall back to full clone + checkout (works for arbitrary
+    # commit SHAs).
     if ! git clone --depth 1 --branch "$LLAMACPP_PIN" \
-            https://github.com/ggml-org/llama.cpp.git "$BUILD_DIR" 2>/dev/null; then
+            "$LLAMACPP_REPO" "$BUILD_DIR" 2>/dev/null; then
         echo "[build] shallow-branch clone failed; falling back to full clone"
-        git clone https://github.com/ggml-org/llama.cpp.git "$BUILD_DIR"
+        git clone "$LLAMACPP_REPO" "$BUILD_DIR"
         ( cd "$BUILD_DIR" && git checkout "$LLAMACPP_PIN" )
     fi
 fi
