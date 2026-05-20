@@ -314,6 +314,114 @@ class TraceGenerator:
         )
 
     # ------------------------------------------------------------------
+    # Shape pre-warm
+    # ------------------------------------------------------------------
+    def prewarm_shapes(
+        self,
+        *,
+        shapes: Sequence[tuple[int, int]],
+        pad_token_id: int = 0,
+        max_seq_len: Optional[int] = None,
+        log_fn=None,
+    ) -> list[dict]:
+        """Pre-warm the backend by running a dummy batch at each shape.
+
+        On the llama.cpp ``tracegen_client`` backend this causes the C
+        worker to allocate and cache the sched_reserve graph + compute
+        buffer for every shape we expect to hit at steady state. Without
+        this the first batch at each new shape incurs a one-time
+        ~5-30 second sched_reserve cost, which manifests as a long
+        throughput ramp at startup.
+
+        Dummy traces are written to a temp dir and immediately deleted --
+        only the worker's internal caches are affected.
+
+        Args:
+            shapes: list of ``(seq_len, n_seqs)`` tuples. ``n_seqs`` should
+                match the max batch width you expect to see at that
+                seq_len in production (typically
+                ``min(batch_width, max_batch_tokens // seq_len)``).
+            pad_token_id: token id used to fill dummy prompts.
+            max_seq_len: passed through to ``generate_many``; defaults to
+                the largest seq_len in ``shapes``.
+            log_fn: optional callable (e.g. ``print``) for per-shape logs.
+
+        Returns:
+            list of per-shape dicts with keys ``seq_len``, ``n_seqs``,
+            ``elapsed_s``, ``ok``, and (if it failed) ``error``.
+        """
+        import shutil
+        import tempfile
+        import time as _time
+
+        if not shapes:
+            return []
+        if max_seq_len is None:
+            max_seq_len = max(int(sl) for sl, _ in shapes)
+
+        tmp_root = Path(tempfile.mkdtemp(prefix="dflash_prewarm_"))
+        results: list[dict] = []
+        try:
+            for seq_len, n_seqs in shapes:
+                seq_len = int(seq_len)
+                n_seqs = int(n_seqs)
+                if seq_len <= 0 or n_seqs <= 0:
+                    continue
+                dummy_ids = [int(pad_token_id)] * seq_len
+                dummy_mask = [False] * seq_len
+                paths = [tmp_root / f"pw_{seq_len}_{j}.safetensors" for j in range(n_seqs)]
+                t0 = _time.time()
+                entry: dict = {"seq_len": seq_len, "n_seqs": n_seqs}
+                try:
+                    self.generate_many(
+                        batch_inputs=[dummy_ids] * n_seqs,
+                        output_paths=paths,
+                        source_names=["__prewarm__"] * n_seqs,
+                        source_row_ids=[-1] * n_seqs,
+                        max_seq_len=max_seq_len,
+                        loss_masks=[dummy_mask] * n_seqs,
+                        extra_metadatas=[{"prewarm": "true"}] * n_seqs,
+                    )
+                    entry["ok"] = True
+                except Exception as e:  # pragma: no cover - backend-specific
+                    entry["ok"] = False
+                    entry["error"] = repr(e)
+                entry["elapsed_s"] = _time.time() - t0
+                results.append(entry)
+                if log_fn is not None:
+                    status = "ok" if entry["ok"] else f"FAILED: {entry.get('error', '?')}"
+                    log_fn(
+                        f"[prewarm] seq_len={seq_len} n_seqs={n_seqs} "
+                        f"took {entry['elapsed_s']:.2f}s ({status})"
+                    )
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+        return results
+
+    @staticmethod
+    def plan_prewarm_shapes(
+        *,
+        length_bucket: int,
+        max_seq_len: int,
+        batch_width: int,
+        max_batch_tokens: int,
+    ) -> list[tuple[int, int]]:
+        """Compute the (seq_len, n_seqs) shapes the worker will hit at
+        steady state given its length-bucket and batch-width policy.
+
+        Each shape is ``(bucket * k, min(batch_width, max_batch_tokens // bucket * k))``
+        for ``bucket * k <= max_seq_len``. This is the canonical input to
+        :meth:`prewarm_shapes`.
+        """
+        if length_bucket <= 0:
+            return [(int(max_seq_len), int(batch_width))]
+        out: list[tuple[int, int]] = []
+        for sl in range(length_bucket, max_seq_len + 1, length_bucket):
+            n_seqs = max(1, min(int(batch_width), int(max_batch_tokens) // sl))
+            out.append((sl, n_seqs))
+        return out
+
+    # ------------------------------------------------------------------
     # Dataset walker (the main production entry point)
     # ------------------------------------------------------------------
     def generate(

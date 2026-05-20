@@ -223,3 +223,106 @@ and shape info — ready to drop into `repro/artifacts/`.
   amortizes.
 - Don't trust sha256 mismatches at face value. Compute max/mean/cosine
   instead and decide.
+
+
+## §8.1 — Production-tuned end-to-end worker (v14 batched)
+
+The headline 68 traces/min in §8 is on a **50-96 token sample** with
+exact-length grouping. Real production prompts are 64-2048 tokens with
+a long tail; naïvely batching those still leaves most of the GPU on the
+table because:
+
+- A batch is only as fast as its slowest sequence (all prompts pad to a
+  shared length).
+- A worker that buckets by exact length almost never reaches
+  `batch_width=8` on long prompts.
+- The C++ worker's `cparams.n_batch=2048` default crashes (assertion in
+  `llama_decode`) once `batch_width × padded_seq_len > 2048`.
+- Every new `(seq_len, n_seqs)` shape pays a one-time ~5–30 s
+  `sched_reserve` cost, which dominates the first ~15 minutes of a
+  fresh run.
+
+The fixes — all integrated into the library and the v14 worker:
+
+### 1. Rebuild `dump_hiddens_worker` with a higher `n_batch`
+
+`vendor/dump-hiddens/dump_hiddens_worker.cpp` now sets:
+
+```cpp
+cparams.n_seq_max = 8;     // batched decoding up to width 8 (§8)
+cparams.n_batch   = 8192;  // 8 seqs × 1024 tokens (or 4 × 2048)
+cparams.n_ubatch  = 2048;  // micro-batch (memory bound)
+```
+
+This lets `dump_hiddens_many` run width-8 batches even when each
+prompt pads to 1024 tokens. Larger values (we tried 16384) page-thrash
+through unified memory on a 124 GB GB10 with a 215 GB GGUF mmap'd.
+
+### 2. Length-bucket padding in the worker
+
+The worker (`repro/scripts/iq4_tracegen/v14_batched_worker.py`) pads
+each prompt up to the next multiple of `--length-bucket` (default
+**128**) before placing it in a per-length bucket. This keeps the
+unique-shape count small (`max_seq_len / length_bucket = 16` shapes
+at the default config) while bounding pad waste to ~13% on real
+prod-length prompts. Coarser buckets (256, 512) saw 28-55% pad waste;
+finer ones (64) blew through the unified-memory budget with 32+
+shapes × 1.6 GB compute buffer.
+
+The effective batch width per shape is
+`min(batch_width, max_batch_tokens // seq_len)`, computed by
+`TraceGenerator.plan_prewarm_shapes(...)`.
+
+### 3. Pre-warm every shape at startup
+
+`TraceGenerator.prewarm_shapes(...)` fires one dummy batch at each
+`(seq_len, n_seqs)` shape before real work begins. This causes the C
+worker to allocate and cache its sched_reserve graph and compute
+buffer for every shape it will ever see, eliminating the ramp-up tax.
+
+```python
+shapes = TraceGenerator.plan_prewarm_shapes(
+    length_bucket=128, max_seq_len=2048,
+    batch_width=8, max_batch_tokens=8192,
+)
+gen.prewarm_shapes(shapes=shapes, pad_token_id=200004)
+```
+
+Prewarm on a fresh GB10 takes ~3-4 minutes once, vs ~15 minutes of
+sub-throughput on every restart without it.
+
+### 4. Pre-filter completed work cheaply
+
+The worker hashes `input_ids` and skips any prompt whose hash is
+already in the cluster_union pickle — at ~0.65 ms per skip this lets
+a worker iterate through millions of source rows looking for genuinely
+new work, even when 99% of the corpus shard has already been traced.
+
+### Production rate on real prompts
+
+With the four fixes above, the v14 worker on a single GB10 sustains
+**30-36 traces/min** on real `prompts_tulu3` data (mean ≈ 700 tokens,
+range 64-2048). The bottleneck is now per-batch CUDA decode time
+(~14-21 seconds for an 8-seq × 1024-token batch with MoE experts on
+CPU); GPU util is pinned at 90-95% during decode windows. Getting
+appreciably past this on the same hardware would require either:
+
+1. Recompiling with `n_seq_max ≥ 16` (untested — sched_reserve cost
+   grows quadratically with seq_max).
+2. Smaller / different quant where experts fit on GPU.
+3. Multi-host parallelism (already in use — 4× Spark cluster).
+
+### Launching
+
+```bash
+SHARD=V14_S4_BATCHED \
+SAMPLE_TARGET=200000 \
+POOL_DIR=$HOME/iq4_tracegen_v14_pool \
+WORKER_BIN=$HOME/dflash-llama-c15v2/build/llama.cpp-dflash/build/bin/llama-dump-hiddens-worker \
+bash repro/scripts/iq4_tracegen/launch_v14_batched.sh
+```
+
+All paths are env-var-configurable; the script defaults to the spark-4
+production layout. Output writes to `$POOL_DIR/traces/hs_<row>.safetensors`,
+with each new content-hash appended atomically to
+`$POOL_DIR/traces/new_hashes_batched.pkl`.

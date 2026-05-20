@@ -295,7 +295,9 @@ int main(int argc, char ** argv) {
     }
 
     auto cparams = common_context_params_to_llama(params);
-    cparams.n_seq_max = 8;  // enable batched decoding up to width 8
+    cparams.n_seq_max = 8;     // enable batched decoding up to width 8
+    cparams.n_batch   = 8192;  // batched decode token cap (8 seqs x 1024 tok)
+    cparams.n_ubatch  = 2048;  // micro-batch (keeps memory bounded)
     llama_context * ctx = llama_init_from_model(model, cparams);
     if (!ctx) {
         fprintf(stderr, "failed to init ctx\n");
