@@ -1,0 +1,68 @@
+Task t_c7e0c028: T53: FAST AL of fresh spark-3 step500 checkpoint on MiniMax/buun path
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_c7e0c028
+  max-retries: 2 (default)
+  created:   2026-05-29 01:31 by user
+  started:   2026-05-29 01:45
+  completed: 2026-05-29 02:09
+  parents:   t_368912e2, t_e39debf2
+  children:  t_50ef4f0e, t_60aae868
+
+Body:
+# T53: FAST AL for fresh spark-3 step500 checkpoint after T50 frees spark-2
+
+## Why
+T49 verified a fresh spark-3 checkpoint at global_step=500. T48 measured the older step4000 adapter at `OUR_ADAPTER_AL=1.334`; T50 is currently using spark-2 for v15-deep AL. Queue this behind T50 so spark-2 is never double-booked, then measure the fresh step500 checkpoint on the same MiniMax/buun path.
+
+## Parent / contention
+Parent: T50. Do not start until T50 is done/blocked and spark-2 is free. One actor on spark-2. No training.
+
+## Host scope
+spark-2 ONLY for conversion/inference after T50 releases it. Read checkpoint from spark-3 READ-ONLY only if needed; do not disturb the active spark-3 trainer. No Kasa. No spark-4.
+
+## Starting checkpoint from T49
+`/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/step_00000500`
+Verified: model.safetensors/config/trainer_state present; draft_vocab_size=32768; MiniMax target vocab=200064; layers `[2,16,30,45,59]`; hidden=3072; block_size=8; setup loaded d2t/t2d mappings from `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/`.
+
+## Steps (fast <45 min)
+1. Preflight spark-2: no train.py, no llama-server/bench using GPU, free memory; if busy, block with evidence.
+2. Reuse the successful T48 MiniMax conversion/runtime path, but use the step_00000500 checkpoint. Do not mutate source checkpoint; work under `/home/dnola/v18_fix/t53/`.
+3. Before launch, record mapping/scatter sanity: d2t unique count, output.weight nonzero row count, tokenizer_pre minimax-m2, hidden compatibility 5×3072.
+4. Run 3 short GSM8K-style prompts at max_out=512, temp=0/top-k=1, draft_max=9 (T43 plateau choice). Record raw measured runtime accept_length only; no multiplier.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T53_STEP500_MINIMAX_AL.md` and comment:
+- `STEP500_AL=<mean>` if measured; compare to T48 step4000 AL=1.334 and campaign target AL>=3.
+- `CONVERTER_BLOCKED` or `RUNTIME_BLOCKED` with exact file/function/log if blocked.
+- If mapping sanity looks bad, include exact numbers and point to T52/T51.
+
+## Hard rules
+Fast proof only. No training. No spark-4. No invalid target/draft pair. No claiming AL>=3 without measured runtime AL.
+
+Latest summary:
+Measured fresh spark-3 step500 checkpoint on spark-2 MiniMax/buun path: STEP500_AL=1.651 over 3x512 at draft_max=9. Report written to /home/dnola/v18_fix/T53_STEP500_MINIMAX_AL.md; result improves over T48 step4000 AL=1.334 but remains below AL>=3, with bad mapping sanity (d2t unique 20681, output non-floor rows 20681).
+
+Comments (1):
+  [2026-05-29 02:09] atlasdflash4: T53 result: `STEP500_AL=1.651` mean raw measured runtime accept_length over 3x512 at draft_max=9 on spark-2.
+
+Comparison: T48 step4000 AL=1.334, so step500 is +0.317; campaign target AL>=3 not met (gap 1.349). T50 v15 was 1.644, so this is essentially tied with v15.
+
+Mapping sanity is bad/suspicious and points to T51/T52: v17 `d2t.npy` shape=(32768,), min=9, max=167284, unique=20681; `t2d_true=32768`; rebaked full-vocab `output.weight` has only 20681 non-floor rows. tokenizer_pre verified `minimax-m2`; hidden compatibility verified 5x3072=15360.
+
+Report: `/home/dnola/v18_fix/T53_STEP500_MINIMAX_AL.md`
+Artifacts: `/home/dnola/v18_fix/t53/step500_minimax_buun_rebaked.gguf`, `/home/dnola/v18_fix/t53/al_runs_draftmax9.jsonl`, `/home/dnola/v18_fix/t53/prepped_minimax_rebaked_v17d2t/prep_summary.json`.
+
+Events (8):
+  [2026-05-29 01:31] created {'assignee': 'atlasdflash4', 'status': 'todo', 'parents': ['t_368912e2', 't_e39debf2'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 01:44] promoted
+  [2026-05-29 01:45] [run 549] claimed {'lock': 'macmini.local:16977', 'expires': 1780045215, 'run_id': 549}
+  [2026-05-29 01:45] [run 549] spawned {'pid': 46519}
+  [2026-05-29 01:46] [run 549] heartbeat {'note': 'spark-2 preflight passed (no GPU contenders); source checkpoint missing locally on spark-2 but verified read-only on spark-3, preparing copy into /home/dnola/v18_fix/t53.'}
+  [2026-05-29 01:55] [run 549] heartbeat {'note': 'conversion complete and metadata verified; llama-server loading MiniMax target + step500 draft on spark-2 port 18087 for 3x512 AL measurement.'}
+  [2026-05-29 02:09] commented {'author': 'atlasdflash4', 'len': 807}
+  [2026-05-29 02:09] [run 549] completed {'result_len': 0, 'summary': 'Measured fresh spark-3 step500 checkpoint on spark-2 MiniMax/buun path: STEP500_AL=1.651 over 3x512 at draft_max=9. Report written to /home/dnola/v18_fix/T53_STEP500_MINIMAX_AL.md; result improves over T48 step4000 AL=1.334 but remains below AL>=3, with bad mapping sanity (d2t unique 20681, output non-floor rows 20681).'}
+
+Runs (1):
+  #549 completed    @atlasdflash4  1462s  2026-05-29 01:45
+        → Measured fresh spark-3 step500 checkpoint on spark-2 MiniMax/buun path: STEP500_AL=1.651 over 3x512 at draft_max=9. Report written to /home/dnola/v18_fix/T53_ST

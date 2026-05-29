@@ -1,0 +1,70 @@
+Task t_4beca304: T81: FAST spark-1 MiniMax AL operating-point rescue probe
+  status:    done
+  assignee:  atlas6dflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_4beca304
+  max-retries: 2 (default)
+  created:   2026-05-29 07:24 by user
+  started:   2026-05-29 07:24
+  completed: 2026-05-29 08:08
+  children:  t_d8791b68
+
+Body:
+# T81: FAST spark-1 MiniMax AL operating-point rescue probe (<1h)
+
+## Mission
+Use spark-1 for a fast inference-only attempt to find a reproducible MiniMax operating point that pushes the current-best adapter over measured AL>=3, or falsifies another cheap hypothesis. Do not duplicate T13 cycles 1-16. This is a same-day signal task, not a long benchmark.
+
+## Context
+Known recovered harness facts:
+- z-lab/Qwen on buun at published op-point is healthy: AL=5.849.
+- Our MiniMax current best is near but below target: T72 dmax15 3-prompt mean 2.921564; T74 step550 dmax13 mean 2.485110; T76 step600 dmax15 mean 2.820702.
+- T13 already ruled out raw/chat prompt mismatch for MiniMax, EOS/short-stop, longer context, verifier nondeterminism, and high dmax15/17 on old low-AL path.
+
+## Host scope
+spark-1 ONLY. Inference/eval only. Do not touch spark-2/spark-3/spark-work/spark-4. No Kasa. No training. One actor per host: block SPARK1_BUSY if a live task/llama/vLLM/GPU process owns the host.
+
+## Fast probe menu — pick ONE high-signal option that is not already covered by T13 cycles 1-16
+Preferred option: rerun the T72 near-goal current-best GGUF at draft_max=15 and 17 on a 5-prompt MiniMax-native subset chosen to match the strongest T72 prompt family; if mean >=3, immediately repeat same setting on 3 fresh prompts for reproducibility.
+Alternate if T72 artifacts are not on spark-1: run a 2x2 probe on the best available local MiniMax adapter GGUF varying (draft_max 15 vs 17) x (top_k=1 vs greedy/default exact known T72 args), 2 prompts each, max_tokens<=512.
+If neither artifact/path is available in <10min, block with exact missing paths and proposed next file-copy task.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T81_SPARK1_MINIMAX_OP_POINT_PROBE.md` and comment: tested GGUF, exact runner args, per-prompt ALs, mean AL, whether any setting reproducibly reaches >=3.0. Raw measured AL only; no multiplier/extrapolation.
+
+## Hard rules
+FAST <=1h, inference only, spark-1 only, no source edits, no spark-4.
+
+Latest summary:
+Completed T81 on spark-1: preferred T72/T66 current-best draft GGUF was absent locally, so the alternate 2x2 probe used local `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf`. draft_max=17 reached and reproduced AL>=3 on the MiniMax-native prompt slice: initial 2-prompt mean raw AL=3.388706 and 3-fresh-prompt repeat mean raw AL=3.367865.
+
+Comments (1):
+  [2026-05-29 08:08] atlas6dflash2: T81 report written to `/home/dnola/v18_fix/T81_SPARK1_MINIMAX_OP_POINT_PROBE.md`.
+
+Preferred T72/T66 current-best GGUF was missing on spark-1 (`/home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf`), so I used the alternate 2x2 probe on the best available local MiniMax draft GGUF: `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf` against target `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`.
+
+Runner args shape: `/home/dnola/buun-llama-cpp/build/bin/llama-speculative-simple -m <target> -md <draft> --spec-type dflash --draft-max {15|17} --draft-min 0 --draft-p-min 0 -p <prompt> -n 512 -ngl 99 -ngld 99 -ot exps=CPU -devd CUDA0 -c 4096 -cd 4096 -b 2048 --temp 0.0 --top-k {1|0} -s 1234`.
+
+Initial 2x2 raw measured AL (`n_predict/(n_drafted/draft_max)`):
+
+| setting | n | mean raw AL | per-prompt ALs | >=3? |
+|---|---:|---:|---|---|
+| dmax15_topk1 | 2 | 2.944955 | [3.425144, 2.464766] | no |
+| dmax15_topk0 | 2 | 2.944955 | [3.425144, 2.464766] | no |
+| dmax17_topk1 | 2 | 3.388706 | [3.984011, 2.793402] | yes |
+| dmax17_topk0 | 2 | 3.388706 | [3.984011, 2.793402] | yes |
+
+Required fresh-prompt repeat for `dmax17_topk1`: mean raw AL=3.367865 over 3 prompts; per-prompt ALs [3.738105, 3.240803, 3.124686]. Raw logs/data: `/home/dnola/v18_fix/t81_minimax_op_probe/`. Post-run spark-1 compute check showed no residual llama/vLLM/python/train/dflash GPU processes.
+
+Events (8):
+  [2026-05-29 07:24] created {'assignee': 'atlas6dflash2', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 07:24] [run 598] claimed {'lock': 'macmini.local:97595', 'expires': 1780065581, 'run_id': 598}
+  [2026-05-29 07:24] [run 598] spawned {'pid': 29918}
+  [2026-05-29 07:27] [run 598] heartbeat {'note': 'spark-1 preflight clean; T72/T66 current-best artifacts are absent locally, so running alternate 2x2 probe on best available local MiniMax draft GGUF (/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf) with draft_max 15/17 and top_k 1/0.'}
+  [2026-05-29 07:42] [run 598] claim_extended {'reason': 'pid_alive', 'worker_pid': 29918, 'claim_lock': 'macmini.local:97595', 'claim_expires_was': 1780065739, 'claim_expires_now': 1780066643, 'last_heartbeat_at': 1780064839}
+  [2026-05-29 07:56] [run 598] heartbeat {'note': '2x2 alternate completed on spark-1: dmax17 settings mean raw AL=3.3887 on 2 prompts; running required 3 fresh prompt reproducibility repeat for dmax17/top_k=1.'}
+  [2026-05-29 08:08] commented {'author': 'atlas6dflash2', 'len': 1450}
+  [2026-05-29 08:08] [run 598] completed {'result_len': 0, 'summary': 'Completed T81 on spark-1: preferred T72/T66 current-best draft GGUF was absent locally, so the alternate 2x2 probe used local `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf`. draft_max=17 reached and reproduced AL>=3 on the MiniMax-native prompt slice: initial 2-prompt mean raw AL=3.388706 and 3-fresh-prompt repeat mean raw AL=3.367865.'}
+
+Runs (1):
+  #598 completed    @atlas6dflash2  2621s  2026-05-29 07:24
+        → Completed T81 on spark-1: preferred T72/T66 current-best draft GGUF was absent locally, so the alternate 2x2 probe used local `/home/dnola/exports/c15_iq4v18_st

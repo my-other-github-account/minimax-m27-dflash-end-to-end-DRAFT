@@ -1,0 +1,72 @@
+Task t_98118712: T69: FAST training-side vs runtime gap audit for T66 checkpoint
+  status:    done
+  assignee:  atlas6dflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_98118712
+  max-retries: 2 (default)
+  created:   2026-05-29 04:27 by user
+  started:   2026-05-29 04:27
+  completed: 2026-05-29 04:43
+
+Body:
+# T69: FAST training-side vs runtime gap audit for T66 checkpoint
+
+## Why
+T66 runtime baseline AL=1.623 and chat AL=1.846. Need to classify whether the checkpoint itself predicts low AL under teacher-forced training metrics, or whether runtime is underperforming relative to training-side per-position accuracies. This decides train-more/recipe vs inference mismatch.
+
+## Host scope
+spark-3 ONLY. Read-only checkpoint/offline eval; no training launch.
+
+## Inputs
+Source checkpoint: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500`. Use the exact training repo/env for offline eval. If T60/T53 eval scripts exist, reuse them.
+
+## Fast experiment
+Run the smallest offline teacher-forced val slice that reports per-position marginal accuracies (e.g. 5-20 batches, not full val). Compute and label both bounds: AL_LO = 1 + sum cumulative products; AL_HI = 1 + sum marginals. Also record loss_0/first-batch loss if available and current step loss.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T69_T66_TRAINING_SIDE_RUNTIME_GAP.md` and comment:
+- per-position marginal acc vector, AL_LO, AL_HI, slice size, loss values.
+- Compare to T66 raw runtime AL=1.623 baseline / 1.846 chat.
+- Verdict: MODEL_LOW if AL_HI<3 or AL_LO near runtime; RUNTIME_GAP if training-side predicts >=3 but runtime stays <2; DATA_PROMPT_GAP if training-distribution metrics high but T67 low/high pattern indicates domain.
+
+## Global hard rules
+- FAST-ITERATION: produce a numeric/decision artifact within <=1 hour; prefer <=15 min. If staging will exceed 10 min, shrink scope and still produce a result.
+- Campaign goal is measured runtime AL >= 3.0 on OUR MiniMax target in actual practice. Report raw measured accept_length only; no multiplier/extrapolation.
+- Host scope is the named host ONLY. Do not touch spark-4. Do not Kasa-cycle. Do not launch training unless this body explicitly says training.
+- One actor per host: preflight for train.py/tmux/llama-server/GPU compute apps; if the host is occupied by another dflash-al3 task, block with exact evidence instead of contending.
+- Use corrected MiniMax/buun path: target MiniMax-M2.7 GGUF, draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59], corrected d2t-OFFSET rule target_ids = arange(len(d2t)) + d2t.
+- Preserve user-locked knobs: no max_anchors/block_size/hidden/intermediate/layers/seq_len/FSDP/multihost changes.
+
+
+
+Latest summary:
+Produced `/home/dnola/v18_fix/T69_T66_TRAINING_SIDE_RUNTIME_GAP.md` on spark-3. Exact offline eval was attempted but blocked by missing NAS hidden-state symlink targets, so the FAST numeric artifact uses the source checkpoint run’s last-20 training-side metrics: AL_LO=1.383157, AL_HI=2.133800, verdict MODEL_LOW vs T66 runtime AL 1.623/1.846.
+
+Comments (1):
+  [2026-05-29 04:42] atlas6dflash3: T69 handoff:
+
+Artifact written: `/home/dnola/v18_fix/T69_T66_TRAINING_SIDE_RUNTIME_GAP.md`
+
+Result source: attempted exact read-only 5-batch offline eval on spark-3 with `/home/dnola/venvs/te/bin/python` and `/home/dnola/speculators-c15-api`; eval could not complete because `iq4_v17_consolidated/hidden_states_nas` symlinks point at missing `/home/dnola/nas_traces/by_hash/...` targets, yielding empty batches / `No valid anchors were selected`. Eval log: `/home/dnola/v18_fix/T69_fast_eval.log`.
+
+FAST numeric fallback used the same checkpoint run training log, last 20 logged batches before step_00000500 (global_step 481..500):
+- marginals positions 1..7: `[0.306000, 0.213850, 0.156100, 0.130150, 0.117450, 0.108600, 0.101650]`
+- slice size: 20 logged training batches
+- first parsed loss_0: 9.750 at step 21
+- current step loss: 5.219 at step 500
+- last-20 mean loss: 5.115750
+- AL_LO: 1.383157
+- AL_HI: 2.133800
+- T66 runtime compare: baseline AL=1.623, chat AL=1.846
+- verdict: MODEL_LOW (AL_HI < 3; AL_LO near/below runtime)
+
+Events (6):
+  [2026-05-29 04:27] created {'assignee': 'atlas6dflash3', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 04:27] [run 575] claimed {'lock': 'macmini.local:16952', 'expires': 1780054975, 'run_id': 575}
+  [2026-05-29 04:27] [run 575] spawned {'pid': 86322}
+  [2026-05-29 04:42] [run 575] claim_extended {'reason': 'pid_alive', 'worker_pid': 86322, 'claim_lock': 'macmini.local:16952', 'claim_expires_was': 1780054975, 'claim_expires_now': 1780055878, 'last_heartbeat_at': None}
+  [2026-05-29 04:42] commented {'author': 'atlas6dflash3', 'len': 1033}
+  [2026-05-29 04:43] [run 575] completed {'result_len': 0, 'summary': 'Produced `/home/dnola/v18_fix/T69_T66_TRAINING_SIDE_RUNTIME_GAP.md` on spark-3. Exact offline eval was attempted but blocked by missing NAS hidden-state symlink targets, so the FAST numeric artifact uses the source checkpoint run’s last-20 training-side metrics: AL_LO=1.383157, AL_HI=2.133800, verdict MODEL_LOW vs T66 runtime AL 1.623/1.846.'}
+
+Runs (1):
+  #575 completed    @atlas6dflash3  914s  2026-05-29 04:27
+        → Produced `/home/dnola/v18_fix/T69_T66_TRAINING_SIDE_RUNTIME_GAP.md` on spark-3. Exact offline eval was attempted but blocked by missing NAS hidden-state symlink

@@ -1,0 +1,38 @@
+Task t_275bee94: T89: FAST AL_true of T86 step800 checkpoint after denominator audit
+  status:    todo
+  assignee:  atlaspatch5
+  workspace: scratch
+  max-retries: 2 (default)
+  created:   2026-05-29 08:52 by user
+  parents:   t_8d75abd4
+
+Body:
+# T89: FAST AL_true of T86 step800 checkpoint after denominator audit
+
+## Mission
+T86 produced a fresh step800 checkpoint with improved train-side metrics (AL_LO=1.4869, AL_HI=2.3153). Measure it on MiniMax/buun, but only using the denominator discipline from parent T88. If T88 says the old AL formula is fake/inconclusive, report AL_true/counters only and do NOT use `n_predict/(n_drafted/draft_max)` as the headline.
+
+## Parent gate
+Read T88 first. If T88 verdict is FAKE_DENOMINATOR or INCONCLUSIVE_COUNTER_MISSING, run only a tiny counter-valid measurement and label old AL values untrusted. If T88 verifies the denominator, proceed with normal fast AL smoke.
+
+## Host scope
+spark-3 ONLY. Conversion/inference only. Do not touch spark-1/spark-2/spark-work/spark-4. No Kasa. No training. One actor per host.
+
+## Inputs
+Checkpoint: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/step_00000800`.
+T86 train-side val: loss_epoch=5.03125, full_acc_epoch=0.188035661, AL_LO=1.486921, AL_HI=2.315252.
+
+## Steps
+1. Convert/rebake T86 step800 via validated corrected MiniMax path: draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59], corrected d2t-OFFSET mapping `target_id = arange(len(d2t)) + d2t`.
+2. Run fast MiniMax native-chat smoke with denominator-safe counters: draft_max=7 and 13 first, 3 prompts <=512 output, temp=0/top_k=1. Only test 15/17 if T88 verified that >7 is semantically valid.
+3. Report raw per-prompt AL_true if available, and old AL_reported separately only for comparison.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T89_T86_STEP800_MINIMAX_ALTRUE.md` and comment ckpt path, GGUF path, draft_max, per-prompt counters, AL_true vs AL_reported, verdict GOAL_REPRODUCED_TRUE / NEAR_MISS / FORMULA_FAKE_NO_GOAL.
+
+## Hard rules
+FAST <=1h. spark-3 only. Raw measured/counter-backed AL only. No multipliers. No spark-4.
+
+
+Events (1):
+  [2026-05-29 08:52] created {'assignee': 'atlaspatch5', 'status': 'todo', 'parents': ['t_8d75abd4'], 'tenant': None, 'branch_name': None, 'skills': None}

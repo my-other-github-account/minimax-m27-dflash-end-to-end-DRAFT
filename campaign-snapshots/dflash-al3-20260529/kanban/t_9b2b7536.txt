@@ -1,0 +1,76 @@
+Task t_9b2b7536: T52: FAST mapping/scatter audit of T48 low-AL rebake
+  status:    blocked
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_9b2b7536
+  max-retries: 2 (default)
+  created:   2026-05-29 01:31 by user
+  started:   2026-05-29 01:31
+
+Body:
+# T52: FAST mapping/scatter audit of T48 low-AL rebake (no GPU, no spark-2 contention)
+
+## Why
+T48 produced the first valid OUR MiniMax runtime AL but it was low: `OUR_ADAPTER_AL=1.334`. T51 found a concrete audit target before recipe tweaking: the T48 rebake/scatter path has `d2t unique=20681` (not 32768), `t2d` is a bool mask, and only 56.05% of generated content tokens are covered by unique d2t. We need to know whether the low AL is a conversion/mapping artifact or the drafter itself.
+
+## Host scope
+Prefer macmini local workspace + spark-work READ-ONLY only. Do NOT touch spark-2 while T50 is running. Do NOT touch spark-3 trainer. Do NOT touch spark-4. No training, no inference, no Kasa, no source/model mutation.
+
+## Inputs to use first
+- T48 task/log/report: `/home/dnola/v18_fix/T48_MINIMAX_RECONVERT_AL.md` if already copied in local task logs/workspaces; otherwise read the T48 kanban log and T51 local copy.
+- T51 report local copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_c6d4b9e4/T51_LOW_AL_CAUSE_ISOLATION.md`
+- T48 workspace/log under `~/.hermes/kanban/boards/dflash-al3/{workspaces,logs}/t_fab7e72b*`
+- Mapping facts from T49/T51 comments if remote artifacts are unavailable without touching spark-2.
+
+## Questions to answer with checks, not guesses
+1. What exactly are `d2t` and `t2d` in the v17/v18 prompt dataset: is `d2t` a 32768-length map, a unique-token list with duplicates, or a mask-derived list? Is `t2d` bool mask vs integer inverse map intentional?
+2. In T48's scatter-to-full-vocab lm_head, did duplicate/missing d2t entries cause rows to be unfilled/zero/incorrect? Quantify: unique count, duplicate count, zero-row count, norm histogram summary, and whether generated-token IDs fall outside nonzero lm_head rows.
+3. Does buun/minimax conversion expect reduced-vocab rows + mapping metadata, or a fully-scattered 200064-row lm_head? Cite exact converter/runtime file/function/log evidence from available sources.
+4. Verdict: `CONVERSION_ARTIFACT_LIKELY`, `CONVERSION_ARTIFACT_UNLIKELY`, or `REMOTE_ARTIFACTS_NEEDED` with the exact missing files.
+
+## Deliverable (<30 min)
+Write `T52_MAPPING_SCATTER_AUDIT.md` in your workspace and comment a concise verdict with numbers. If remote files on spark-2 are needed, do NOT contend with T50; block `WAITING_FOR_T50_SPARK2_IDLE` and list exact files to inspect next.
+
+## Hard rules
+Facts only; no unverified probably. No training/inference. No spark-2 while T50 is running. No mutation outside workspace. Keep it under 30 min.
+
+Latest summary:
+WAITING_FOR_T50_SPARK2_IDLE: report written; duplicate-raw-d2t scatter artifact looks unlikely, but exact T48 lm_head row norms and generated-token coverage require spark-2 files without contending with T50.
+
+Comments (1):
+  [2026-05-29 01:35] atlaspatch5: T52 handoff:
+{
+  "artifact": "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_9b2b7536/T52_MAPPING_SCATTER_AUDIT.md",
+  "verdict": "REMOTE_ARTIFACTS_NEEDED",
+  "sub_verdict": "CONVERSION_ARTIFACT_UNLIKELY for the specific duplicate-raw-d2t scatter-collision suspicion",
+  "key_numbers": {
+    "T48_reported_draft_vocab": 32768,
+    "T48_reported_target_vocab": 200064,
+    "T48_reported_target_ids_unique_after_arange_plus_d2t": 32768,
+    "T48_expected_floor_rows_after_full_scatter": 167296,
+    "spark_work_raw_d2t_shape": 65536,
+    "spark_work_raw_d2t_unique": 34454,
+    "spark_work_arange_plus_d2t_unique": 65536,
+    "spark_work_t2d_dtype": "bool",
+    "spark_work_t2d_sum": 65536,
+    "spark_work_t2d_matches_arange_plus_d2t": true
+  },
+  "main_finding": "d2t is a draft-index offset vector; correct target id is arange(draft_vocab)+d2t, so duplicate raw d2t offset values do not imply duplicate target-token scatter rows. t2d bool mask is intentional and matched arange+d2t on spark-work.",
+  "spark2_files_needed_after_T50_idle": [
+    "/home/dnola/v18_fix/t48/prepped_minimax_rebaked_v17d2t/model.safetensors",
+    "/home/dnola/v18_fix/t48/al_runs.jsonl",
+    "/home/dnola/models/MiniMax-M2.7-tokenizer/",
+    "/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/d2t.npy",
+    "/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/t2d.npy"
+  ]
+}
+
+Events (5):
+  [2026-05-29 01:31] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 01:31] [run 547] claimed {'lock': 'macmini.local:42629', 'expires': 1780044400, 'run_id': 547}
+  [2026-05-29 01:31] [run 547] spawned {'pid': 42631}
+  [2026-05-29 01:35] commented {'author': 'atlaspatch5', 'len': 1373}
+  [2026-05-29 01:35] [run 547] blocked {'reason': 'WAITING_FOR_T50_SPARK2_IDLE: report written; duplicate-raw-d2t scatter artifact looks unlikely, but exact T48 lm_head row norms and generated-token coverage require spark-2 files without contending with T50.'}
+
+Runs (1):
+  #547 blocked      @atlaspatch5  237s  2026-05-29 01:31
+        → WAITING_FOR_T50_SPARK2_IDLE: report written; duplicate-raw-d2t scatter artifact looks unlikely, but exact T48 lm_head row norms and generated-token coverage req

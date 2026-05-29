@@ -1,0 +1,55 @@
+Task t_d8791b68: T84: FAST reproduce T81 AL>=3 MiniMax operating point
+  status:    done
+  assignee:  atlas6dflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_d8791b68
+  max-retries: 2 (default)
+  created:   2026-05-29 07:59 by user
+  started:   2026-05-29 08:08
+  completed: 2026-05-29 08:31
+  parents:   t_4beca304
+
+Body:
+# T84: FAST reproduce any T81 MiniMax AL>=3 operating point (<1h)
+
+## Mission
+Parent T81 may have found the first OUR-adapter raw runtime AL>=3 MiniMax operating point (heartbeat: draft_max=17 mean AL=3.3887 on 2 prompts, reproducibility repeat in progress). Convert that into a sustained/reproducible campaign verdict, fast.
+
+## Parent gate
+Read T81 handoff first.
+- If T81 did NOT report a setting with mean raw measured AL>=3.0, complete immediately with `NOOP_T81_NO_GOAL_HIT` and quote T81's best setting.
+- If T81 DID report AL>=3.0, reproduce the exact winning setting on spark-1 with a fresh 5-prompt MiniMax-native subset at max_tokens<=512. If the 5-prompt mean remains >=3.0, add a 3-prompt cross-check on the current-best corrected GGUF if it is already present locally; otherwise skip the copy and keep this fast.
+
+## Host scope
+spark-1 ONLY. Inference/eval only. No training. No Kasa. Do not touch spark-2/spark-3/spark-work/spark-4. One actor per host: if spark-1 is busy with a live task/llama/vLLM/GPU process, block `SPARK1_BUSY` with evidence; do not kill live owned work.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T84_T81_GOAL_REPRO.md` and comment a concise table: source GGUF, exact args, draft_max/top_k, per-prompt raw ALs, mean AL, whether the result is `GOAL_REPRODUCED` (mean>=3) or `GOAL_NOT_REPRODUCED`. Raw measured AL only; no multipliers.
+
+## Hard rules
+FAST <=1h. Use buun/MiniMax validated path. Preserve locked knobs. No spark-4. No long benchmark.
+
+Latest summary:
+Reproduced T81's spark-1 MiniMax operating point on a fresh 5-prompt native subset: dmax17/top_k1 mean raw AL=3.147852, so verdict is GOAL_REPRODUCED. Report is `/home/dnola/v18_fix/T84_T81_GOAL_REPRO.md`; current-best corrected GGUF cross-check was skipped because the expected local path is absent.
+
+Comments (1):
+  [2026-05-29 08:31] atlas6dflash2: T84 result table (spark-1 only):
+
+| source GGUF | exact args | draft_max/top_k | per-prompt raw ALs | mean raw AL | verdict |
+|---|---|---|---:|---:|---|
+| `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf` | `/home/dnola/buun-llama-cpp/build/bin/llama-speculative-simple -m <target> -md <draft> --spec-type dflash --draft-max 17 --draft-min 0 --draft-p-min 0 -p <prompt> -n 512 -ngl 99 -ngld 99 -ot exps=CPU -devd CUDA0 -c 4096 -cd 4096 -b 2048 --temp 0.0 --top-k 1 -s 1234` | 17 / 1 | [3.358106, 2.841642, 3.545142, 2.921431, 3.072939] | 3.147852 | GOAL_REPRODUCED |
+
+Report written: `/home/dnola/v18_fix/T84_T81_GOAL_REPRO.md`. Current-best corrected GGUF cross-check skipped because `/home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf` is not present locally.
+
+Events (8):
+  [2026-05-29 07:59] created {'assignee': 'atlas6dflash2', 'status': 'todo', 'parents': ['t_4beca304'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 08:08] promoted
+  [2026-05-29 08:08] [run 602] claimed {'lock': 'macmini.local:16977', 'expires': 1780068208, 'run_id': 602}
+  [2026-05-29 08:08] [run 602] spawned {'pid': 42157}
+  [2026-05-29 08:09] [run 602] heartbeat {'note': 'T81 parent reported AL>=3 at dmax17_topk1 on spark-1; spark-1 checked idle; launching fresh 5-prompt MiniMax-native reproduction on prompts 5-9 with max_tokens=512.'}
+  [2026-05-29 08:24] [run 602] claim_extended {'reason': 'pid_alive', 'worker_pid': 42157, 'claim_lock': 'macmini.local:16977', 'claim_expires_was': 1780068274, 'claim_expires_now': 1780069175, 'last_heartbeat_at': 1780067374}
+  [2026-05-29 08:31] commented {'author': 'atlas6dflash2', 'len': 801}
+  [2026-05-29 08:31] [run 602] completed {'result_len': 0, 'summary': "Reproduced T81's spark-1 MiniMax operating point on a fresh 5-prompt native subset: dmax17/top_k1 mean raw AL=3.147852, so verdict is GOAL_REPRODUCED. Report is `/home/dnola/v18_fix/T84_T81_GOAL_REPRO.md`; current-best corrected GGUF cross-check was skipped because the expected local path is absent."}
+
+Runs (1):
+  #602 completed    @atlas6dflash2  1373s  2026-05-29 08:08
+        → Reproduced T81's spark-1 MiniMax operating point on a fresh 5-prompt native subset: dmax17/top_k1 mean raw AL=3.147852, so verdict is GOAL_REPRODUCED. Report is

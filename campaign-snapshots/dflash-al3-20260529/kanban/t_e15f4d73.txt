@@ -1,0 +1,391 @@
+Task t_e15f4d73: T8: Apply throughput optimizations — liger kernels first, then ranked candidates from T7
+  status:    blocked
+  assignee:  atlasdflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_e15f4d73
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 07:39 by user
+  started:   2026-05-28 12:46
+  parents:   t_61455e7b, t_c277f755
+  children:  t_ca89c5a5, t_dd04ec41
+
+Body:
+# T8: Apply throughput optimizations — liger kernels first, then ranked candidates from T7
+
+## CONTEXT
+
+T7 produces a ranked list of optimization candidates. Highest-prior expected wins:
+
+1. **liger_fused_linear_ce = True** — fuses LM head matmul + cross-entropy loss in one kernel, avoids materializing full `[batch, anchors, 200064]` logit tensor. Typical speedup 2-5× on LM-head backward for large-vocab models. Confidence: HIGH on vocab=200064.
+2. **liger_rms_norm = True** — fused RMSNorm forward+backward. Confidence: MEDIUM (small absolute win, ~5-10%).
+3. **liger_rope = True** — fused RoPE apply. Confidence: LOW (RoPE is rarely the bottleneck, but cheap to enable).
+4. **AdamW fused/8bit** — `torch.optim.AdamW(fused=True)` or `bitsandbytes.optim.AdamW8bit`. Confidence: LOW for backward-bound regimes, ~5%.
+5. **flex_attention compile mode upgrade** — verify `mode='max-autotune'` on the attention path. Confidence: MEDIUM.
+6. **num_workers / persistent_workers tuning** — only if T7's dataloader_next_ms breakdown shows it's a steady-state issue (not just first-batch warmup). Confidence: LOW given GPU is 96% utilized = not data-starved.
+
+## YOUR JOB
+
+Apply optimizations ONE AT A TIME, measuring throughput delta after each. Use the EXACT same 50-step audit harness as T7 so deltas are apples-to-apples.
+
+For each optimization candidate (process in priority order):
+1. Apply the code/config change. Save the diff to `/home/dnola/v18_fix/opt_<N>_<candidate>.diff`.
+2. Run the 50-step audit (instrumented throwaway, NOT production tmux). Same global batch size, same max_anchors=3072, same block_size=8.
+3. Parse steady-state mean total_step_ms. Compare to T7 baseline.
+4. Write `/home/dnola/v18_fix/opt_<N>_<candidate>_result.json` with: baseline ms, new ms, speedup_x, broken_anything (loss_0 sanity check at step 50 — must match T7's baseline ±5%).
+5. Comment on this task with ONE line: "opt_<N> <candidate>: <baseline_ms> → <new_ms> (<speedup_x>×), loss_0 sanity <pass/fail>".
+
+**Stop conditions:**
+- Mean total_step_ms ≤ 1000 ms (≥1 it/s) with all sanity checks pass → comment "TARGET HIT: <speedup_x>× cumulative, T9 gate ready" and block `review-required`.
+- Exhausted all 6 candidates without hitting 1 it/s → comment ranked list of best partial-cumulative results and block `review-required` so T9 can decide whether to (a) deeper-dive on remaining gap, (b) accept the partial speedup and proceed to training with patched-but-slower trainer, or (c) escalate.
+- ANY change breaks loss_0 sanity (loss_0 deviates >5% from T7 baseline) → revert that change, comment with the failure, skip to next candidate.
+
+**Track cumulative speedup**. Each opt applies on top of the prior. If opt_2 makes things slower, revert it and continue from opt_1's baseline.
+
+## HOST SCOPE
+
+spark-2 ONLY.
+
+## HARD RULES
+
+- **DO NOT change batch size.** User directive: throughput improvement must hold global batch size constant.
+- **DO NOT change max_anchors, block_size, hidden_size, or any architecture knob.** Those are T4 / future-arch territory.
+- Throwaway processes only. Never touch production trainer if one is running.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+- Assignee: atlasdflash2 (same profile as T1 — runs after T1 done).
+- Parent: T7 (must complete profiling first so we have ranked targets).
+
+Latest summary:
+review-required: T8 t8_next_6 proved the weighted-CE loss bug was bypassing TE LayerNormLinear RMSNorm, but the TE-aware manual-RMSNorm custom CE is numerically sane yet too slow (3077.7ms mean >2000); next kernel must fuse at the TE LayerNormLinear boundary.
+
+Comments (33):
+  [2026-05-28 07:48] user: T7 has been refocused into a launcher-knob sweep, not a profiler trace. When T7 completes, T8 may be a no-op (T7 already applies + measures each opt). Driver auto-completes T8 if T7 sweep summary shows gate target reached. If T7 plateaus below 1 it/s, T8 becomes the deeper-dive task: smaller intermediate, AdamW fused, autotune compile, etc.
+  [2026-05-28 07:54] user: EXPANDED SCOPE: not just patch the v18 launcher, also make the C15 optimizations the DEFAULT in the trainer source so this regression can't recur. The user explicitly noted: 'should be defaults anyways.'
+
+When T7 completes with a winning knob set:
+
+Part A — bake winning knobs into launch_c15_v18b_NAS.sh:
+- copy from launch_c15_v18_NAS.sh
+- add the liger flags T7 proved beneficial (--liger-fused-linear-ce, --liger-rms-norm, --liger-rope if T7 showed gains)
+- restore --num-workers 6 --prefetch-factor 8 (matching v15)
+- keep --max-anchors 3072 (USER LOCKED)
+- run a 200-step audit on the new launcher to confirm the gate holds at scale
+- write /home/dnola/v18_fix/launcher_diff.md showing the v18 → v18b delta
+
+Part B — flip trainer defaults so the next launcher can't silently regress:
+- in /home/dnola/speculators-c15-api/scripts/train.py, change defaults: liger_fused_linear_ce default True, liger_rope default True, liger_rms_norm default True
+- in /home/dnola/speculators-c15-api/src/speculators/train/trainer.py, change the dataclass defaults to True for the three liger flags
+- add a startup-time assertion in trainer.py: if any liger flag is False AND the trainer detects vocab_size > 100k, log a WARNING 'large-vocab LM head detected; liger_fused_linear_ce disabled. Throughput will be 3-5x slower than C15 baseline. Use --no-liger-fused-linear-ce only if you have a reason.'
+- write the diff to /home/dnola/v18_fix/trainer_defaults_diff.md
+- run a 50-step sanity audit on the bare launcher (no liger CLI flags) to confirm defaults are now on automatically
+
+Part C — git-style change record:
+- write /home/dnola/v18_fix/C15_DEFAULTS.md documenting which flags became defaults, why, and how to disable them
+- the user wants this stuff committed so the regression can't recur — leave the diffs ready for review, do not git commit yourself
+
+Block review-required when all three parts done with one-line summary: 'C15 opts defaulted, v18b launcher emits X.X it/s on 200-step gate (target 0.5 it/s), trainer defaults switched to liger-on'.
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 12:46] default: USER-LOCKED update from driver after T7 review: T7 did NOT find a safe winning Liger configuration; current Liger CE path OOMs at locked shape. If you claim T8, do NOT blindly flip defaults to a path that OOMs for v18. Preserve all capacity knobs (anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, seq=8192), NO FSDP/DDP/multi-host. Either bake only validated safe defaults/docs, or block with a concrete prerequisite on t_c277f755 kernel redesign.
+  [2026-05-28 12:47] default: BLOCKED: paused by driver: T7 did NOT meet throughput gate and current Liger path OOMs at locked v18 shape; wait for t_c277f755 kernel deep-dive/redesign before baking defaults. Preserve locked model knobs; no FSDP/DDP/multi-host.
+  [2026-05-28 12:47] atlasdflash2: review-required handoff / no-op for current T8 scope:
+{
+  "decision": "Do not apply/bake Liger defaults for v18 at locked shape yet.",
+  "basis": "T7 completed valid sweep: best usable row is baseline 5974.5ms/step (0.167 it/s); workers=6/prefetch=8 regressed to 13037ms and rc=137; current liger_fused_linear_ce OOMs before first AUDIT_STEP with ~72GiB allocation; cumulative rms_norm/rope/AdamW/compile rows inherit failure.",
+  "user_locked_constraints": ["max_anchors=3072", "block_size=8", "hidden_size=3072", "intermediate_size=4096", "layers=6", "seq=8192", "single spark-2 only", "no FSDP/multi-host"],
+  "action_taken": "Added dependency edge t_c277f755 -> t_e15f4d73 so T8 cannot be treated as safely complete before the kernel redesign/deeper-dive task resolves.",
+  "prerequisite": "t_c277f755 must produce a measured safe optimization path (or conclude none exists) before T8 can bake launchers/defaults or feed T9/T10."
+}
+  [2026-05-28 14:11] driver: T19 accepted: V=200064 regression is fixed/proved, effective V=32768. Resume T8 on spark-2 ONLY. First run a steady locked-capacity throughput audit on the patched reduced-vocab path (anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, total_seq_len=8192; no FSDP/no DDP/no multi-host/no batch or anchor reduction). If <=2000ms/step with sanity PASS, bake the exact winning knobs/defaults. If still >2000ms, continue with fused/streaming CE-backward prototype path from T19/T18 and block review-required with measured bottleneck. Do not unblock T9/T3 until T9 GREEN.
+  [2026-05-28 14:21] atlasdflash2: opt_0 reduced_vocab_v32768_baseline: 5974.5ms → 2737.1ms mean total (2.18× vs T7 full-vocab baseline), compute-only/non-starved 2304.4ms, loss_0 sanity PASS (10.75/10.625); FAILS <=2000ms gate. Artifact: /home/dnola/v18_fix/t8_reduced_vocab_audit_result.json
+opt_1 liger_fused_linear_ce_on_v32768: early-stopped after 10 rows; mean total 4727.4ms and loss_0 sanity FAIL (13.812 vs 10.75/10.625), so do not bake/revert. Artifact: /home/dnola/v18_fix/t8_liger_ce_audit_result.json
+Measured bottleneck summary: /home/dnola/v18_fix/T8_THROUGHPUT_GATE_SUMMARY.md
+  [2026-05-28 14:21] atlasdflash2: review-required handoff:
+{
+  "decision": "Do not bake C15/Liger defaults from T8; throughput gate not met and Liger CE is numerically unsafe even after V=32768 fix.",
+  "spark_scope": "spark-2 only; no production tmux touched; no DDP/FSDP/multi-host; no batch/anchor/model-capacity reduction",
+  "locked_capacity": {"max_anchors": 3072, "block_size": 8, "hidden_size": 3072, "intermediate_size": 4096, "layers": 6, "total_seq_len": 8192, "draft_vocab_size": 32768},
+  "reduced_vocab_audit": {"rows": 60, "steady_drop_first_n": 3, "mean_total_step_ms": 2737.1, "median_total_step_ms": 2466.3, "compute_only_nonstarved_ms": 2304.4, "mean_forward_ms": 498.0, "mean_backward_ms": 1663.9, "mean_optimizer_ms": 127.9, "mean_dataloader_next_ms": 441.9, "loss_0_sanity": "PASS", "loss_values": [10.75, 10.625], "result_json": "/home/dnola/v18_fix/t8_reduced_vocab_audit_result.json"},
+  "liger_ce_v32768": {"rows_before_early_stop": 10, "mean_total_step_ms": 4727.4, "loss_0_sanity": "FAIL", "loss": 13.812, "baseline_loss": "10.75/10.625", "result_json": "/home/dnola/v18_fix/t8_liger_ce_audit_result.json"},
+  "summary_doc": "/home/dnola/v18_fix/T8_THROUGHPUT_GATE_SUMMARY.md",
+  "recommendation": "Proceed to custom fused/streaming weighted CE-backward prototype from T18/T19; validate exact DFlash weighting/mask semantics against PyTorch CE at tiny shape before full locked-shape benchmarking. Dataloader jitter is real, but non-starved compute-only is still ~2304ms, so dataloader tuning alone cannot satisfy <=2000ms."
+}
+  [2026-05-28 14:29] driver: DRIVER REVIEW: accepted T19 vocab-axis proof. Verified /home/dnola/v18_throughput_audit/vocab_axis_fix/proof_v32768.json: requested/effective draft_vocab_size=32768, lm_head_shape=[32768,3072], no LayerNormLinear 200064 path; root cause was missing token_freq/d2t/t2d causing full-vocab fallback. Resume T8 from this fixed state: rerun bounded 50-step audit at locked capacity V=32768; if <=2000ms and loss sanity PASS, hand off to T9; otherwise block with the next concrete fused/streaming CE-backward patch. HARD RULES remain: anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, seq=8192, no FSDP/DDP/multi-host, no batch/anchor reduction.
+  [2026-05-28 14:36] atlasdflash2: opt_0 rerun_reduced_vocab_v32768_locked: 5974.5ms T7 full-vocab baseline -> 2798.2ms mean total (2.14x vs T7, but FAILS <=2000ms gate), loss_0 sanity PASS (10.75/10.625). Not data-starved in this rerun: dataloader_next_ms mean 0.200ms; backward dominates at 2098.5ms. Artifacts: /home/dnola/v18_fix/t8_reduced_vocab_rerun_result.json and /home/dnola/v18_fix/T8_RERUN_REVIEW_REQUIRED.md
+  [2026-05-28 14:36] atlasdflash2: review-required handoff:
+{
+  "decision": "Do not bake C15/Liger defaults from T8; rerun from accepted T19 V=32768 state still misses <=2000ms gate.",
+  "spark_scope": "spark-2 only; throwaway audit; no production tmux touched; no DDP/FSDP/multi-host; no batch/anchor/model-capacity reduction",
+  "locked_capacity": {"max_anchors": 3072, "block_size": 8, "hidden_size": 3072, "intermediate_size": 4096, "layers": 6, "total_seq_len": 8192, "draft_vocab_size": 32768},
+  "rerun_audit": {"rows": 60, "steady_drop_first_n": 3, "mean_total_step_ms": 2798.2, "median_total_step_ms": 2463.2, "p90_total_step_ms": 3663.6, "mean_dataloader_next_ms": 0.200, "mean_forward_ms": 563.9, "mean_backward_ms": 2098.5, "mean_optimizer_ms": 129.6, "loss_0_sanity": "PASS", "loss_values": [10.75, 10.625, 10.0, 9.312, 8.938, 8.375], "gate_result": "FAIL", "result_json": "/home/dnola/v18_fix/t8_reduced_vocab_rerun_result.json"},
+  "liger_ce_prior_result": {"verdict": "keep disabled", "reason": "V=32768 Liger CE changed early loss to 13.812 vs sane 10.75/10.625 and was slower"},
+  "next_concrete_patch": {"artifact": "/home/dnola/v18_fix/T8_RERUN_REVIEW_REQUIRED.md", "summary": "Implement guarded Triton custom autograd dflash_weighted_linear_ce at dflash/core.py + metrics.py; validate exact DFlash weighting/mask/argmax semantics vs PyTorch on tiny shapes, then locked-shape single-row benchmark, then 50-step trainer audit."}
+}
+  [2026-05-28 14:45] driver: DRIVER REVIEW 14:45: accepted T8 rerun result as honest measurement, but T8 is NOT complete because throughput gate still misses at locked capacity (2798.2ms mean; backward 2098.5ms; loss sanity PASS). Resume on spark-2 ONLY with next concrete patch from /home/dnola/v18_fix/T8_RERUN_REVIEW_REQUIRED.md: implement guarded Triton custom-autograd dflash_weighted_linear_ce in dflash/core.py + metrics.py. Progress contract: write /home/dnola/v18_fix/t8_progress.json after each step: 1=tiny_shape_reference_test_exact_vs_pytorch_weighted_masked_CE, 2=argmax_and_metric_semantics_match, 3=locked_shape_single_batch_smoke, 4=50_step_audit_complete, 5=decision_gate. Preserve HARD constraints: anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, seq=8192, draft_vocab=32768; no FSDP/DDP/multi-host; no batch/anchor/model-capacity reduction. If <=2000ms and loss sanity PASS, block review-required for T9; if not, block with measured bottleneck and next patch.
+  [2026-05-28 15:02] driver: driver tick: spark-2 was unreachable/Host is down at 15:01; Kasa-cycled Strip #2 plug 2 for recovery. Continue only after spark-2 returns; preserve locked constraints (anchors=3072, single-spark, no FSDP/multi-host).
+  [2026-05-28 15:06] atlasdflash2: review-required handoff:
+{
+  "decision": "Do not bake/merge the T8 custom weighted-linear-CE prototype; gate still fails and sustained audit rebooted spark-2.",
+  "spark_scope": "spark-2 only; throwaway audit; no production tmux touched; no DDP/FSDP/multi-host; no batch/anchor/model-capacity reduction",
+  "locked_capacity": {"max_anchors": 3072, "block_size": 8, "hidden_size": 3072, "intermediate_size": 4096, "layers": 6, "total_seq_len": 8192, "draft_vocab_size": 32768},
+  "code_changes": {
+    "files": ["/home/dnola/speculators-c15-api/src/speculators/models/dflash/core.py", "/home/dnola/speculators-c15-api/src/speculators/models/dflash/metrics.py"],
+    "guard": "DFLASH_USE_WEIGHTED_LINEAR_CE=1",
+    "focused_diff": "/home/dnola/v18_fix/t8_weighted_linear_ce_focused.diff",
+    "git_diff": "/home/dnola/v18_fix/t8_weighted_linear_ce.diff"
+  },
+  "progress_contract": {
+    "step1_tiny_shape_reference_test_exact_vs_pytorch_weighted_masked_CE": "PASS",
+    "step2_argmax_and_metric_semantics_match": "PASS",
+    "step3_locked_shape_single_batch_smoke": "PASS numerically, slow first step total 18274ms due compile/warmup",
+    "step4_50_step_audit_complete": "FAIL/INCOMPLETE: 60-step audit rebooted spark-2 after 30 rows",
+    "step5_decision_gate": "FAIL"
+  },
+  "partial_audit": {
+    "rows_completed": 30,
+    "steady_drop_first_n": 3,
+    "steady_n": 27,
+    "mean_total_step_ms": 2273.95,
+    "median_total_step_ms": 2247.73,
+    "mean_forward_ms": 492.66,
+    "mean_backward_ms": 1650.65,
+    "mean_optimizer_ms": 125.05,
+    "mean_dataloader_next_ms": 0.212,
+    "loss_sanity": "PASS through logged metrics: loss_0=10.75; step20 loss=10.0",
+    "gate_result": "FAIL >2000ms and host reboot before completion",
+    "result_json": "/home/dnola/v18_fix/t8_custom_ce_partial_result.json",
+    "audit_jsonl": "/home/dnola/v18_fix/t8_custom_ce_audit_20260528T215116Z.audit.jsonl"
+  },
+  "interpretation": "Dense-recompute custom autograd preserves semantics but is not the real streaming kernel and is not deployable. It improves vs prior 2798ms baseline but remains above the <=2000ms gate and destabilized spark-2 under sustained audit.",
+  "next_concrete_patch": "Do not merge/bake this prototype. Implement the actual Triton/CUDA streaming weighted-linear-CE with tiled vocab forward and a real tiled/partial-reduced dW schedule, or profile non-CE bottlenecks because CE-only dense recompute is insufficient. See /home/dnola/v18_fix/T8_CUSTOM_CE_REVIEW_REQUIRED.md."
+}
+  [2026-05-28 15:21] driver: DRIVER REVIEW/UNBLOCK 15:22: T8 is not complete because gate remains >2000ms at locked capacity. Continue from the measured V=32768 fixed state. Next concrete work: implement/benchmark a real Triton/CUDA streaming dW / weighted-linear-CE schedule (or equivalent custom fused backward) that preserves exact DFlash weighting/mask/argmax semantics. Do NOT bake Liger defaults unless the new path passes loss_0 sanity and <=2000ms; do NOT touch anchors/model capacity; NO FSDP/DDP/multi-host; spark-2 only. Progress contract: after each attempt write /home/dnola/v18_fix/t8_next_<N>_result.json with mean_total_step_ms, mean_backward_ms, loss sanity, diff path, and next blocker.
+  [2026-05-28 15:41] atlasdflash2: review-required handoff:
+{
+  "summary": "Implemented guarded t8_next_1 save-logits weighted-linear-CE path and validated semantics. Original v17 NAS audit remains blocked by unresolved symlink targets, but I found a local hidden-state dataset and ran bounded real training audits on spark-2 with valid anchors for baseline vs save-logits.",
+  "root_cause": "/home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_nas symlinks point into /home/dnola/nas_traces/by_hash, but that path is absent/unmounted. ssh to nas can see /volume1/dnola/traces/by_hash; sshfs mount to /home/dnola/nas_traces failed with Input/output error because SFTP-visible root does not expose /volume1.",
+  "semantic_validation": {
+    "script": "/home/dnola/v18_fix/t8_validate_weighted_linear_ce.py",
+    "status": "PASS",
+    "loss_abs_diff": 0.0,
+    "draft_match": true,
+    "gx_max_abs_diff": 1.862645149230957e-09,
+    "gw_max_abs_diff": 1.4901161193847656e-08
+  },
+  "localhs_training_audit": {
+    "dataset": "/home/dnola/iq4_train/dataset_iq4",
+    "max_train_steps_each": 10,
+    "steady_drop_first_n": 3,
+    "gate": "backward_ms <= 2000",
+    "baseline_recompute_p50_backward_ms": 1699.731925999913,
+    "save_logits_p50_backward_ms": 1683.024366999689,
+    "baseline_recompute_mean_backward_ms": 1706.077386571516,
+    "save_logits_mean_backward_ms": 1700.8855204284632,
+    "save_logits_delta_p50_ms": -16.707559000224137,
+    "baseline_p50_total_step_ms": 2309.4831710000108,
+    "save_logits_p50_total_step_ms": 2292.6678909993825,
+    "verdict": "valid-anchor localhs audit clears backward_ms gate but shows only noise-level full-step improvement vs recompute path"
+  },
+  "synthetic_ce_bench": {
+    "shape": "B=1,T=24576,H=3072,V=32768,block=8",
+    "recompute_warm_backward_ms": 923.5143980001794,
+    "save_logits_warm_backward_ms": 581.1803340000097,
+    "recompute_warm_total_ms": 1362.0610489999763,
+    "save_logits_warm_total_ms": 1023.4231110000565,
+    "verdict": "isolated CE backward benefits from saved logits"
+  },
+  "changed_files": [
+    "/home/dnola/speculators-c15-api/src/speculators/models/dflash/metrics.py",
+    "/home/dnola/v18_fix/run_t8_next_1_save_logits_audit.sh",
+    "/home/dnola/v18_fix/run_t8_next_1_save_logits_audit_localhs.sh",
+    "/home/dnola/v18_fix/run_t8_custom_ce_audit_localhs.sh",
+    "/home/dnola/v18_fix/t8_next_1_synthetic_ce_bench.py"
+  ],
+  "artifacts": {
+    "comparison_summary": "/home/dnola/v18_fix/t8_next_1_comparison_summary.json",
+    "save_logits_localhs": "/home/dnola/v18_fix/t8_next_1_save_logits_localhs_audit_result.json",
+    "baseline_localhs": "/home/dnola/v18_fix/t8_custom_ce_localhs_audit_result.json",
+    "synthetic_ce": "/home/dnola/v18_fix/t8_next_1_synthetic_ce_bench.json"
+  },
+  "open_issue": "v17 production NAS dataset still cannot be audited until /home/dnola/nas_traces/by_hash is remounted or the symlinks are rebuilt to an SFTP/NFS-visible path."
+}
+  [2026-05-28 15:57] driver: ENV FIX from driver: restored spark-2 NAS FUSE mount for /home/dnola/nas_traces via tmux:nasfs_v18 using /home/dnola/nasfs.py (installed fusepy in user site; verified /home/dnola/nas_traces/by_hash exists and lists trace files). Resume t8_next_1 production v17 NAS audit from the saved/logits path; keep locked knobs (anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, seq=8192), no FSDP/DDP/multi-host, no batch/anchor reduction. If <=2000ms and loss sanity PASS, hand off to T9; if still blocked, report the next concrete code/kernel gap.
+  [2026-05-28 16:01] atlasdflash2: t8_next_1 production_v17_NAS_save_logits: 60-row locked-capacity audit on spark-2 after NAS mount restore; total_step_ms mean 2304.97 / p50 2251.80, backward_ms mean 1638.02, loss sanity PASS (10.625 at step10), gate FAIL >2000. Result: /home/dnola/v18_fix/t8_next_1_result.json
+  [2026-05-28 16:02] atlasdflash2: review-required handoff:
+{
+  "decision": "Do not hand off to T9 or bake defaults yet; t8_next_1 save-logits path still misses <=2000ms gate on the restored production v17 NAS dataset.",
+  "spark_scope": "spark-2 only; throwaway 60-step audit; no production tmux touched except driver-provided nasfs_v18 mount; no DDP/FSDP/multi-host; no batch/anchor/model-capacity reduction",
+  "locked_capacity": {"max_anchors": 3072, "block_size": 8, "hidden_size": 3072, "intermediate_size": 4096, "layers": 6, "total_seq_len": 8192, "draft_vocab_size": 32768},
+  "production_v17_nas_audit": {
+    "rows": 60,
+    "steady_drop_first_n": 3,
+    "mean_total_step_ms": 2304.9739678421197,
+    "p50_total_step_ms": 2251.795012999537,
+    "mean_backward_ms": 1638.0162997017276,
+    "p50_backward_ms": 1640.089056999841,
+    "mean_forward_ms": 489.66653150880614,
+    "mean_optimizer_ms": 124.08208421050547,
+    "mean_dataloader_next_ms": 47.70717496491048,
+    "loss_sanity": "PASS: train/loss=10.625 at global_step=10, matching baseline",
+    "gate_result": "FAIL >2000ms"
+  },
+  "artifacts": {
+    "result_json": "/home/dnola/v18_fix/t8_next_1_result.json",
+    "summary_source": "/home/dnola/v18_fix/t8_next_1_save_logits_audit_result.json",
+    "diff_path": "/home/dnola/v18_fix/t8_next_1_save_logits.diff",
+    "log": "/home/dnola/v18_fix/t8_next_1_save_logits_audit_latest.log",
+    "audit_jsonl": "/home/dnola/v18_fix/t8_next_1_save_logits_audit_latest.audit.jsonl"
+  },
+  "next_concrete_gap": "Save-logits weighted-linear-CE preserves semantics but not enough full-step speed: backward is still ~1638ms and forward+optimizer+dataloader add ~661ms. Need actual tiled streaming dW/weighted-CE Triton/CUDA kernel that avoids dense logits materialization/storage/recompute, or a fresh non-CE operator profile identifying another removable >300ms bottleneck."
+}
+  [2026-05-28 16:14] driver: DRIVER CONTINUE 2026-05-28 16:14: T8 t8_next_1 production v17 NAS audit is a valid handoff but gate is NOT met (2305ms > 2000). Continue on spark-2 ONLY. Next highest-value step: implement/measure a real tiled streaming dW / weighted-CE kernel OR produce a non-CE profile proving the remaining >305ms gap before any bake/merge. HARD CONSTRAINTS: anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, seq=8192; NO FSDP, NO DDP, NO multi-host, NO batch/anchor/model-capacity reduction. Maintain progress JSON and resume from existing T8 artifacts; do not redo completed t8_next_1 audits except for a bounded comparison.
+  [2026-05-28 16:35] atlasdflash2: review-required handoff:
+{
+  "decision": "Do not hand off to T9 or bake defaults yet; latest guarded throughput attempts still miss <=2000ms and one sustained attempt rebooted spark-2.",
+  "spark_scope": "spark-2 only; throwaway audits; no DDP/FSDP/multi-host; no batch/anchor/model-capacity reduction; spark-2 was Kasa-cycled after t8_next_3 dropped off SSH/Tailscale.",
+  "locked_capacity": {"max_anchors": 3072, "block_size": 8, "hidden_size": 3072, "intermediate_size": 4096, "layers": 6, "total_seq_len": 8192, "draft_vocab_size": 32768},
+  "t8_next_2_active_only_ce": {
+    "change": "Guarded DFLASH_WEIGHTED_LINEAR_CE_ACTIVE_ONLY=1 filters exactly-zero CE rows (masked block-position-0) before LM-head/CE while preserving loss/metric/active-argmax/gradient semantics.",
+    "semantic_validation": "PASS: loss_abs_diff=0, active_draft_match=true, gx_max_abs_diff=1.86e-9, gw_max_abs_diff=2.24e-8",
+    "audit_rows": 60,
+    "steady_drop_first_n": 3,
+    "mean_total_step_ms": 2248.71,
+    "p50_total_step_ms": 2241.65,
+    "mean_forward_ms": 484.70,
+    "mean_backward_ms": 1636.31,
+    "mean_optimizer_ms": 122.19,
+    "mean_dataloader_next_ms": 0.073,
+    "loss_sanity": "PASS: train/loss sequence includes 10.750 then 10.625, matching baseline",
+    "gate_result": "FAIL >2000ms",
+    "speedup_vs_t8_next_1": "1.025x (2304.97 -> 2248.71ms)"
+  },
+  "t8_next_3_active_only_plus_fused_adamw": {
+    "change": "Guarded DFLASH_ADAMW_FUSED=1 on top of active-only CE.",
+    "audit_rows_completed": 29,
+    "steady_rows": 26,
+    "mean_total_step_ms_partial": 2205.34,
+    "p50_total_step_ms_partial": 2187.14,
+    "mean_forward_ms_partial": 489.08,
+    "mean_backward_ms_partial": 1653.75,
+    "mean_optimizer_ms_partial": 56.85,
+    "mean_dataloader_next_ms_partial": 0.070,
+    "loss_sanity": "PASS through logged metrics: train/loss 10.750 then 10.625",
+    "gate_result": "FAIL >2000ms and host dropped/rebooted before 60 rows",
+    "speedup_vs_t8_next_1_partial": "1.045x (2304.97 -> 2205.34ms partial)"
+  },
+  "artifacts": {
+    "combined_result": "/home/dnola/v18_fix/t8_next_2_3_result.json",
+    "t8_next_3_result": "/home/dnola/v18_fix/t8_next_3_result.json",
+    "active_only_validation": "/home/dnola/v18_fix/t8_next_2_active_only_validation.json",
+    "active_only_diff": "/home/dnola/v18_fix/t8_next_2_active_only.diff",
+    "fused_adamw_diff": "/home/dnola/v18_fix/t8_next_3_fused_adamw.diff",
+    "active_only_audit": "/home/dnola/v18_fix/t8_next_2_active_only_audit_20260528T231835Z.audit.jsonl",
+    "fused_adamw_partial_audit": "/home/dnola/v18_fix/t8_next_3_active_fused_adamw_audit_20260528T232202Z.audit.jsonl"
+  },
+  "interpretation": "Data/H2D are negligible and fused AdamW cuts optimizer to ~57ms but still cannot close the gate. Remaining time is dominated by backward (~1.6s) plus forward (~0.48s); active-row filtering only recovers ~56ms mean, fused AdamW only ~44ms more partial. Optimizer/data tuning cannot close the remaining gap.",
+  "next_concrete_gap": "Need a real tiled/streaming CE backward or another backward/forward kernel redesign that removes >200ms from the dense LM-head/CE path. Do not bake active-only/fused-AdamW as a T9 handoff; at best they are guarded minor partials, and t8_next_3 destabilized spark-2 under sustained audit."
+}
+  [2026-05-28 16:35] driver: RECOVERY 16:36 PDT: spark-2 was unreachable; power-cycled Strip #2 plug 2 via Kasa and verified spark-2 back up (uptime ~2 min, GPU clean, no tmux). Board had T8 marked running but no atlasdflash2 worker process existed, so this is a ghost/dead claim. Continue T8 from existing artifacts; current campaign throughput gate is USER-UPDATED to >=0.5 it/s (<=2000ms/step) with anchors=3072 and no capacity knob/FSDP changes, not the older 1 it/s text in the original body.
+  [2026-05-28 16:36] driver: DRIVER REVIEW 16:37 PDT: T8 is not complete because latest production v17 NAS audit was 2305ms > current <=2000ms gate. spark-2 is now recovered and GPU-clean after Kasa cycle. Continue the documented next step: real tiled streaming dW/weighted-CE kernel or non-CE profile to find/remove the remaining >300ms bottleneck. HARD RULES remain: anchors=3072; no batch-size drop; no model-capacity changes; no FSDP/DDP/multi-host.
+  [2026-05-28 16:53] atlasdflash2: review-required handoff:
+{
+  "decision": "Do not hand off to T9 or bake defaults; t8_next_4 guarded skip-grad-clip attempt still misses <=2000ms and again destabilized spark-2 under sustained audit.",
+  "spark_scope": "spark-2 only; throwaway audit; no DDP/FSDP/multi-host; no batch/anchor/model-capacity reduction. Restored /home/dnola/nas_traces FUSE after reboot before valid audit; Kasa-cycled Strip #2 plug 2 after host dropped again.",
+  "locked_capacity": {"max_anchors": 3072, "block_size": 8, "hidden_size": 3072, "intermediate_size": 4096, "layers": 6, "total_seq_len": 8192, "draft_vocab_size": 32768},
+  "t8_next_4_skip_grad_clip": {
+    "change": "Guarded DFLASH_SKIP_GRAD_CLIP=1 on top of active-only weighted-linear-CE + save-logits + DFLASH_ADAMW_FUSED=1. Production default remains grad clipping enabled.",
+    "audit_rows_completed": 32,
+    "steady_rows": 29,
+    "mean_total_step_ms_partial": 2167.67,
+    "p50_total_step_ms_partial": 2147.70,
+    "mean_forward_ms_partial": 483.55,
+    "mean_backward_ms_partial": 1622.45,
+    "mean_optimizer_ms_partial": 56.03,
+    "mean_dataloader_next_ms_partial": 0.146,
+    "loss_sanity": "PASS through logged rows: loss=10.750 step0, 10.562 step10, 9.938 step20; no NaN-skip before host drop",
+    "gate_result": "FAIL >2000ms and host dropped/rebooted before 60 rows",
+    "speedup_vs_t8_next_3_partial": "1.017x (2205.34 -> 2167.67ms partial)",
+    "interpretation": "Global clip_grad_norm_ is not the missing >300ms bottleneck; skipping it only recovered ~38ms partial and backward remains ~1.6s."
+  },
+  "artifacts": {
+    "result_json": "/home/dnola/v18_fix/t8_next_4_result.json",
+    "diff_path": "/home/dnola/v18_fix/t8_next_4_skip_grad_clip.diff",
+    "script": "/home/dnola/v18_fix/run_t8_next_4_skip_clip_active_fused_adamw_audit.sh",
+    "audit_jsonl": "/home/dnola/v18_fix/t8_next_4_skip_clip_active_fused_adamw_audit_20260528T234014Z.audit.jsonl",
+    "log": "/home/dnola/v18_fix/t8_next_4_skip_clip_active_fused_adamw_audit_20260528T234014Z.log"
+  },
+  "next_concrete_gap": "All non-kernel knobs tried so far are minor: active-only ~56ms, fused AdamW ~44ms partial, skip grad clip ~38ms partial. Remaining path is still forward ~0.48s + backward ~1.62s; need an actual tiled/streaming CE/backward kernel or a deeper operator-level rewrite, not launcher/default baking. Repeated sustained audits reboot spark-2, so next kernel attempt should use shorter staged microbench -> 10-row -> 30-row gates before 60-row."
+}
+  [2026-05-28 17:10] driver: UNBLOCK after T19 vocab-axis fix accepted: do NOT restart old full-vocab timing from step_00004000. Read /home/dnola/v18_throughput_audit/vocab_axis_fix/root_cause.md and proof_v32768.json first. Next steps: (1) generate/resume from a fresh reduced-vocab V=32768 throwaway checkpoint; (2) run a steady 50-step locked-capacity audit at V=32768; (3) if mean_step_ms <=2000 with sanity PASS, block review-required for T9; (4) if still >2000, implement the fused/streaming weighted linear+CE patch exactly described in root_cause.md (metrics.py, fused_linear_ce.py, core.py), validate tiny-shape correctness, then benchmark locked shape. HARD RULES unchanged: spark-2 only, anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, total_seq_len=8192, no batch drop, no FSDP/DDP/multi-host.
+  [2026-05-28 17:30] driver: spark-2 was unreachable this tick; driver Kasa-cycled Strip2 plug2 at 17:27. Resume only on spark-2 after host returns. Preserve locked capacity knobs; no FSDP/DDP/multi-host; no batch/anchor reduction.
+  [2026-05-28 17:36] atlasdflash2: t8_next_5 instrumented_weighted_ce_actual_audit: found prior repo-only weighted-CE patches were not active in timed audits because audit scripts put `/home/dnola/v18_throughput_audit/instrumented_src` first on PYTHONPATH. After patching the instrumented package and validating tiny-shape semantics under the actual audit PYTHONPATH, production locked audit FAILS loss sanity: first train/loss=13.812, step10=13.375 vs sane 10.75/10.625; partial steady total=2931.2ms, backward=2096.9ms over 20 steady rows, and spark-2 rebooted before 50 rows. Result: `/home/dnola/v18_fix/t8_next_5_result.json`; diff: `/home/dnola/v18_fix/t8_next_5_instrumented_weighted_ce.diff`.
+  [2026-05-28 17:36] atlasdflash2: review-required handoff:
+{
+  "decision": "Do not hand off to T9 or bake/merge the weighted-linear-CE prototype; when actually active in the audit package it fails loss sanity and remains slower than gate.",
+  "spark_scope": "spark-2 only; throwaway audit; no DDP/FSDP/multi-host; no batch/anchor/model-capacity reduction; spark-2 rebooted during t8_next_5 and is back up/GPU clean.",
+  "locked_capacity": {"max_anchors": 3072, "block_size": 8, "hidden_size": 3072, "intermediate_size": 4096, "layers": 6, "total_seq_len": 8192, "draft_vocab_size": 32768},
+  "critical_measurement_correction": "The timed audit scripts set PYTHONPATH=/home/dnola/v18_throughput_audit/instrumented_src:/home/dnola/speculators-c15-api/src, so prior repo-only changes in /home/dnola/speculators-c15-api/src/speculators/models/dflash/{metrics.py,core.py} were shadowed by the older instrumented_src package. t8_next_5 copied the guarded weighted-CE path into instrumented_src before measuring.",
+  "semantic_validation": {"status": "PASS on tiny shape under actual audit PYTHONPATH", "artifact": "/home/dnola/v18_fix/t8_next_2_active_only_validation.json", "loss_abs_diff": 0.0, "active_draft_match": true, "gx_max_abs_diff": 1.86e-9, "gw_max_abs_diff": 2.24e-8},
+  "t8_next_5_actual_production_audit": {"audit_rows_completed": 23, "steady_rows": 20, "mean_total_step_ms": 2931.205, "p50_total_step_ms": 2897.936, "mean_forward_ms": 772.526, "mean_backward_ms": 2096.940, "mean_optimizer_ms": 56.057, "mean_dataloader_next_ms": 0.091, "loss_sanity": "FAIL: train/loss 13.812 at step0 and 13.375 at step10 vs known sane 10.75/10.625", "gate_result": "FAIL: loss sanity failed, timing >2000ms, host rebooted before 50 rows"},
+  "artifacts": {"result_json": "/home/dnola/v18_fix/t8_next_5_result.json", "diff_path": "/home/dnola/v18_fix/t8_next_5_instrumented_weighted_ce.diff", "audit_jsonl": "/home/dnola/v18_fix/t8_next_4_skip_clip_active_fused_adamw_audit_20260529T002456Z.audit.jsonl", "log": "/home/dnola/v18_fix/t8_next_4_skip_clip_active_fused_adamw_audit_20260529T002456Z.log"},
+  "interpretation": "The direct-matmul custom CE path is not production-equivalent with the TE-wrapped final norm/lm_head path (likely bypasses TransformerEngine LayerNormLinear/fp8 parameter semantics). It must be treated like the earlier Liger CE failure: numerically unsafe despite tiny-shape non-TE validation.",
+  "next_concrete_gap": "Before any more 50-step audits, build a production-module equivalence test comparing baseline `self.lm_head(self.norm(noise_embedding))` vs fused entrypoint after TE wrapping on one real batch. The next kernel must integrate at the TE LayerNormLinear/fp8-param boundary (or explicitly disable only the final norm+lm_head TE fusion and measure the cost) and pass that equivalence/loss_0 gate before throughput timing."
+}
+  [2026-05-28 17:46] driver: driver review: latest weighted-CE prototype failed loss sanity, so do NOT bake it into v18b. Continue kernel work for future v18c with production-module equivalence first, spark-2 only, no capacity/FSDP changes.
+  [2026-05-28 17:53] driver: T8 REGRESSION CAUGHT BY T3: current trainer.py had undefined logger in setup_optimizer from AdamW fused instrumentation; driver hotfixed logger=root_logger on spark-2 so production v18b can launch. Future T8 changes MUST run py_compile and one constructor smoke before leaving trainer source patched.
+  [2026-05-28 17:55] atlasdflash2: review-required handoff:
+{
+  "decision": "Do not hand off to T9 or bake/merge t8_next_6; TE-aware production-module equivalence fixes loss_0 but de-fuses the final TE LayerNormLinear path and is much slower than the <=2000ms gate.",
+  "spark_scope": "spark-2 only; staged 1-step equivalence then 15-row throwaway audit; no production tmux; no DDP/FSDP/multi-host; no batch/anchor/model-capacity reduction",
+  "locked_capacity": {"max_anchors": 3072, "block_size": 8, "hidden_size": 3072, "intermediate_size": 4096, "layers": 6, "total_seq_len": 8192, "draft_vocab_size": 32768},
+  "root_cause_verified": "t8_next_5 failed loss sanity because custom CE used raw final_hidden with lm_head.weight after TE extended fusion had replaced (norm + lm_head) with lm_head=te.LayerNormLinear and norm=Identity, bypassing RMSNorm. t8_next_6 applies lm_head.layer_norm_weight/eps before custom CE.",
+  "production_module_equivalence": {"ref_loss": 10.75, "cand_loss": 10.75, "loss_abs_diff": 0.0, "draft_match": false, "ref_full_acc": 0.0, "cand_full_acc": 0.0, "lm_head_type": "LayerNormLinear", "used_layernorm_weight": true, "global_step": 0},
+  "equivalence_note": "overall draft_match=false is from inactive/masked anchor rows where active-only path returns zero tokens; loss and full_acc sanity match on the real production batch",
+  "short_timing_audit": {"rows": 15, "steady_rows": 12, "mean_total_step_ms": 3077.72, "p50_total_step_ms": 2993.64, "mean_forward_ms": 797.33, "mean_backward_ms": 2216.95, "mean_optimizer_ms": 57.65, "mean_dataloader_next_ms": 0.175, "loss_sanity": "PASS: train/loss 10.75 then 10.625", "gate_result": "FAIL >2000ms"},
+  "comparison_to_best_prior_sane": "Best prior sane partial was t8_next_4 baseline TE final path + fused AdamW + skip clip at ~2167.7ms partial; t8_next_6 manual-RMSNorm custom CE regresses to ~3077.7ms mean.",
+  "artifacts": {"result_json": "/home/dnola/v18_fix/t8_next_6_result.json", "prod_equiv_jsonl": "/home/dnola/v18_fix/t8_next_6_prod_equiv.jsonl", "short_result_json": "/home/dnola/v18_fix/t8_next_6_short_result.json", "diff_path": "/home/dnola/v18_fix/t8_next_6_teaware_combined.diff", "review_doc": "/home/dnola/v18_fix/T8_NEXT_6_REVIEW_REQUIRED.md"},
+  "next_concrete_gap": "A viable v18c kernel must integrate inside/adjacent to TE LayerNormLinear: fused RMSNorm + FP8-param linear + weighted CE/argmax, or use a TE API that returns normalized hidden without de-fusing. Require real-batch production equivalence including active-row draft tokens and a <=2000ms 10-row staged gate before full audit."
+}
+  [2026-05-28 18:22] driver: DRIVER 18:22: Hold heavy T8 GPU benchmarking while T24 diagnoses spark-2 host-lock from v18b training. If unblocked later, continue only the TE-boundary fused CE design/tiny-shape validation until T24 clears production smoke.
+
+Events (106):
+  [2026-05-28 17:10] [run 254] claimed {'lock': 'macmini.local:4656', 'expires': 1780014315, 'run_id': 254}
+  [2026-05-28 17:10] [run 254] spawned {'pid': 4658}
+  [2026-05-28 17:10] [run 254] heartbeat {'note': 'Oriented on T8 latest unblock; will read accepted T19 root-cause/proof artifacts on spark-2, verify reduced-vocab state, then run/measure bounded locked-capacity audit before deciding whether to continue fused/streaming CE patch.'}
+  [2026-05-28 17:13] [run 254] heartbeat {'note': 'Found a critical measurement gap: audit scripts put /home/dnola/v18_throughput_audit/instrumented_src first on PYTHONPATH, so prior repo-only weighted-CE patches were not active in the timed audits. Patched instrumented_src metrics/core/trainer with the guarded weighted-linear-CE active-only/save-logits and skip-grad-clip path; tiny-shape semantics validation now passes under the actual audit PYTHONPATH. Starting locked-capacity bounded audit on spark-2.'}
+  [2026-05-28 17:28] [run 254] claim_extended {'reason': 'pid_alive', 'worker_pid': 4658, 'claim_lock': 'macmini.local:4656', 'claim_expires_was': 1780014484, 'claim_expires_now': 1780015410, 'last_heartbeat_at': 1780013584}
+  [2026-05-28 17:30] commented {'author': 'driver', 'len': 202}
+  [2026-05-28 17:36] commented {'author': 'atlasdflash2', 'len': 665}
+  [2026-05-28 17:36] commented {'author': 'atlasdflash2', 'len': 2823}
+  [2026-05-28 17:36] [run 254] blocked {'reason': 'review-required: T8 t8_next_5 made the weighted-CE prototype actually active in instrumented audits; it fails loss sanity (13.812/13.375 vs sane 10.75/10.625), runs ~2931ms partial, and rebooted spark-2 — next patch must integrate at TE LayerNormLinear/fp8 boundary and pass production-module equivalence before timing.'}
+  [2026-05-28 17:46] commented {'author': 'driver', 'len': 211}
+  [2026-05-28 17:46] unblocked
+  [2026-05-28 17:46] [run 265] claimed {'lock': 'macmini.local:16253', 'expires': 1780016482, 'run_id': 265}
+  [2026-05-28 17:46] [run 265] spawned {'pid': 16258}
+  [2026-05-28 17:46] [run 265] heartbeat {'note': 'Oriented on latest driver review. Following systematic debugging before another kernel attempt: first verify spark-2 health and inspect the TE LayerNormLinear/fp8 production-module path so the next fused CE entrypoint preserves loss_0 before timing.'}
+  [2026-05-28 17:50] [run 265] heartbeat {'note': 'Patched instrumented core with TE-aware custom CE input (manual RMSNorm when lm_head is TE LayerNormLinear) and patched trainer to emit real-batch DFLASH_PROD_EQUIV diagnostics; running a 1-step production NAS equivalence gate before any timing audit.'}
+  [2026-05-28 17:52] [run 265] heartbeat {'note': 'Production-module equivalence gate now passes for loss on a real v17 NAS batch under TE LayerNormLinear (ref_loss=cand_loss=10.75; the prior 13.812 loss was from bypassing TE RMSNorm). Running a short staged timing audit next, not a full 60-row burn yet.'}
+  [2026-05-28 17:53] commented {'author': 'driver', 'len': 300}
+  [2026-05-28 17:55] commented {'author': 'atlasdflash2', 'len': 2560}
+  [2026-05-28 17:55] [run 265] blocked {'reason': 'review-required: T8 t8_next_6 proved the weighted-CE loss bug was bypassing TE LayerNormLinear RMSNorm, but the TE-aware manual-RMSNorm custom CE is numerically sane yet too slow (3077.7ms mean >2000); next kernel must fuse at the TE LayerNormLinear boundary.'}
+  [2026-05-28 18:22] commented {'author': 'driver', 'len': 225}
+
+Runs (10):
+  #228 blocked      @atlasdflash2  35s  2026-05-28 12:46
+        → paused by driver: T7 did NOT meet throughput gate and current Liger path OOMs at locked v18 shape; wait for t_c277f755 kernel deep-dive/redesign before baking d
+  #239 blocked      @atlasdflash2  608s  2026-05-28 14:11
+        → review-required: T8 measured V=32768 locked-capacity path at 2737ms mean / 2304ms compute-only (>2000 gate); Liger CE fails loss sanity (13.812 vs 10.75/10.625)
+  #241 blocked      @atlasdflash2  459s  2026-05-28 14:29
+        → review-required: T8 rerun on spark-2 V=32768 locked capacity still fails gate (2798.2ms mean, loss_0 PASS); do not bake Liger defaults—next concrete patch is gu
+  #242 blocked      @atlasdflash2  1228s  2026-05-28 14:45
+        → review-required: T8 guarded custom weighted-linear-CE prototype passed tiny semantics but fails throughput gate (partial steady 2274ms >2000) and rebooted spark
+  #245 blocked      @atlasdflash2  1217s  2026-05-28 15:21
+        → review-required: t8_next_1 save-logits path implemented and bounded audits run; localhs valid-anchor audit clears backward_ms gate, but production v17 NAS audit
+  #247 blocked      @atlasdflash2  266s  2026-05-28 15:57
+        → review-required: T8 t8_next_1 production v17 NAS audit completed on spark-2 with loss sanity PASS but gate FAIL (2305ms mean >2000); next step is real tiled str
+  #248 blocked      @atlasdflash2  1272s  2026-05-28 16:14
+        → review-required: T8 guarded active-only CE + fused-AdamW partials still fail gate (best partial 2205ms >2000, loss sanity PASS) and fused-AdamW run rebooted spa
+  #250 blocked      @atlasdflash2  1043s  2026-05-28 16:36
+        → review-required: T8 t8_next_4 guarded skip-grad-clip still fails gate (2167.7ms partial >2000, loss sanity PASS) and rebooted spark-2; remaining gap needs real 
+  #254 blocked      @atlasdflash2  1575s  2026-05-28 17:10
+        → review-required: T8 t8_next_5 made the weighted-CE prototype actually active in instrumented audits; it fails loss sanity (13.812/13.375 vs sane 10.75/10.625), 
+  #265 blocked      @atlasdflash2  560s  2026-05-28 17:46
+        → review-required: T8 t8_next_6 proved the weighted-CE loss bug was bypassing TE LayerNormLinear RMSNorm, but the TE-aware manual-RMSNorm custom CE is numerically

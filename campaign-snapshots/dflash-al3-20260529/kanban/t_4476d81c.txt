@@ -1,0 +1,77 @@
+Task t_4476d81c: T72: FAST reproduce current-best MiniMax draft_max=13 AL on 3-5 prompts
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_4476d81c
+  max-retries: 2 (default)
+  created:   2026-05-29 05:39 by user
+  started:   2026-05-29 05:39
+  completed: 2026-05-29 06:03
+
+Body:
+
+# T72: FAST reproducibility check at current best MiniMax runtime operating point (<1h)
+
+## Mission
+Campaign goal is measured runtime AL >= 3.0 on OUR MiniMax target in actual practice. T68 found WINDOW_HEADROOM: best mean raw runtime AL=2.368 at draft_max=13 on only 2 MiniMax native-chat prompts. Validate whether that was a small-n lucky slice or a reproducible near-ceiling, and collect the fastest next numeric signal.
+
+## Host scope
+spark-2 ONLY. Inference/eval only. Do not touch spark-1/spark-3/spark-work/spark-4. Do not Kasa-cycle. Do not launch training.
+
+## Inputs to read first
+- T68 report: /home/dnola/v18_fix/T68_CURRENT_BEST_DRAFTMAX_CEILING.md
+- T66 current corrected-offset GGUF path if available: /home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf
+- Fallback corrected GGUF: /home/dnola/v18_fix/t59_latest/step500_minimax_buun_offset_rebaked.gguf or T62 path from its report
+- MiniMax target GGUF/path from T66/T68 runner logs
+
+## Fast run
+1. Preflight one-actor lease: no `scripts/train.py`, no trainer tmux, no unrelated llama-server/GPU compute apps. If spark-2 is occupied by a live dflash-al3 task, block `SPARK2_BUSY` with exact evidence. If only orphan llama-server from DONE T68 remains, stop it and continue.
+2. Reuse the exact T68 MiniMax native-chat prompt formatting and corrected d2t-OFFSET GGUF path.
+3. Run 5 prompts max, <=512 output, temp=0/top_k=1, draft_max=13. If this cannot finish within 45 min, shrink to 3 prompts and still produce the number.
+4. Optional only if the draft_max=13 run finishes quickly: one 3-prompt draft_max=15 check to see whether 13 was an artificial cap.
+
+## Deliverable
+Write /home/dnola/v18_fix/T72_DRAFTMAX13_REPRO.md and comment a table:
+- n prompts, per-prompt raw measured accept_length, mean AL, draft_n_accepted/draft_n_decoded if available.
+- Verdicts: GOAL_HIT if mean AL>=3.0; REPRO_WINDOW if mean 2.2-2.9; CEILING_NEAR_2 if mean <2.2.
+
+## Hard rules
+Raw measured runtime AL only; no multiplier/extrapolation. Fast signal within <=1h. Preserve locked knobs. Host scope spark-2 only. One actor per host.
+
+
+Latest summary:
+Completed T72 on spark-2: draft_max=13 reproduced the T68 window with 5-prompt mean raw runtime AL=2.433212 (REPRO_WINDOW), below the >=3.0 goal. Optional draft_max=15 3-prompt probe averaged AL=2.921564, suggesting 13 was not the absolute cap but still not a clean goal hit.
+
+Comments (1):
+  [2026-05-29 06:03] atlasdflash4: T72 results written to `/home/dnola/v18_fix/T72_DRAFTMAX13_REPRO.md`.
+
+Raw measured runtime AL only (`tokens_predicted / (draft_n / draft_max)`), MiniMax native chat formatting from T68, target `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`, draft `/home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf`.
+
+| draft_max | n prompts | mean AL | AL list | mean draft acceptance | verdict |
+|---:|---:|---:|---|---:|---|
+| 13 | 5 | 2.433212 | [2.277892, 2.458011, 2.423007, 2.461043, 2.546104] | 0.04425 | REPRO_WINDOW |
+| 15 | 3 | 2.921564 | [2.896341, 3.026846, 2.841504] | 0.05215 | optional_probe |
+
+Per-prompt draft_max=13:
+
+| prompt | predicted_n | draft_n_decoded | draft_n_accepted | accept_frac | runtime_AL | stop | elapsed_s |
+|---:|---:|---:|---:|---:|---:|---|---:|
+| 1 | 512 | 2922 | 91 | 0.03114 | 2.277892 | limit | 50.4 |
+| 2 | 367 | 1941 | 93 | 0.04791 | 2.458011 | eos | 32.4 |
+| 3 | 512 | 2747 | 118 | 0.04296 | 2.423007 | limit | 46.7 |
+| 4 | 294 | 1553 | 72 | 0.04636 | 2.461043 | eos | 26.0 |
+| 5 | 274 | 1399 | 74 | 0.05289 | 2.546104 | eos | 23.6 |
+
+Post-run residual compute check on spark-2 showed no llama-server/train/perf_sweep/speculators GPU app contenders.
+
+Events (7):
+  [2026-05-29 05:39] created {'assignee': 'atlasdflash4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 05:39] [run 583] claimed {'lock': 'macmini.local:16939', 'expires': 1780059244, 'run_id': 583}
+  [2026-05-29 05:39] [run 583] spawned {'pid': 4392}
+  [2026-05-29 05:40] [run 583] heartbeat {'note': 'Preflight on spark-2 clean (no trainer tmux/train.py/llama-server/GPU compute apps); preparing T72 draft_max=13 reproducibility script using T68 prompt formatting and T66 corrected GGUF.'}
+  [2026-05-29 05:55] [run 583] claim_extended {'reason': 'pid_alive', 'worker_pid': 4392, 'claim_lock': 'macmini.local:16939', 'claim_expires_was': 1780059312, 'claim_expires_now': 1780060213, 'last_heartbeat_at': 1780058412}
+  [2026-05-29 06:03] commented {'author': 'atlasdflash4', 'len': 1254}
+  [2026-05-29 06:03] [run 583] completed {'result_len': 0, 'summary': 'Completed T72 on spark-2: draft_max=13 reproduced the T68 window with 5-prompt mean raw runtime AL=2.433212 (REPRO_WINDOW), below the >=3.0 goal. Optional draft_max=15 3-prompt probe averaged AL=2.921564, suggesting 13 was not the absolute cap but still not a clean goal hit.'}
+
+Runs (1):
+  #583 completed    @atlasdflash4  1471s  2026-05-29 05:39
+        → Completed T72 on spark-2: draft_max=13 reproduced the T68 window with 5-prompt mean raw runtime AL=2.433212 (REPRO_WINDOW), below the >=3.0 goal. Optional draft

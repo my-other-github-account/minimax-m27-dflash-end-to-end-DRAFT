@@ -1,0 +1,53 @@
+Task t_50ef4f0e: T56: FAST post-T53 AL decision and next bounded lever
+  status:    done
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_50ef4f0e
+  max-retries: 2 (default)
+  created:   2026-05-29 02:07 by user
+  started:   2026-05-29 02:09
+  completed: 2026-05-29 02:11
+  parents:   t_c7e0c028
+  children:  t_b1c65598
+
+Body:
+# T56: FAST post-T53 decision — if step500 AL misses, file the next <1hr lever
+
+## Why
+T53 is measuring the fresh spark-3 step500 checkpoint. The campaign goal is measured runtime AL >= 3 on OUR MiniMax target. If T53 lands below 3, immediately turn the number plus T50/T52/T55 evidence into the next bounded experiment; do not wait for a full training run.
+
+## Parent
+Parent: T53. Starts after the step500 AL result/blocker exists.
+
+## Inputs
+- T53 result/report (`STEP500_AL=<mean>` or blocker)
+- T48 `OUR_ADAPTER_AL=1.334` for older step4000 rebake
+- T50 `V15_AL=1.644` for v15 step22000
+- T51/T52 mapping findings; if T55 is not done yet, read its current status and do not duplicate its tensor audit
+- T43 z-lab draft_max sweep: recovered harness good, z-lab plateau high
+
+## Job (<30 min)
+1. Read the actual T53 handoff and extract the measured runtime AL axis only. No multipliers.
+2. If `STEP500_AL >= 3`: comment `GOAL_HIT_CANDIDATE` with exact number and recommend reproducibility task (larger prompt set), then complete.
+3. If `STEP500_AL < 3` or conversion/runtime blocked: file ONE next fast task (max-runtime <=1h) that best advances AL based on evidence. Examples: repeat T53 at draft_max grid if AL is close; convert/measure next fresh checkpoint if training produced one; bounded 100-200 step recipe tweak only if mapping artifact is ruled out; or a tokenizer/target-layer audit if T53/T50 mismatch points there.
+4. Include host scope and one-actor rule in any child task body. Do not use spark-4.
+
+Deliverable: comment `POST_T53_DECISION=<...>` naming created child task id(s) or `GOAL_HIT_CANDIDATE`. Complete this task after filing/commenting.
+
+
+Latest summary:
+Post-T53 decision filed: STEP500_AL=1.6511068636139357 measured runtime AL is below AL>=3, so I created t_b1c65598 for the next <1h bounded lever. The child waits for T55, then either corrected-scatters/rebakes T53 step500 and reruns the same AL smoke on spark-2 if conversion artifact is confirmed, or completes no-rebake if T55 rules it out.
+
+Comments (1):
+  [2026-05-29 02:11] atlas6dflash5: POST_T53_DECISION=STEP500_AL=1.6511068636139357 measured runtime AL over 3x512 at draft_max=9, below AL>=3. Created child t_b1c65598 as the next bounded lever: after T55 finishes (do not duplicate its audit), if T55 confirms conversion artifact / sparse coverage, perform corrected collision-free full-vocab MiniMax scatter for T53 step500 (`target_id = arange(draft_vocab)+d2t`), verify ~32768 populated rows instead of 20681, convert/rebake, and rerun the same 3x512 AL smoke on spark-2. If T55 says conversion artifact unlikely, child completes no-rebake and recommends non-conversion lever. Host scope: spark-2 only; one actor; no spark-4.
+
+Events (6):
+  [2026-05-29 02:07] created {'assignee': 'atlas6dflash5', 'status': 'todo', 'parents': ['t_c7e0c028'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 02:09] promoted
+  [2026-05-29 02:09] [run 554] claimed {'lock': 'macmini.local:49412', 'expires': 1780046683, 'run_id': 554}
+  [2026-05-29 02:09] [run 554] spawned {'pid': 52368}
+  [2026-05-29 02:11] commented {'author': 'atlas6dflash5', 'len': 643}
+  [2026-05-29 02:11] [run 554] completed {'result_len': 0, 'summary': 'Post-T53 decision filed: STEP500_AL=1.6511068636139357 measured runtime AL is below AL>=3, so I created t_b1c65598 for the next <1h bounded lever. The child waits for T55, then either corrected-scatters/rebakes T53 step500 and reruns the same AL smoke on spark-2 if conversion artifact is confirmed, or completes no-rebake if T55 rules it out.', 'verified_cards': ['t_b1c65598']}
+
+Runs (1):
+  #554 completed    @atlas6dflash5  103s  2026-05-29 02:09
+        → Post-T53 decision filed: STEP500_AL=1.6511068636139357 measured runtime AL is below AL>=3, so I created t_b1c65598 for the next <1h bounded lever. The child wai

@@ -1,0 +1,63 @@
+Task t_60aae868: T55: FAST finish T52 row-norm/generated-token coverage audit after T53
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_60aae868
+  max-retries: 2 (default)
+  created:   2026-05-29 02:07 by user
+  started:   2026-05-29 02:09
+  completed: 2026-05-29 02:15
+  parents:   t_c7e0c028
+  children:  t_b1c65598
+
+Body:
+# T55: FAST finish T52 mapping/scatter audit using spark-2 artifacts after T53 releases host
+
+## Why
+T52 resolved one suspicion: raw duplicate d2t offsets are not themselves a scatter-collision bug because correct target id is `arange(draft_vocab)+d2t`. But T52 blocked before inspecting exact T48 rebake tensors/rows because spark-2 was occupied by T50/T53. Once T53 is done, finish the audit fast so we know whether low AL=1.334 is conversion artifact or drafter quality.
+
+## Parent / contention
+Parent: T53. Do not start until T53 completes/blocks and spark-2 is free. One actor on spark-2. No training, no inference benchmark, no Kasa.
+
+## Host scope
+spark-2 READ-ONLY for artifact inspection, plus local/macmini workspace. Do not touch spark-1/spark-3/spark-work/spark-4. Do not mutate model/checkpoint/export dirs.
+
+## Inputs
+Use T52 handoff plus these spark-2 files:
+- `/home/dnola/v18_fix/t48/prepped_minimax_rebaked_v17d2t/model.safetensors`
+- `/home/dnola/v18_fix/t48/al_runs.jsonl`
+- `/home/dnola/models/MiniMax-M2.7-tokenizer/`
+- `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/d2t.npy`
+- `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/t2d.npy`
+
+## Steps (<30 min)
+1. Preflight spark-2: no active T53/llama-server/train.py GPU contender. If busy, block `SPARK2_BUSY` with exact evidence.
+2. Inspect T48 full-scattered `output.weight` row norms: zero rows, nonzero rows, nonzero rows outside/inside expected target mask, norm histogram summary.
+3. Compare generated content-token IDs in `al_runs.jsonl` against nonzero rows/mapping mask: coverage %, top missing token IDs/examples.
+4. Cite whether buun/minimax runtime expects full 200064-row scattered lm_head vs reduced rows + metadata using converter/runtime file evidence if available from T48/T52 logs.
+
+## Deliverable
+Write `T55_T48_ROW_NORM_COVERAGE_AUDIT.md` in workspace and comment one of:
+- `CONVERSION_ARTIFACT_LIKELY` with exact bad rows/coverage,
+- `CONVERSION_ARTIFACT_UNLIKELY` with exact counts,
+- `SPARK2_BUSY` / `ARTIFACTS_MISSING` with exact paths.
+
+Hard rules: facts only, no guesses, no source/model mutation, no training/inference, no spark-4.
+
+
+Latest summary:
+Finished T55 read-only spark-2 audit and wrote `T55_T48_ROW_NORM_COVERAGE_AUDIT.md` in the workspace. Verdict: CONVERSION_ARTIFACT_UNLIKELY — exact T48 row scan shows all 32768 corrected mapped rows are learned/non-floor, all 167296 out-of-mask rows are intentional floor-fill, and generated content coverage is 1378/1536 (89.71%).
+
+Comments (1):
+  [2026-05-29 02:14] atlaspatch5: CONVERSION_ARTIFACT_UNLIKELY — corrected `target_id = arange(32768)+d2t` is unique 32768/32768 and equals `t2d.npy`; exact T48 `lm_head.weight` scan found 32768 learned/non-floor rows exactly inside mask, 167296 intentional floor-fill rows outside mask, 0 floor/zero rows inside mask. Generated T48 content coverage vs learned rows: 1378/1536 tokens (89.71%); prompts: 89/89 (100%). Report: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_60aae868/T55_T48_ROW_NORM_COVERAGE_AUDIT.md`
+
+Events (6):
+  [2026-05-29 02:07] created {'assignee': 'atlaspatch5', 'status': 'todo', 'parents': ['t_c7e0c028'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 02:09] promoted
+  [2026-05-29 02:09] [run 553] claimed {'lock': 'macmini.local:49412', 'expires': 1780046683, 'run_id': 553}
+  [2026-05-29 02:09] [run 553] spawned {'pid': 52367}
+  [2026-05-29 02:14] commented {'author': 'atlaspatch5', 'len': 497}
+  [2026-05-29 02:15] [run 553] completed {'result_len': 0, 'summary': 'Finished T55 read-only spark-2 audit and wrote `T55_T48_ROW_NORM_COVERAGE_AUDIT.md` in the workspace. Verdict: CONVERSION_ARTIFACT_UNLIKELY — exact T48 row scan shows all 32768 corrected mapped rows are learned/non-floor, all 167296 out-of-mask rows are intentional floor-fill, and generated content coverage is 1378/1536 (89.71%).'}
+
+Runs (1):
+  #553 completed    @atlaspatch5  317s  2026-05-29 02:09
+        → Finished T55 read-only spark-2 audit and wrote `T55_T48_ROW_NORM_COVERAGE_AUDIT.md` in the workspace. Verdict: CONVERSION_ARTIFACT_UNLIKELY — exact T48 row scan

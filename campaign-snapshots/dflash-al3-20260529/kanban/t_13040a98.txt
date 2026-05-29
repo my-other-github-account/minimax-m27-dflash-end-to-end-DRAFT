@@ -1,0 +1,62 @@
+Task t_13040a98: T65: FAST spark-3 lease cleanup / orphan trainer harvest for next AL loop
+  status:    done
+  assignee:  atlaspatch4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_13040a98
+  max-retries: 2 (default)
+  created:   2026-05-29 03:52 by user
+  started:   2026-05-29 03:52
+  completed: 2026-05-29 04:01
+  children:  t_82a718d9
+
+Body:
+# T65: FAST spark-3 lease cleanup / orphan trainer harvest for next AL loop (<30 min)
+
+## Why
+Driver tick found no running dflash-al3 kanban task officially owns spark-3, but T54 blocked with evidence of live `scripts/train.py` PIDs on spark-3 and only 57GB available. That violates one-actor-per-host and leaves spark-3 unusable for fast bounded work.
+
+## Mission
+Recover spark-3 as an authorized campaign host WITHOUT guessing: inspect the live train.py, decide if it is an owned/useful continuation or an orphan from a blocked/old task, then either harvest a checkpoint/progress or stop the orphan so the board can dispatch the next fast AL/training slice.
+
+## Host scope
+spark-3 ONLY. Do not touch spark-1, spark-2, spark-4, or spark-work. No Kasa. No training launch except a zero/readonly probe; this is cleanup/harvest.
+
+## Steps
+1. On spark-3, collect read-only evidence: `pgrep -af '[s]cripts/train.py'`, `tmux ls`, `free -g`, `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader`, latest train.log path(s), latest checkpoint dirs.
+2. Cross-check the process command/run-name against dflash-al3 task comments: T3/T54/T41/T49/T59. Current board state has T3 and T54 blocked and no running spark-3 task; if the live train.py is not tied to a currently-running kanban claim, treat it as an orphan/lease leak.
+3. If useful progress/checkpoints exist (e.g. step>=600/700 or val_metrics): write a concise harvest note with paths and latest loss/step to `/home/dnola/v18_fix/T65_SPARK3_LEASE_CLEANUP.md`.
+4. If the process is an orphan/lease leak, terminate the launcher/tmux/train.py cleanly; if it ignores TERM, use KILL. Verify no train.py remains and free available returns near >=90GB. Do NOT kill anything unrelated.
+5. Comment verdict:
+   - `SPARK3_CLEANED` with killed PIDs + free/GPU status + any harvested ckpt path, OR
+   - `SPARK3_STILL_OWNED` with exact owning task/run evidence, OR
+   - `SPARK3_RECOVERY_BLOCKED` with exact blocker.
+
+## Follow-up routing hint
+If `SPARK3_CLEANED` and a new checkpoint was harvested, the driver should file a fast MiniMax/buun AL measurement for that ckpt. If cleaned but no ckpt, the driver should unblock T54 for a bounded continuation smoke.
+
+## Hard rules
+Facts only. One actor per host. No spark-4. No Kasa. No full training. Keep under 30 min.
+
+Latest summary:
+SPARK3_CLEANED: paused the orphan T3 cron relauncher, stopped the scoped spark-3 trainer/NASFS cache leak, and verified after 04:00 that spark-3 has no train.py/tmux/GPU compute apps with 114GB available. Harvest note written to /home/dnola/v18_fix/T65_SPARK3_LEASE_CLEANUP.md; complete checkpoint /home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500 was harvested and follow-up AL card t_82a718d9 created.
+
+Comments (1):
+  [2026-05-29 04:01] atlaspatch4: SPARK3_CLEANED
+
+- Paused orphan relaunch source: local cron job `148d9a1051e0` (`T3 v18b spark-3 monitor + AL harvest`) in atlasdflash3 profile, because T3/T54 are blocked and no running dflash-al3 Kanban task owned spark-3.
+- Killed scoped orphan trainer/session on spark-3: `c15_train_NAS_v18b_s3`, PIDs 2343189/2343566/2343568, run `c15_iq4v18b_NAS_T3_spark3_val500_20260529T104916Z`.
+- Harvest note written: `/home/dnola/v18_fix/T65_SPARK3_LEASE_CLEANUP.md`.
+- Current orphan run only reached `global_step=42`, last loss 9.062, no checkpoint.
+- Useful harvested complete checkpoint: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500` (config/model/trainer_state verified; loss at step500=5.219).
+- Cleaned stale T3 NASFS shm cache after trainer kill; final verification after 04:00: no tmux sessions, no `scripts/train.py`, no `nasfs.py`, no GPU compute apps, `free -g` available=114G.
+- Created follow-up measurement card `t_82a718d9` for corrected-offset MiniMax/buun AL on the harvested 093736 step500 checkpoint, gated after T64 to avoid spark-2 contention.
+
+Events (5):
+  [2026-05-29 03:52] created {'assignee': 'atlaspatch4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 03:52] [run 569] claimed {'lock': 'macmini.local:78159', 'expires': 1780052867, 'run_id': 569}
+  [2026-05-29 03:52] [run 569] spawned {'pid': 78164}
+  [2026-05-29 04:01] commented {'author': 'atlaspatch4', 'len': 1117}
+  [2026-05-29 04:01] [run 569] completed {'result_len': 0, 'summary': 'SPARK3_CLEANED: paused the orphan T3 cron relauncher, stopped the scoped spark-3 trainer/NASFS cache leak, and verified after 04:00 that spark-3 has no train.py/tmux/GPU compute apps with 114GB available. Harvest note written to /home/dnola/v18_fix/T65_SPARK3_LEASE_CLEANUP.md; complete checkpoint /home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500 w', 'verified_cards': ['t_82a718d9']}
+
+Runs (1):
+  #569 completed    @atlaspatch4  551s  2026-05-29 03:52
+        → SPARK3_CLEANED: paused the orphan T3 cron relauncher, stopped the scoped spark-3 trainer/NASFS cache leak, and verified after 04:00 that spark-3 has no train.py

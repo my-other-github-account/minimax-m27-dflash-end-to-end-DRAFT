@@ -1,0 +1,62 @@
+Task t_1d34be1d: T67: FAST training-distribution AL probe for current best MiniMax adapter
+  status:    done
+  assignee:  atlas6dflash1
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_1d34be1d
+  max-retries: 2 (default)
+  created:   2026-05-29 04:27 by user
+  started:   2026-05-29 04:27
+  completed: 2026-05-29 04:56
+
+Body:
+# T67: FAST training-distribution AL probe for current best MiniMax adapter
+
+## Why
+T66 measured the harvested 093736 step500 checkpoint at baseline runtime AL=1.623; T64/T66 chat-template arms improve to ~1.83-1.85 but still miss AL>=3. We need to know if the drafter is only bad on GSM8K/chat prompts or also bad on its own training distribution.
+
+## Host scope
+spark-1 ONLY. Inference/eval only.
+
+## Inputs
+Prefer the newest corrected-offset GGUF from T66: `/home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf`. If not present on spark-1, copy/read from spark-2 or rebuild only if copy is <10 min; otherwise use T59/T62 corrected-offset GGUF and say so. Target GGUF: `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`.
+
+## Fast experiment
+Find 3-5 prompts from the actual v18b training/heldout prompt distribution (trace prompt json/parquet/source used by iq4_v17_consolidated). Run MiniMax/buun DFlash at draft_max=9, temp=0/top_k=1, <=512 output. Compare two arms if cheap: raw training prompt text vs MiniMax native chat template only if the prompt is instruction-like.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T67_TRAIN_DIST_AL_PROBE.md` and comment:
+- mean measured runtime AL on training-distribution prompts; per-prompt AL list; prompt source path.
+- verdict: TRAIN_DIST_GOOD (AL>=3 here -> prompt/domain gap), TRAIN_DIST_LOW (AL<2 -> recipe/model quality gap), or BLOCKED with exact missing artifact.
+
+## Global hard rules
+- FAST-ITERATION: produce a numeric/decision artifact within <=1 hour; prefer <=15 min. If staging will exceed 10 min, shrink scope and still produce a result.
+- Campaign goal is measured runtime AL >= 3.0 on OUR MiniMax target in actual practice. Report raw measured accept_length only; no multiplier/extrapolation.
+- Host scope is the named host ONLY. Do not touch spark-4. Do not Kasa-cycle. Do not launch training unless this body explicitly says training.
+- One actor per host: preflight for train.py/tmux/llama-server/GPU compute apps; if the host is occupied by another dflash-al3 task, block with exact evidence instead of contending.
+- Use corrected MiniMax/buun path: target MiniMax-M2.7 GGUF, draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59], corrected d2t-OFFSET rule target_ids = arange(len(d2t)) + d2t.
+- Preserve user-locked knobs: no max_anchors/block_size/hidden/intermediate/layers/seq_len/FSDP/multihost changes.
+
+
+
+Latest summary:
+Completed FAST spark-1 training-distribution probe and wrote `/home/dnola/v18_fix/T67_TRAIN_DIST_AL_PROBE.md`. Mean measured runtime AL was 1.441 across 5 v18 `prompts_tulu3` rows (per-prompt AL 1.347, 1.208, 1.688, 1.255, 1.707), yielding verdict TRAIN_DIST_LOW; preferred T66 GGUF was not locally staged within the 10-minute cap, so the documented fallback adapter was used.
+
+Comments (1):
+  [2026-05-29 04:56] atlas6dflash1: T67 handoff:
+- Report: `/home/dnola/v18_fix/T67_TRAIN_DIST_AL_PROBE.md`
+- Prompt source: `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/data-00000-of-00002.arrow` (`prompts_tulu3`, rows 36890, 718936, 375355, 49811, 28901), decoded with `/home/dnola/models/MiniMax-M2.7-tokenizer`, raw MiniMax-native prompt text truncated at assistant header.
+- Preferred T66 GGUF was absent on spark-1; rsync from spark-2 exceeded the 10-min staging cap, so per task rule I used fallback `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf`.
+- Runtime AL list: [1.347, 1.208, 1.688, 1.255, 1.707]; mean measured runtime AL = 1.441.
+- Verdict: TRAIN_DIST_LOW.
+
+Events (7):
+  [2026-05-29 04:27] created {'assignee': 'atlas6dflash1', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 04:27] [run 573] claimed {'lock': 'macmini.local:16952', 'expires': 1780054975, 'run_id': 573}
+  [2026-05-29 04:27] [run 573] spawned {'pid': 86320}
+  [2026-05-29 04:38] [run 573] heartbeat {'note': 'Copy of preferred T66 GGUF from spark-2 to spark-1 exceeded 10 min and was stopped around 34%; switching to existing local corrected-offset GGUF per FAST-ITERATION rule while locating training prompts/eval harness.'}
+  [2026-05-29 04:53] [run 573] claim_extended {'reason': 'pid_alive', 'worker_pid': 86320, 'claim_lock': 'macmini.local:16952', 'claim_expires_was': 1780055633, 'claim_expires_now': 1780056535, 'last_heartbeat_at': 1780054733}
+  [2026-05-29 04:56] commented {'author': 'atlas6dflash1', 'len': 659}
+  [2026-05-29 04:56] [run 573] completed {'result_len': 0, 'summary': 'Completed FAST spark-1 training-distribution probe and wrote `/home/dnola/v18_fix/T67_TRAIN_DIST_AL_PROBE.md`. Mean measured runtime AL was 1.441 across 5 v18 `prompts_tulu3` rows (per-prompt AL 1.347, 1.208, 1.688, 1.255, 1.707), yielding verdict TRAIN_DIST_LOW; preferred T66 GGUF was not locally staged within the 10-minute cap, so the documented fallback adapter was used.', 'artifacts': ['/home/dnola/v18_fix/t67_train_prompts.jsonl', '/home/dnola/v18_fix/t67_raw_results.json', '/home/dnola/v18_fix/t67_al_rows.json']}
+
+Runs (1):
+  #573 completed    @atlas6dflash1  1735s  2026-05-29 04:27
+        → Completed FAST spark-1 training-distribution probe and wrote `/home/dnola/v18_fix/T67_TRAIN_DIST_AL_PROBE.md`. Mean measured runtime AL was 1.441 across 5 v18 `

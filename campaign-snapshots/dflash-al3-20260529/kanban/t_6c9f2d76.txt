@@ -1,0 +1,66 @@
+Task t_6c9f2d76: T45: READ-ONLY harvest active spark-3 v18b training state for fast AL inputs
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_6c9f2d76
+  max-retries: 2 (default)
+  created:   2026-05-29 00:01 by user
+  started:   2026-05-29 00:01
+  completed: 2026-05-29 00:19
+
+Body:
+# T45: READ-ONLY harvest of active spark-3 v18b training process — fast signal, no mutation
+
+## Mission
+A T43 retry observed an active spark-3 training process named `c15_iq4v18b_NAS_T3_spark3_val500_20260529T060107Z` while no dflash-al3 task is currently running on spark-3. Determine whether this is useful live training, an orphan, or already produced checkpoints that can feed AL measurement. Produce signal in <15 minutes.
+
+## Host scope
+spark-3 READ-ONLY only. Do not kill, restart, Kasa-cycle, launch training, or modify run dirs. Do not touch spark-1/spark-2/spark-work/spark-4.
+
+## Steps (fast)
+1. SSH spark-3 and inspect read-only: `pgrep -af scripts/train.py`, tmux session names, run dir, latest train.log tail, checkpoint directories, free memory, GPU compute apps.
+2. Classify:
+   - LIVE_USEFUL: train.log advancing, loss healthy/descending, no contention; report current global_step, loss, ckpt paths.
+   - ORPHAN_STALE: process exists but train.log not advancing or no valid checkpoints; report exact evidence and recommend a separate cleanup card (do not kill yourself).
+   - CKPT_AVAILABLE: if step_00000100/200 or any fresh checkpoint exists, list exact paths and whether config/lm_head indicate v32768.
+3. If a fresh checkpoint exists and is accessible, comment the path onto T42 (`t_99224412`) as an additional candidate for conversion AFTER its current fixed-v32768 attempt.
+
+## Deliverable
+Comment on this task with a dense status and block `review-required`. Numeric/proof artifacts are preferred but not required; the key deliverable is whether spark-3 is live useful vs orphan and whether there is a checkpoint for fast AL measurement.
+
+## Hard rules
+READ-ONLY. No mutation. No Kasa. No training/inference launch. <15 min. If SSH is unavailable, block with exact reachability evidence.
+
+Latest summary:
+T45 reviewed/accepted: spark-3 read-only harvest found active v32768 training run c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z live/useful at step ~205, no usable checkpoint yet; recheck after step>=500.
+
+Comments (2):
+  [2026-05-29 00:04] atlaspatch5: READ-ONLY spark-3 harvest status (2026-05-29T07:03:51Z UTC): classification = LIVE_USEFUL, but CKPT_AVAILABLE = no.
+
+Evidence:
+- SSH reachable: spark-3 as dnola.
+- Active train process is NOT the originally observed 060107 run; current active run is `c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z` from `/home/dnola/speculators-c15-api`.
+- pgrep shows parent PID 2076071 plus dataloader/worker children 2076129/2076130, command includes `--draft-vocab-size 32768`, `--save-path /home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z`, `--log-dir /home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z`, `--val-every-steps 500`, `--checkpoint-freq 1`.
+- tmux sessions: `c15_train_NAS_v18b_s3`, `nasfs`.
+- No GPU contention observed: `nvidia-smi --query-compute-apps` lists only PID 2076071 using 25228 MiB. Free memory: 119Gi total, 57Gi available, 22Gi free, swap 524Mi/15Gi.
+- Train log is advancing: `/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/train.log` grew from size 95150 @ 07:02:58Z/global_step=196 to size 96034 @ 07:03:09Z/global_step=198; later read at 07:03:51Z shows size 99128, last global_step=205.
+- Current loss signal: last_step=205, last_loss=7.531, last20_loss_avg=6.12495, min=5.656, max=7.531; loss noisy but process is live and stepping.
+- Checkpoint state: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z` exists but top_count=0 (no step_00000100/200 or other files yet). A scan of matching `c15_iq4v18b_NAS_T3_spark3_val500*` checkpoint dirs found no step/checkpoint dirs. Therefore I did NOT comment a candidate path onto T42 (`t_99224412`).
+- Older matching logs/checkpoint dirs exist for 032645, 035426, 042059, 044601, 045740, 052416, 054849, 060107, 062547, 062618, 062753, 064112, 064306; matching checkpoint dirs appeared empty/no step dirs in read-only scan. The originally mentioned 060107 log stopped at 06:25:40Z and is not the active process.
+
+Recommendation: leave the current 064306 training alone; re-harvest after val/checkpoint threshold (likely >= step 500) before feeding T42/AL conversion.
+  [2026-05-29 00:19] dflash-al3-driver: review APPROVED. T45 reviewed/accepted: spark-3 read-only harvest found active v32768 training run c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z live/useful at step ~205, no usable checkpoint yet; recheck after step>=500.
+
+Events (7):
+  [2026-05-29 00:01] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 00:01] [run 532] claimed {'lock': 'macmini.local:20922', 'expires': 1780038998, 'run_id': 532}
+  [2026-05-29 00:01] [run 532] spawned {'pid': 20926}
+  [2026-05-29 00:04] commented {'author': 'atlaspatch5', 'len': 2171}
+  [2026-05-29 00:04] [run 532] blocked {'reason': 'review-required: spark-3 read-only harvest done — current 064306 run is live/useful and v32768, but no usable checkpoint exists yet; recommend recheck after step>=500.'}
+  [2026-05-29 00:19] commented {'author': 'dflash-al3-driver', 'len': 225}
+  [2026-05-29 00:19] [run 534] completed {'result_len': 0, 'summary': 'T45 reviewed/accepted: spark-3 read-only harvest found active v32768 training run c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z live/useful at step ~205, no usable checkpoint yet; recheck after step>=500.'}
+
+Runs (2):
+  #532 blocked      @atlaspatch5  158s  2026-05-29 00:01
+        → review-required: spark-3 read-only harvest done — current 064306 run is live/useful and v32768, but no usable checkpoint exists yet; recommend recheck after ste
+  #534 completed    @atlaspatch5  0s  2026-05-29 00:19
+        → T45 reviewed/accepted: spark-3 read-only harvest found active v32768 training run c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z live/useful at step ~205, no

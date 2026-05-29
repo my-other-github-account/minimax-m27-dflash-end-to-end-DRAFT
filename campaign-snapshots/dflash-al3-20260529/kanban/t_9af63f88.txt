@@ -1,0 +1,61 @@
+Task t_9af63f88: T82: FAST AL of T80 step700 checkpoint on MiniMax/buun
+  status:    running
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_9af63f88
+  max-retries: 2 (default)
+  created:   2026-05-29 07:41 by user
+  started:   2026-05-29 07:41
+  parents:   t_4106997b
+
+Body:
+# T82: FAST AL of T80 step700 checkpoint on MiniMax/buun (<1h)
+
+## Mission
+Measure the fresh T80 checkpoint's raw runtime AL on OUR MiniMax target using the validated buun MiniMax path. Campaign goal: measured runtime AL >=3.0 sustained/reproducible. T79 is measuring T78 step650 on spark-2; this task measures the newer T80 step700 checkpoint on spark-work in parallel so we get the trajectory fast.
+
+## Inputs
+Parent T80. Read T80 handoff first. Source checkpoint:
+`/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700`
+T80 training-side val: step700 loss_epoch=5.1375, full_acc_epoch=0.17353, AL_LO=1.446, AL_HI=2.214.
+
+## Host scope
+spark-work ONLY for conversion/inference. Do not touch spark-1/spark-2/spark-3/spark-4 except read-only copy of the checkpoint if needed. No Kasa. No training. One actor per host: if a live task/llama/vLLM/GPU process owns spark-work, block SPARKWORK_BUSY with evidence.
+
+## Steps
+1. Preflight spark-work one-actor lease: no train.py/trainer tmux/llama-server/vLLM/GPU compute app from another task; >=90GB free if applicable. If busy, block with exact evidence, do not kill live owned work.
+2. Convert/rebake T80 step700 via the validated corrected MiniMax path: MiniMax target GGUF, draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59], corrected d2t-OFFSET mapping `target_id = arange(len(d2t)) + d2t`.
+3. Run fast MiniMax native-chat AL smoke: draft_max=15 first, 5 prompts <=512 output, temp=0/top_k=1. If mean AL is 2.9-3.05 or any prompt >3, add draft_max=17 on 3 prompts. If clearly <2.7 after 3 prompts, stop early and report.
+4. No multipliers/extrapolations; quote measured accept_length only.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T82_T80_STEP700_MINIMAX_AL.md` and comment concise table: ckpt path, GGUF path, draft_max, per-prompt ALs, mean AL, draft_n_decoded/accepted if available, verdict GOAL_HIT / NEAR_MISS / NO_IMPROVEMENT. Raw measured AL only.
+
+## Hard rules
+FAST <=1h. One actor per host. Preserve locked knobs. No spark-4. Inference/conversion only.
+
+Latest summary:
+Iteration budget exhausted (90/90) — task could not complete within the allowed iterations
+
+Comments (1):
+  [2026-05-29 08:34] dflash-al3-driver: DRIVER RESUME 08:34: T82 hit iteration budget after doing useful setup: preflight clean on spark-work, copied T80 step700 ckpt, draft GGUF conversion succeeded, MiniMax target GGUF copied, server load slow but active/draft load began. Resume contract: FIRST read existing /home/dnola/v18_fix/t82* artifacts/logs; do NOT redo conversion or GGUF copy if outputs exist; continue from server readiness/AL smoke. If server is still loading, wait/check readiness; then run the same 5-prompt <=512 raw AL smoke. If spark-work is busy with a live owned process, block SPARKWORK_BUSY with evidence. FAST: produce numeric AL or concrete blocker this run.
+
+Events (14):
+  [2026-05-29 07:41] created {'assignee': 'atlas6dflash5', 'status': 'ready', 'parents': ['t_4106997b'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 07:41] [run 599] claimed {'lock': 'macmini.local:34778', 'expires': 1780066619, 'run_id': 599}
+  [2026-05-29 07:41] [run 599] spawned {'pid': 34781}
+  [2026-05-29 07:51] [run 599] heartbeat {'note': 'Preflight clean on spark-work; copied T80 step700 checkpoint read-only from spark-3; draft GGUF conversion succeeded. Target MiniMax GGUF missing on spark-work; copying read-only GGUF shards from spark-3 to run buun inference.'}
+  [2026-05-29 08:06] [run 599] claim_extended {'reason': 'pid_alive', 'worker_pid': 34781, 'claim_lock': 'macmini.local:34778', 'claim_expires_was': 1780067189, 'claim_expires_now': 1780068092, 'last_heartbeat_at': 1780066289}
+  [2026-05-29 08:09] [run 599] heartbeat {'note': 'MiniMax target GGUF copied to spark-work; server load is slow but active (target loaded, draft load began at ~6m37s in log). Waiting for readiness before AL smoke.'}
+  [2026-05-29 08:17] [run 599] blocked {'reason': 'Iteration budget exhausted (90/90) — task could not complete within the allowed iterations'}
+  [2026-05-29 08:34] commented {'author': 'dflash-al3-driver', 'len': 644}
+  [2026-05-29 08:34] unblocked
+  [2026-05-29 08:34] [run 605] claimed {'lock': 'macmini.local:50154', 'expires': 1780069744, 'run_id': 605}
+  [2026-05-29 08:34] [run 605] spawned {'pid': 50157}
+  [2026-05-29 08:35] [run 605] heartbeat {'note': 'Resumed T82. spark-work pings and SSH auth succeeds, but session/channel creation is hanging; retrying with longer command timeout to determine whether existing server/AL smoke can be inspected or if host is concretely wedged/busy.'}
+  [2026-05-29 08:37] [run 605] heartbeat {'note': 'spark-work preflight: only the prior T82 llama-server is running, healthy on port 18082 with DFlash enabled (block_size=8, target_ids=[2,16,30,45,59], draft_max=15). Starting 5-prompt <=512 native-chat AL smoke.'}
+  [2026-05-29 08:48] [run 605] heartbeat {'note': 'The inherited T82 llama-server became unresponsive to /health and SSH commands; killed only the T82-owned server PIDs. Restarting server from existing GGUF artifacts, no reconversion/copy.'}
+
+Runs (2):
+  #599 blocked      @atlas6dflash5  2115s  2026-05-29 07:41
+        → Iteration budget exhausted (90/90) — task could not complete within the allowed iterations
+  #605 running      @atlas6dflash5  active  2026-05-29 08:34

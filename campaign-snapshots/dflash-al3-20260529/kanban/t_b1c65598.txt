@@ -1,0 +1,65 @@
+Task t_b1c65598: T57: FAST corrected MiniMax scatter rebake of T53 step500 and AL smoke after T55
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b1c65598
+  max-retries: 2 (default)
+  created:   2026-05-29 02:11 by atlas6dflash5
+  started:   2026-05-29 02:15
+  completed: 2026-05-29 02:16
+  parents:   t_50ef4f0e, t_60aae868
+
+Body:
+# T57: FAST corrected MiniMax scatter rebake of T53 step500 and AL smoke after T55
+
+## Why
+T53 measured fresh spark-3 step500 on MiniMax/buun path and got runtime `STEP500_AL=1.6511068636139357` (3x512, draft_max=9), below the campaign target AL>=3. Its mapping sanity is bad: `d2t_unique=20681` and `output_weight_nonfloor_rows_after_scatter=20681` for a 32768-row draft vocab. T52 already resolved that raw duplicate d2t offsets are not themselves a collision if the target row is computed as `target_id = arange(draft_vocab) + d2t`; T55 is finishing the row-norm/generated-token coverage audit. This task is the next bounded lever after T55, not a duplicate audit.
+
+## Host scope / one-actor rule
+- Use spark-2 only for conversion + runtime AL smoke; local/macmini workspace is OK for notes.
+- Do not use spark-4.
+- One actor on spark-2: preflight before any conversion/inference; if `train.py`, `llama-server`, another kanban task, or GPU contention is active, block `SPARK2_BUSY` with exact process evidence.
+- Do not mutate source checkpoint, model, tokenizer, or shared export dirs. Write new artifacts under a task-specific directory such as `/home/dnola/v18_fix/t57/`.
+
+## Inputs
+- T53 report: `/home/dnola/v18_fix/T53_STEP500_MINIMAX_AL.md`
+- T53 source checkpoint copy: `/home/dnola/v18_fix/t53/source_step_00000500`
+- T53 draft GGUF: `/home/dnola/v18_fix/t53/step500_minimax_buun_rebaked.gguf`
+- T53 target GGUF: `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`
+- Mapping files: `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/d2t.npy`, `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/t2d.npy`
+- T55 handoff/report/comment. Read it first and do not redo its full tensor audit.
+
+## Steps (<1h)
+1. Read T55 result. If T55 says `SPARK2_BUSY`/`ARTIFACTS_MISSING`, block with that dependency. If T55 says `CONVERSION_ARTIFACT_UNLIKELY`, do not force a rebake; complete with `NO_REBAKE_T55_ARTIFACT_UNLIKELY` and recommend the next task be a non-conversion recipe/target-layer lever.
+2. If T55 says `CONVERSION_ARTIFACT_LIKELY` or confirms sparse/missing generated-token coverage consistent with T53 (`20681` populated rows), create a corrected full-vocab MiniMax lm_head scatter for T53 step500 using the T52-corrected target row formula (`target_id = arange(draft_vocab) + d2t`, not raw `d2t`), then convert/rebake to GGUF in `/home/dnola/v18_fix/t57/`.
+3. Verify the corrected artifact before runtime: full target vocab shape, target row ids in range, populated output rows should be ~32768 (not 20681), and no populated rows outside expected mask except any documented floor/default rows.
+4. Run the same bounded runtime AL smoke as T53: 3 completed 512-token runs, `draft_max=9`, same target GGUF, same MiniMax/buun harness. Record raw `runtime_al`, `draft_n`, `draft_n_accepted`, and mean `CORRECTED_STEP500_AL`. No multipliers.
+5. Write `T57_CORRECTED_SCATTER_STEP500_AL.md` in the workspace and comment one of:
+   - `CORRECTED_STEP500_AL=<mean>` with artifact paths and exact row counts, or
+   - `NO_REBAKE_T55_ARTIFACT_UNLIKELY`, or
+   - `SPARK2_BUSY` / blocker with exact evidence.
+
+## Decision rule
+- If corrected measured runtime AL >= 3, comment `GOAL_HIT_CANDIDATE` and recommend a larger prompt-set reproducibility task.
+- If corrected measured runtime AL remains <3, recommend the next bounded lever based on the result (e.g. draft_max grid only if close; otherwise non-conversion training/recipe/target-layer change). Facts only; no estimated multipliers.
+
+Latest summary:
+T57 completed as NO_REBAKE_T55_ARTIFACT_UNLIKELY based on T55 parent verdict; no spark-2 conversion/inference was run. Wrote `T57_CORRECTED_SCATTER_STEP500_AL.md` in the workspace recommending a non-conversion recipe/target-layer lever next.
+
+Comments (1):
+  [2026-05-29 02:15] atlaspatch5: NO_REBAKE_T55_ARTIFACT_UNLIKELY
+
+T55 parent verdict was CONVERSION_ARTIFACT_UNLIKELY, so T57 did not use spark-2 for corrected rebake/runtime smoke. Wrote report: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b1c65598/T57_CORRECTED_SCATTER_STEP500_AL.md`.
+
+Evidence used from T55: computed corrected target ids unique=32768, duplicate computed target ids=0, learned/non-floor expected rows=32768, floor inside expected mask=0, generated content coverage=1378/1536 (89.7135%). Recommendation: next task should be a non-conversion recipe/target-layer lever rather than another scatter rebake.
+
+Events (6):
+  [2026-05-29 02:11] created {'assignee': 'atlaspatch5', 'status': 'todo', 'parents': ['t_50ef4f0e', 't_60aae868'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 02:15] promoted
+  [2026-05-29 02:15] [run 555] claimed {'lock': 'macmini.local:16977', 'expires': 1780047020, 'run_id': 555}
+  [2026-05-29 02:15] [run 555] spawned {'pid': 54090}
+  [2026-05-29 02:15] commented {'author': 'atlaspatch5', 'len': 606}
+  [2026-05-29 02:16] [run 555] completed {'result_len': 0, 'summary': 'T57 completed as NO_REBAKE_T55_ARTIFACT_UNLIKELY based on T55 parent verdict; no spark-2 conversion/inference was run. Wrote `T57_CORRECTED_SCATTER_STEP500_AL.md` in the workspace recommending a non-conversion recipe/target-layer lever next.'}
+
+Runs (1):
+  #555 completed    @atlaspatch5  44s  2026-05-29 02:15
+        → T57 completed as NO_REBAKE_T55_ARTIFACT_UNLIKELY based on T55 parent verdict; no spark-2 conversion/inference was run. Wrote `T57_CORRECTED_SCATTER_STEP500_AL.m

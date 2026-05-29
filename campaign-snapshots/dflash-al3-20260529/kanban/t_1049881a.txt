@@ -1,0 +1,130 @@
+Task t_1049881a: T43: FAST draft_max sweep on recovered harness — map AL plateau <30min (idle spark-2)
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_1049881a
+  skills:    spark-cluster-operations, llama-cpp, dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 23:01 by user
+  started:   2026-05-28 23:01
+  completed: 2026-05-29 00:19
+
+Body:
+# T43: FAST draft_max sweep on the recovered harness — map the AL plateau in <30 min (fills idle spark-2)
+
+## Mission (user pivot): fast inference work, early proof. spark-2 is idle; use it for a fast inference experiment that informs the campaign WITHOUT waiting on training.
+
+## Host: spark-2 (idle, healthy post-T37). Do NOT touch spark-4. One actor on spark-2 (this task holds the lease).
+
+## What this answers fast
+On the recovered buun harness, how does AL change with draft_max? This maps the structural AL ceiling and tells us the optimal draft_max for our verifier class — pure inference, no training wait. Use the z-lab reference drafter (known-good) so the number is trustworthy and isolates the harness/draft_max axis.
+
+## Prereqs
+buun fork must be built on spark-2 OR copy the built binary from spark-work (/home/dnola/llama.cpp.buun/build/bin/). If not present, build it (cmake -DGGML_CUDA=ON -DGGML_NATIVE=ON -DGGML_CUDA_FA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON, ~5-8 min). Reuse the z-lab gguf + Qwen3.6-35B-A3B verifier (copy from spark-1 or spark-work if not local).
+
+## Steps (FAST)
+1. Ensure buun llama-cli/server binary + z-lab drafter gguf (zlab_qwen36_35b_a3b_dflash_buun.gguf) + verifier (Qwen3.6-35B-A3B-UD-IQ4_XS.gguf) present on spark-2.
+2. Run 2 GSM8K prompts at max_out=512 for each draft_max in {3, 5, 7, 9, 11}. ~2-3 min per config = ~25 min total.
+3. Record mean AL per draft_max. Find the plateau (where AL stops climbing).
+
+## Verdict -> /home/dnola/v18_fix/T43_DRAFTMAX_SWEEP.md
+- Table: draft_max -> mean AL (z-lab drafter, recovered harness, 512-tok GSM8K).
+- The plateau height = structural AL ceiling for this verifier class; the plateau onset = optimal draft_max to use for OUR adapter's measurement (feeds T42 / future runs).
+
+## Hard rules
+One actor on spark-2. Do NOT touch spark-4. Do NOT modify buun source. 45-min time-box. Inference only, no training on this host while this runs.
+
+## Reference
+T33 runner: /home/dnola/zlab_ref_drafter/t33_run_published_gsm8k.py
+buun build (copy binary): spark-work:/home/dnola/llama.cpp.buun/build/bin/
+z-lab gguf: zlab_qwen36_35b_a3b_dflash_buun.gguf ; verifier: Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
+Skill: dflash-c15-fp8-hybrid-winning-config-and-health-rules (Rule 10 structural-ceiling sweep)
+
+
+Latest summary:
+T43 reviewed/accepted: z-lab draft_max sweep on spark-2 completed with numeric AL table. Mean AL by draft_max: 3=3.0120, 5=3.6208, 7=4.7655, 9=5.0348, 11=5.1748. Verdict: practical plateau around draft_max=9; 11 adds only +0.140 mean AL. Harness remains healthy.
+
+Comments (8):
+  [2026-05-28 23:07] atlasdflash4: T43 blocked before full sweep: spark-2 became unreachable immediately after the first DFlash smoke run.
+
+Observed/changed:
+- Verified spark-2 was initially reachable and idle: `hostname=spark-2`, no competing llama/python/train/vllm processes seen, GPU util 0.
+- Required artifacts were missing on spark-2, so copied from spark-work over QSFP:
+  - `/home/dnola/llama.cpp.buun/build/bin/llama-cli`
+  - `/home/dnola/llama.cpp.buun/build/bin/llama-speculative-simple`
+  - copied required shared libs into `/home/dnola/llama.cpp.buun/build/bin/`
+  - `/home/dnola/zlab_ref_drafter/zlab_qwen36_35b_a3b_dflash_buun.gguf` (915M)
+  - `/home/dnola/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf` (17G)
+- New copied `llama.cpp.buun` binary did NOT actually engage DFlash; it logged `draft-simple` despite `--spec-type dflash`.
+- Existing `/home/dnola/buun-llama-cpp/build/bin/llama-speculative-simple` DID engage DFlash with `--draft N` (not `--spec-draft-n-max N`). Smoke command used:
+  `cd /home/dnola/buun-llama-cpp/build/bin; LD_LIBRARY_PATH=. ./llama-speculative-simple -m /home/dnola/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf -md /home/dnola/zlab_ref_drafter/zlab_qwen36_35b_a3b_dflash_buun.gguf --spec-type dflash --draft 3 -ngl 999 -ngld 999 -c 4096 -n 32 --temp 0 -p 'Q: Janet has 16 apples. She gives 3 to Tom and buys 8 more. How many apples does she have now? A:'`
+- Smoke result before host loss: DFlash initialized (`block_size=16`, `n_target_layers=5`), decoded 28 tokens, `iterations=20`, `n_accept=8`, AL = `1 + 8/20 = 1.40` (equivalently 28/20) for draft_max=3 on a toy prompt.
+
+Failure evidence:
+- After smoke completed, macmini could not reach spark-2 via `spark-2` alias, Tailscale `100.116.35.32`, or 88-net `192.168.88.12`.
+- From spark-work, QSFP `192.168.200.2` and 88-net `192.168.88.12` both failed ping; `nc 192.168.200.2 22` timed out; neighbor for QSFP was `INCOMPLETE`.
+- I did NOT touch spark-4 and did NOT modify buun source.
+
+Partial data is not enough for the requested plateau table; `/home/dnola/v18_fix/T43_DRAFTMAX_SWEEP.md` was not written because spark-2 is unreachable.
+  [2026-05-28 23:08] dflash-al3-driver: Driver triage: keeping T43 blocked for now because T41 is the spark-2 lease-holder and T43 already found spark-2 unreachable. Do NOT respawn another spark-2 actor until T41 either completes, blocks, or explicitly releases spark-2. Partial smoke data preserved: draft_max=3 toy prompt AL≈1.40 on z-lab with buun DFlash before host loss.
+  [2026-05-28 23:09] dflash-al3-driver: HOST OVERRIDE / retry after block: do NOT use spark-2; T41 is the spark-2 lease-holder and spark-2 may be unreachable. Resume this T43 draft_max sweep on spark-3 ONLY, if spark-3 is free. Keep it FAST: use existing/copy buun binary + z-lab drafter/verifier as needed, 2 GSM8K prompts @ max_out=512 for draft_max {3,5,7,9,11}, aim <30 min. Do not touch spark-1/spark-2/spark-work/spark-4. If spark-3 artifacts are missing and staging would exceed 10 min, run the smallest viable z-lab DFlash smoke that yields numeric AL, then block review-required.
+  [2026-05-28 23:10] atlasdflash4: Retry orientation on host override: spark-3 is reachable but NOT free, so I did not launch the inference sweep and did not touch spark-1/spark-2/spark-work/spark-4.
+
+Evidence from `ssh spark-3` at 23:10:
+- hostname: `spark-3`
+- active long-running training process: `/home/dnola/venvs/te/bin/python scripts/train.py ... --run-name c15_iq4v18b_NAS_T3_spark3_val500_20260529T060107Z ...`
+- active NAS FUSE/tmux process also present
+- GPU reported util 14% at probe time, but the training process owns the host; per HOST OVERRIDE I only proceed on spark-3 if free.
+
+No files written on spark-3; no buun/source/model changes made.
+  [2026-05-28 23:31] atlaspatch4: T44 spark-2 recovery note: power-cycled Strip #2 plug 2 (`kasa-cloud cycle 9067 2 30`), verified ON, and spark-2 is reachable again via alias/10.0.0.130 and TS. Post-boot evidence: no live `[s]cripts/train.py`, no tmux sessions, no GPU compute apps, free=115G available. T41 smoke did not make step100/200 ckpts (log stops at global_step=76). Per T44 priority, spark-2 is released only for T42 READ-ONLY checkpoint pull first; do not respawn T43 onto spark-2 until T42 has had first chance or driver reassigns.
+  [2026-05-29 00:01] dflash-al3-driver: Driver 00:00 PDT: spark-2 was recovered by T44 and is safe for inference again. Resume T43 on spark-2 ONLY if preflight shows no active T42 transfer/ssh/tar/rsync touching spark-2 and no train.py/tmux/GPU compute apps. If T42 is still actively pulling from spark-2, block immediately with that evidence (do not contend). Otherwise run the fast z-lab draft_max sweep {3,5,7,9,11}, 2 GSM8K prompts @512 tok, write numeric AL table, then block review-required.
+  [2026-05-29 00:08] atlasdflash4: review-required handoff:
+{
+  "artifact": "/home/dnola/v18_fix/T43_DRAFTMAX_SWEEP.md",
+  "host": "spark-2",
+  "harness": "/home/dnola/buun-llama-cpp/build/bin/llama-speculative-simple",
+  "mode": "z-lab drafter + Qwen3.6-35B-A3B UD-IQ4_XS verifier, --spec-type dflash, --ignore-eos, -n 512",
+  "draft_max_sweep": [
+    {"draft_max": 3, "als": [4.5664, 1.4576], "mean_al": 3.0120},
+    {"draft_max": 5, "als": [4.6636, 2.5779], "mean_al": 3.6208},
+    {"draft_max": 7, "als": [5.9655, 3.5655], "mean_al": 4.7655},
+    {"draft_max": 9, "als": [7.9077, 2.1618], "mean_al": 5.0348},
+    {"draft_max": 11, "als": [6.9324, 3.4172], "mean_al": 5.1748}
+  ],
+  "verdict": "plateau height ~=5.0-5.2 mean AL; practical plateau onset draft_max=9; draft_max=11 adds only +0.140 mean AL vs 9 (+2.8%)",
+  "raw_logs": "/home/dnola/v18_fix/t43_draftmax_sweep_logs_ignore_eos/",
+  "verification": "report written and read back; post-run spark-2 preflight shows no llama/train/vllm/tar/rsync processes and GPU util 0%"
+}
+  [2026-05-29 00:19] dflash-al3-driver: review APPROVED. T43 reviewed/accepted: z-lab draft_max sweep on spark-2 completed with numeric AL table. Mean AL by draft_max: 3=3.0120, 5=3.6208, 7=4.7655, 9=5.0348, 11=5.1748. Verdict: practical plateau around draft_max=9; 11 adds only +0.140 mean AL. Harness remains healthy.
+
+Events (24):
+  [2026-05-28 23:07] commented {'author': 'atlasdflash4', 'len': 2150}
+  [2026-05-28 23:07] [run 523] blocked {'reason': 'spark-2 became unreachable on TS/88-net/QSFP immediately after first DFlash smoke; full draft_max sweep cannot continue without operator recovery/power decision.'}
+  [2026-05-28 23:08] commented {'author': 'dflash-al3-driver', 'len': 335}
+  [2026-05-28 23:09] commented {'author': 'dflash-al3-driver', 'len': 548}
+  [2026-05-28 23:09] unblocked
+  [2026-05-28 23:09] [run 525] claimed {'lock': 'macmini.local:7945', 'expires': 1780035894, 'run_id': 525}
+  [2026-05-28 23:09] [run 525] spawned {'pid': 7949}
+  [2026-05-28 23:10] commented {'author': 'atlasdflash4', 'len': 626}
+  [2026-05-28 23:10] [run 525] blocked {'reason': 'spark-3 is not free: active c15_iq4v18b_NAS_T3_spark3_val500_20260529T060107Z training process owns the host; T43 sweep needs a free inference host or explicit permission to contend.'}
+  [2026-05-28 23:31] commented {'author': 'atlaspatch4', 'len': 510}
+  [2026-05-29 00:01] commented {'author': 'dflash-al3-driver', 'len': 457}
+  [2026-05-29 00:01] unblocked
+  [2026-05-29 00:01] [run 530] claimed {'lock': 'macmini.local:20922', 'expires': 1780038998, 'run_id': 530}
+  [2026-05-29 00:01] [run 530] spawned {'pid': 20924}
+  [2026-05-29 00:02] [run 530] heartbeat {'note': 'spark-2 preflight clean: no train.py/tmux/GPU compute apps or T42 transfer processes; buun DFlash binary + z-lab drafter + verifier are present. Starting draft_max sweep now.'}
+  [2026-05-29 00:05] [run 530] heartbeat {'note': 'Initial sweep completed but many GSM8K prompts stopped early on EOS, making AL means noisy. Rerunning same 2 prompts with --ignore-eos to force the requested 512-token max_out and parse AL as n_predict / dflash #gen drafts.'}
+  [2026-05-29 00:08] commented {'author': 'atlasdflash4', 'len': 1000}
+  [2026-05-29 00:08] [run 530] blocked {'reason': 'review-required: T43 draft_max sweep completed on spark-2; numeric AL table written to /home/dnola/v18_fix/T43_DRAFTMAX_SWEEP.md, recommended draft_max=9 pending human review.'}
+  [2026-05-29 00:19] commented {'author': 'dflash-al3-driver', 'len': 279}
+  [2026-05-29 00:19] [run 533] completed {'result_len': 0, 'summary': 'T43 reviewed/accepted: z-lab draft_max sweep on spark-2 completed with numeric AL table. Mean AL by draft_max: 3=3.0120, 5=3.6208, 7=4.7655, 9=5.0348, 11=5.1748. Verdict: practical plateau around draft_max=9; 11 adds only +0.140 mean AL. Harness remains healthy.'}
+
+Runs (4):
+  #523 blocked      @atlasdflash4  357s  2026-05-28 23:01
+        → spark-2 became unreachable on TS/88-net/QSFP immediately after first DFlash smoke; full draft_max sweep cannot continue without operator recovery/power decision
+  #525 blocked      @atlasdflash4  42s  2026-05-28 23:09
+        → spark-3 is not free: active c15_iq4v18b_NAS_T3_spark3_val500_20260529T060107Z training process owns the host; T43 sweep needs a free inference host or explicit 
+  #530 blocked      @atlasdflash4  396s  2026-05-29 00:01
+        → review-required: T43 draft_max sweep completed on spark-2; numeric AL table written to /home/dnola/v18_fix/T43_DRAFTMAX_SWEEP.md, recommended draft_max=9 pendin
+  #533 completed    @atlasdflash4  0s  2026-05-29 00:19
+        → T43 reviewed/accepted: z-lab draft_max sweep on spark-2 completed with numeric AL table. Mean AL by draft_max: 3=3.0120, 5=3.6208, 7=4.7655, 9=5.0348, 11=5.1748

@@ -1,0 +1,66 @@
+Task t_d5077e99: T_SPEEDUP: FAST measured wall-clock speedup of current-best drafter vs no-draft baseline
+  status:    todo
+  assignee:  atlas6dflash2
+  workspace: scratch
+  max-retries: 2 (default)
+  created:   2026-05-29 08:38 by main-driver-followup
+  parents:   t_e6dde2c8
+
+Body:
+# FAST measured end-to-end SPEEDUP of current-best drafter vs no-draft baseline (<=1h)
+
+## Mission
+AL is a proxy; the real question is wall-clock. Measure whether the current-best DFlash drafter produces an ACTUAL decode speedup (tokens/sec) over plain autoregressive decoding on the SAME MiniMax target, SAME prompts, SAME machine. Low accept fraction (~0.04-0.05) at draft_max=13-15 means draft+verify overhead could net NEGATIVE. Find out for real. Run AFTER / alongside t_e6dde2c8 (in-dist AL) and reuse its prompt set if available.
+
+## Why this matters
+- T72 reported per-prompt elapsed_s + tokens_predicted but NEVER compared against a no-draft baseline, so we have AL but ZERO evidence of real speedup.
+- Speculative decoding only wins if (mean accepted tokens per verify step) outweighs the cost of drafting draft_max tokens + one target verify pass. At accept_frac ~0.04 this is not guaranteed.
+
+## Host scope
+spark-2 ONLY. Inference/eval only. Do NOT touch spark-1/spark-3/spark-4/spark-work. No Kasa. No training. Block SPARK2_BUSY if a live train.py/llama-server/GPU compute app owns the host. Cap TORCHINDUCTOR_COMPILE_THREADS.
+
+## Exact inputs
+- Draft GGUF (current best, corrected d2t-OFFSET): /home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf
+- Target: /home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf
+- Prompts: REUSE the exact prompt set + source_row_idx list from t_e6dde2c8 (in-dist Tulu3) if its report exists at /home/dnola/v18_fix/T_VALDIST_INDIST_AL.md; otherwise reuse the T72 GSM8K-style prompts. Use the SAME prompts for both arms below.
+
+## Steps (FAST, target <=45min)
+1. BASELINE arm (no draft): run the target GGUF alone (draft disabled / draft_max=0 or plain llama decode) on each prompt, deterministic temp=0/top_k=1, max_out<=512. Record per-prompt: tokens_generated, wall_elapsed_s, and tokens_per_sec = tokens_generated/wall_elapsed_s. Warm the server first (1 discard run) so mmap/load is not counted.
+2. SPECULATIVE arm: same prompts, same target, WITH the draft GGUF at draft_max=13 AND draft_max=15 (the T72 op-points). Record per-prompt tokens_generated, wall_elapsed_s, tokens_per_sec, plus measured runtime AL and accept_frac.
+3. Compute SPEEDUP = spec_tokens_per_sec / baseline_tokens_per_sec, per-prompt and mean, for each draft_max. Also report mean wall-clock seconds per arm.
+4. Sanity: confirm both arms produced equivalent output token counts / same greedy continuations where possible (so we are comparing like for like, not a short-circuited run).
+
+## Deliverable
+Write /home/dnola/v18_fix/T_SPEEDUP_MEASURED.md and comment:
+- baseline tok/s (mean + per-prompt), speculative tok/s at dmax13 and dmax15 (mean + per-prompt), measured SPEEDUP ratios, accept_frac, and the verdict:
+  - SPEEDUP>1.0 reproducibly -> REAL_SPEEDUP=<ratio> (note which dmax wins)
+  - SPEEDUP<=1.0 -> NET_NEGATIVE (drafter slower than plain decode at this accept rate); state the break-even accept_frac/AL needed to reach 1.0x given measured per-token draft+verify cost.
+- raw measured numbers only; no extrapolation/multiplier.
+
+## Hard rules
+FAST <=1h, inference only, spark-2 only, no source edits, no spark-4, raw measured wall-clock only. Warm before timing. Same prompts both arms.
+
+
+Comments (2):
+  [2026-05-29 08:42] main-driver-followup: ## ⚠️ TOP PRIORITY + ADVERSARIAL VERIFICATION GATE (added by driver)
+
+This result (from-scratch step-500 drafter clearing AL after weeks) is suspiciously good. The runtime AL already EXCEEDS its own teacher-forced ceiling (2.9 > AL_HI 2.20), which is a red flag, NOT a win. Treat your job as trying to PROVE THE NUMBER IS FAKE. Only if you cannot break it does it count. Run this anti-fooling checklist and report each item explicitly with evidence:
+
+1. OUTPUT CORRECTNESS — speculative decoding MUST be lossless. Run the SAME prompt through (a) target-only greedy and (b) target+draft greedy. The generated token sequences MUST be IDENTICAL token-for-token. If they differ, the harness is NOT doing real verified spec-decode — it is free-running the draft and the AL is meaningless. Report: exact-match Y/N per prompt.
+
+2. AL DENOMINATOR SANITY — confirm the AL formula uses VERIFIED-ACCEPTED tokens over TARGET FORWARD PASSES, i.e. AL = tokens_emitted / n_target_verify_steps. A common fake: dividing by (draft_n/draft_max) or by draft calls instead of target verify steps inflates AL. Print the raw counters: tokens_emitted, n_target_forward_passes, n_draft_tokens_proposed, n_draft_tokens_accepted. Recompute AL by hand from these and confirm it matches the reported number.
+
+3. NO SHORT-CIRCUIT / EOS GAMING — check stop reason per prompt. If runs stop early on 'eos' with tiny token counts, AL is computed over too few tokens to be meaningful. Require >=128 emitted tokens per prompt for the AL to count; flag any prompt that stopped short.
+
+4. TARGET ACTUALLY LOADED — confirm the MiniMax target GGUF is genuinely the verifier (not the draft self-verifying, not a stub). Print model load lines + n_params for BOTH models from the server log. A draft-verifying-itself bug produces high AL and zero real speedup.
+
+5. ACCEPT-RATE vs AL CONSISTENCY — with accept_frac ~0.04 and draft_max 13-15, mean accepted per step should be small. If AL ~2.9 but accept_frac ~0.04, those are in tension; reconcile them arithmetically or flag INCONSISTENT.
+
+VERDICT must be one of: VERIFIED_REAL (all 5 pass + output identical) | FAKE_<which item failed> | INCONCLUSIVE_<reason>. Do not report a positive AL/speedup as real unless item 1 (identical output) passes.
+  [2026-05-29 08:43] main-driver-followup: DRIVER RETARGET: spark-2 is busy with a live t85/t83 AL smoke (102931 MiB GPU). spark-1 is now FREE (T81 completed) and has T81 artifacts staged locally. HOST SCOPE CHANGE: run this on spark-1 ONLY instead of spark-2. All other rules unchanged (inference only, no spark-4, no Kasa, block SPARK1_BUSY if a live task/llama/vLLM/GPU proc owns the host, cap TORCHINDUCTOR_COMPILE_THREADS). The companion speedup task t_d5077e99 MUST run on the SAME host (spark-1) so baseline vs speculative timings are comparable. The current-best step500 draft GGUF lives on spark-3 at /home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf — copy via QSFP (192.168.200.x) if absent on spark-1, or if only the T81 step2500 export is local, measure THAT and label which GGUF was used. Identical-output lossless check (gate item 1) is mandatory regardless of GGUF.
+
+Events (4):
+  [2026-05-29 08:38] created {'assignee': 'atlasdflash4', 'status': 'todo', 'parents': ['t_e6dde2c8'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 08:42] commented {'author': 'main-driver-followup', 'len': 2253}
+  [2026-05-29 08:43] commented {'author': 'main-driver-followup', 'len': 867}
+  [2026-05-29 08:43] assigned {'assignee': 'atlas6dflash2'}

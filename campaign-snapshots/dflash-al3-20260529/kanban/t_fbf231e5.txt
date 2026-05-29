@@ -1,0 +1,204 @@
+Task t_fbf231e5: T1: Apply v18 resume-corruption fix + relaunch v18 training on spark-2 from step 2500
+  status:    done
+  assignee:  atlasdflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_fbf231e5
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules, dflash-training
+  max-retries: 2 (default)
+  created:   2026-05-28 07:30 by user
+  started:   2026-05-28 12:27
+  completed: 2026-05-28 13:37
+  children:  t_6781d383, t_bef247a2, t_ca89c5a5
+
+Body:
+# T1: Apply v18 resume-corruption fix + relaunch spark-2 training from step 2500
+
+## CONTEXT — read this fully before claiming
+
+We currently have v18 step 2500 measured at **AL=1.363** (CI 1.351–1.380), speedup **0.679× (SLOWER than AR)** on the diverse 25-prompt T16 benchmark. Training AL_LB at step 2500 was 1.772. Z-lab sub-100B reference DFlash drafters reach measured AL 3.94–6.34. **Target: measured AL > 3 with positive speedup.**
+
+T2 of board `v18-fix` (done) diagnosed the root cause: **the C15 speculators trainer loads checkpoints into the plain DFlash model BEFORE applying TransformerEngine wrapping, and `strict=False` silently masks the missing/unexpected trainable keys → resume produces fresh-init behavior despite the resume log line.**
+
+Findings + fix recipe + verification plan are on spark-1 at:
+- `/home/dnola/v18_resume_bug/SUMMARY.md`
+- `/home/dnola/v18_resume_bug/findings.json`
+- `/home/dnola/v18_resume_bug/t2_resume_probe.py` (verification probe)
+
+**Hypothesis**: every resume of v18 since training began has been fresh-init through the trainable head/conditioning layers. The step 2500 export's measured AL = 1.36 reflects a drafter that was repeatedly re-randomized at every checkpoint resume, never accumulating learned weights past the most recent uninterrupted segment.
+
+## HOST SCOPE — spark-2 ONLY
+
+Do NOT touch spark-1, spark-3, spark-4, spark-6, spark-work. spark-2 has just been power-cycled (07:27 PDT) and is fresh-booted. All trainer work runs on spark-2.
+
+## YOUR JOB
+
+1. **Read T2 findings**: SSH spark-1 (read-only on `/home/dnola/v18_resume_bug/`), cat the SUMMARY.md and findings.json. Understand precisely WHAT the fix is.
+
+2. **Apply the fix** to the speculators trainer source on spark-2: load the checkpoint AFTER TE wrapping has been applied to the model. Audit-verify by running the t2_resume_probe.py-equivalent on spark-2 with the patched code path: bf16 (or fp8) trainable params after load must MATCH the saved checkpoint, NOT be re-randomized.
+
+3. **Wipe the corrupted higher-step ckpts** if any exist past step 2500. Step 2500 is the trusted anchor. **DO NOT TOUCH `/home/dnola/exports/c15_iq4v18_step2500_AL_LB_1.77/` — that's the frozen audit-level insurance copy.** Work on the training-side checkpoint directory only.
+
+4. **Relaunch v18 training on spark-2** in tmux session `c15_train_NAS_v18_s2`, resuming from step 2500 with the patched loader. Use the **C15 winning config exactly** (load skill `dflash-c15-fp8-hybrid-winning-config-and-health-rules` and verify the 5-knob recipe is wired):
+   - fp8_format=HYBRID
+   - te_use_fused=True
+   - te_fp8_params=True
+   - compile_flex_attention=True
+   - use_split_accumulator=True on fprop + dgrad + wgrad (verify the `[FP8]` log line)
+
+5. **Health gate at step 2500 + 100 steps (step 2600)**:
+   - Step loss `loss_0`-equivalent should DECREASE from the value at step 2500 (it should NOT shoot back up to ~10.6 — that would indicate the fix didn't actually pin the loaded weights).
+   - If position-k acc at step 2600 is BELOW step-2500-export's reported per_pos (P1=0.483, P2=0.351, P3=0.273, etc.), STOP — the fix is wrong or the loader was broken in a different way. Block the task with the evidence.
+   - If position-k acc at step 2600 MATCHES OR EXCEEDS step 2500 baseline, training is genuinely resuming. Continue.
+
+6. **Export a fresh ckpt at step 3000** to `/home/dnola/exports/c15_iq4v18_step3000_postfix/` (NOT the read-only insurance dir) for the T2 task to benchmark.
+
+7. **Write `<workspace>/t1_progress.json`** after each numbered step.
+
+## DELIVERABLES
+
+- `/home/dnola/v18_fix/PATCH.diff` — the actual code diff applied to the trainer.
+- `/home/dnola/v18_fix/RESUME_PROBE_RESULT.json` — empirical proof that post-fix load preserves trainable params (the t2_resume_probe.py output, but on the patched code).
+- `/home/dnola/exports/c15_iq4v18_step3000_postfix/` — fresh step 3000 export with FULL artifacts (val_metrics.json, config.json, trainer_state.json, weights).
+- tmux session `c15_train_NAS_v18_s2` running and advancing past step 3000, no nan storms, GPU utilized.
+- Comment on this task with the position-k accs at step 3000 + training AL_LO/HI.
+
+## HARD RULES
+
+- **HOST SCOPE: spark-2 only.** No other host.
+- Do NOT mark this task `done` until step 3000 is exported AND verified. Block on `review-required` only if the resume probe fails post-patch.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`, `dflash-training` if available.
+- Assignee: atlasdflash2.
+
+Latest summary:
+review-required: diagnostic T1 re-verified PASS for resume patch, but throughput snapshot still SIGBUSes before first AUDIT_STEP; no full training/tmux running on spark-2.
+
+Comments (6):
+  [2026-05-28 07:39] user: # T1 (REWRITTEN): Apply v18 resume-corruption fix — DIAGNOSTIC ONLY. Do NOT relaunch full training.
+
+## CONTEXT — read carefully, scope changed
+
+The user has explicitly directed: **do not resume v18 full training until the trainer hits >1 step/sec WITHOUT reducing batch size**. Current measured steady-state on v18 step 4000 with C15 FP8-HYBRID + te_use_fused + te_fp8_params + compile_flex_attention + split_accumulator: **7.2 s/step = 0.139 it/s**. Target: >1.0 it/s, ~7× speedup, batch size unchanged. Throughput work is owned by T7/T8/T9.
+
+T2 of v18-fix board already diagnosed the resume bug. SUMMARY.md is on spark-1 at `/home/dnola/v18_resume_bug/SUMMARY.md`. Root cause: trainer.py loads checkpoint BEFORE `_maybe_wrap_te()`, so TE-fused checkpoint keys never bind; strict=False masks the gap; resume is effectively fresh-init.
+
+Fix recipe (from T2):
+```python
+# Single-GPU setup_model order — TE wrap must happen BEFORE load
+self.model.to(self.config.hidden_states_dtype)
+self.model.to(self.local_rank)
+self._maybe_wrap_te()
+if load_checkpoint:
+    self.checkpointer.load_model_state_dict(self.model)
+```
+Then in `SingleGPUCheckpointer.load_model_state_dict` raise on any missing trainable key or unexpected TE/fused checkpoint key.
+
+## YOUR SCOPE (DIAGNOSTIC ONLY)
+
+1. **Apply the fix patch** to spark-2's speculators-c15-api `trainer.py` and `single_gpu_checkpointer.py`. Save the diff to `/home/dnola/v18_fix/PATCH.diff`.
+
+2. **Verify the patch works WITHOUT launching full training**. Run a probe that:
+   - Builds the model
+   - Calls `_maybe_wrap_te()` 
+   - Loads `/home/dnola/v18_fix/throwaway_ckpt/step_00002500/` (or step_00004000 if available)
+   - Confirms 0 missing trainable keys AND 0 unexpected TE/fused keys
+   - Confirms post-load trainable param hashes MATCH the saved checkpoint (use t2_resume_probe.py pattern from `/home/dnola/v18_resume_bug/` adapted for the patched path)
+   - Write result to `/home/dnola/v18_fix/RESUME_PROBE_RESULT.json` with PASS/FAIL.
+
+3. **Capture ONE 50-step throughput snapshot** with the patched code on the throwaway ckpt (matching the v18_throughput_audit pattern — instrumented trainer that logs AUDIT_STEP lines with timing breakdowns). Use the SAME global batch size, SAME max_anchors=3072, SAME block_size=8 as production. Append per-step AUDIT_STEP rows to `/home/dnola/v18_fix/throughput_snapshot.log` and compute mean steady-state `total_step_ms` (skip the first 3 steps for compile warmup). Save the mean + per-component breakdown (dataloader_next_ms, forward_ms, backward_ms, optimizer_ms) to `/home/dnola/v18_fix/throughput_snapshot.json`.
+
+4. **DO NOT START FULL TRAINING.** Once steps 1-3 complete, block this task `review-required` with a comment like:
+   > "Patch verified, resume probe PASS, baseline 50-step throughput = X.X s/step. Awaiting throughput gate (T9) — full v18 retraining will only relaunch when measured ≤1.0 s/step (>1 it/s) on this code path with batch size unchanged."
+
+5. Write `<workspace>/t1_progress.json` after each step. Step keys: 1=patch_applied, 2=resume_probe_pass, 3=throughput_snapshot_captured, 4=review_required_filed.
+
+## HOST SCOPE
+
+spark-2 ONLY. No other host.
+
+## HARD RULES
+
+- **DO NOT launch full v18 production training.** No `tmux new-session -d c15_train_NAS_v18_s2`. Throwaway processes only, killed after the 50-step probe.
+- **DO NOT modify any production export directory.** Patches apply to the trainer source only.
+- **DO NOT delete `/home/dnola/v18_throughput_audit/`** — T7 uses it.
+- **DO NOT delete `/home/dnola/exports/c15_iq4v18_step2500_AL_LB_1.77/`** — frozen audit copy.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+- Assignee: atlasdflash2.
+- Block on `review-required` when done — driver will adjudicate and (if throughput gate not yet passed) leave you blocked until T9 verdict.
+  [2026-05-28 07:55] driver: RECOVERY: killed off-phase production trainer c15_train_NAS_v18_s2 on spark-2 and wrote LAUNCHER_HALTED.txt. Throughput-first invariant applies: T1 is DIAGNOSTIC ONLY (resume patch + probe + 50-step audit if needed), DO NOT relaunch full training or long-lived tmux. T7/T8/T9 own throughput gate; T3 remains gated.
+  [2026-05-28 08:06] atlasdflash2: review-required handoff:
+
+Patch/probe:
+- Applied resume-corruption fix on spark-2 in `/home/dnola/speculators-c15-api`.
+- Diff: `/home/dnola/v18_fix/PATCH.diff`.
+- Strong resume probe: `/home/dnola/v18_fix/RESUME_PROBE_RESULT.json` status PASS.
+  - checkpoint/model intersection after TE wrap: 98/98
+  - exact mismatches: 0
+  - missing trainable keys: 0
+  - unexpected TE/fused keys: 0
+  - hashed trainable-or-TE keys: 98; `hashes_match=true`
+- C15 FP8 log verified during probe/snapshot: HYBRID, fused=True, TE fp8 params enabled, split accumulator True for fprop/dgrad/wgrad.
+
+Throughput snapshot:
+- Requested bounded 50-step patched-code throughput snapshot did NOT complete.
+- Result file: `/home/dnola/v18_fix/throughput_snapshot.json` status FAIL.
+- Attempts, all with global batch/max_anchors=3072/block_size=8 unchanged:
+  1. num_workers=2/prefetch=2/pin_memory=True: DataLoader worker bus error before first AUDIT_STEP.
+  2. num_workers=0/pin_memory=True: main process SIGBUS before first AUDIT_STEP.
+  3. num_workers=0/pin_memory=False via `/home/dnola/v18_fix/train_snapshot.py`: main process SIGBUS before first AUDIT_STEP.
+- No AUDIT_STEP rows were produced, so `mean_total_step_ms` is null.
+
+Safety/state:
+- Did not relaunch full v18 production training.
+- No `c15_train_NAS_v18_s2` tmux or train process is running on spark-2 after the attempts.
+- Did not modify production export directories or delete `/home/dnola/v18_throughput_audit/`.
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 12:29] atlasdflash2: review-required handoff (re-verified on rerun):
+
+- Patch remains present on spark-2: `/home/dnola/v18_fix/PATCH.diff`.
+- Resume probe remains PASS: `/home/dnola/v18_fix/RESUME_PROBE_RESULT.json`.
+  - checkpoint/model intersection after TE wrap: 98/98
+  - exact mismatches: 0
+  - missing trainable keys: 0
+  - unexpected TE/fused keys: 0
+  - `hashes_match=true`
+- Throughput snapshot remains FAIL: `/home/dnola/v18_fix/throughput_snapshot.json`.
+  - 0 AUDIT_STEP rows, no `mean_total_step_ms`
+  - workers=2/prefetch=2/pin_memory=true: DataLoader worker bus error before first AUDIT_STEP
+  - workers=0/pin_memory=true: main process SIGBUS before first AUDIT_STEP
+  - workers=0/pin_memory=false: main process SIGBUS before first AUDIT_STEP
+- Safety check: `tmux ls` reports no server, and no train/torchrun/speculators process is running on spark-2.
+- Updated workspace progress: `<workspace>/t1_progress.json` step 4 = `review_required_filed`.
+
+No full v18 production training was launched. T1 remains diagnostic-only pending review/throughput-gate follow-up.
+  [2026-05-28 13:37] driver: driver review APPROVED: T1 diagnostic-only patch/probe verified from handoff: resume-loader fix present at /home/dnola/v18_fix/PATCH.diff; RESUME_PROBE_RESULT.json PASS with 98/98 trainable/TE keys matched, 0 missing/unexpected, hashes_match=true. 50-step throughput snapshot still SIGBUSes before AUDIT_STEP; that is now owned by throughput-track follow-up, not T1. No full training running. Completing T1 as diagnostic prerequisite.
+
+Events (25):
+  [2026-05-28 07:37] [run 21] spawned {'pid': 47101}
+  [2026-05-28 07:39] commented {'author': 'user', 'len': 3843}
+  [2026-05-28 07:51] [run 21] heartbeat {'note': 'Applied/resume-verified patch on spark-2; production v18 resume launched in tmux c15_train_NAS_v18_s2 from step_00002500 with workers=6/prefetch=8, awaiting step 2600 health gate.'}
+  [2026-05-28 07:55] [run 21] reclaimed {'manual': True, 'reason': 'off-phase full trainer was launched despite throughput-first directive; killed c15_train_NAS_v18_s2 on spark-2; rerun T1 diagnostic-only patch/probe, no full training', 'prev_lock': 'macmini.local:16952', 'prev_pid': 47101, 'host_local': True, 'termination_attempted': True, 'terminated': True, 'sigkill': False}
+  [2026-05-28 07:55] commented {'author': 'driver', 'len': 314}
+  [2026-05-28 07:55] [run 25] claimed {'lock': 'macmini.local:52526', 'expires': 1779981031, 'run_id': 25}
+  [2026-05-28 07:55] [run 25] spawned {'pid': 52530}
+  [2026-05-28 08:01] [run 25] heartbeat {'note': 'Diagnostic retry: patch already present on spark-2; stronger resume probe now PASS with exact hash match across 98 checkpoint/model keys. Starting bounded 50-step throughput snapshot only (no tmux/full training).'}
+  [2026-05-28 08:02] [run 25] heartbeat {'note': '50-step snapshot attempt with workers=2 hit DataLoader shm bus error before any AUDIT_STEP rows; retrying bounded snapshot with num_workers=0 to keep global batch/max_anchors/block_size unchanged and avoid shm.'}
+  [2026-05-28 08:06] commented {'author': 'atlasdflash2', 'len': 1454}
+  [2026-05-28 08:06] [run 25] blocked {'reason': 'review-required: resume patch verified PASS on spark-2, but bounded 50-step throughput snapshot SIGBUSes before first AUDIT_STEP even with workers=0/pin_memory=false; no full training running.'}
+  [2026-05-28 08:07] commented {'author': 'default', 'len': 47}
+  [2026-05-28 08:57] commented {'author': 'default', 'len': 24}
+  [2026-05-28 08:57] archived
+  [2026-05-28 12:27] [run 218] claimed {'lock': 'macmini.local:17068', 'expires': 1779997358, 'run_id': 218}
+  [2026-05-28 12:27] [run 218] spawned {'pid': 24422}
+  [2026-05-28 12:29] commented {'author': 'atlasdflash2', 'len': 1057}
+  [2026-05-28 12:29] [run 218] blocked {'reason': 'review-required: diagnostic T1 re-verified PASS for resume patch, but throughput snapshot still SIGBUSes before first AUDIT_STEP; no full training/tmux running on spark-2.'}
+  [2026-05-28 13:37] commented {'author': 'driver', 'len': 434}
+  [2026-05-28 13:37] completed {'result_len': 0, 'summary': None}
+
+Runs (4):
+  #1   reclaimed    @atlasdflash2  430s  2026-05-28 07:30
+        ! manual_reclaim: user directive pivot: do not resume training until throughput >1 it/s without dropping batch size; rewriting T1 scope
+  #21  reclaimed    @atlasdflash2  1056s  2026-05-28 07:37
+        ! manual_reclaim: off-phase full trainer was launched despite throughput-first directive; killed c15_train_NAS_v18_s2 on spark-2; rerun T1 diagnostic-only patch/p
+  #25  blocked      @atlasdflash2  684s  2026-05-28 07:55
+        → review-required: resume patch verified PASS on spark-2, but bounded 50-step throughput snapshot SIGBUSes before first AUDIT_STEP even with workers=0/pin_memory=
+  #218 blocked      @atlasdflash2  88s  2026-05-28 12:27
+        → review-required: diagnostic T1 re-verified PASS for resume patch, but throughput snapshot still SIGBUSes before first AUDIT_STEP; no full training/tmux running

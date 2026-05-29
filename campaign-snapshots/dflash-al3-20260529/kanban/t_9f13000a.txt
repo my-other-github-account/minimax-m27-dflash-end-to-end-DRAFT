@@ -1,0 +1,71 @@
+Task t_9f13000a: T68: FAST current-best draft_max ceiling sweep on MiniMax native chat arm
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_9f13000a
+  max-retries: 2 (default)
+  created:   2026-05-29 04:27 by user
+  started:   2026-05-29 04:27
+  completed: 2026-05-29 05:29
+
+Body:
+# T68: FAST current-best draft_max ceiling sweep on MiniMax native chat arm
+
+## Why
+T64 found MiniMax native chat-template text boosts AL to 1.83, and T66 reproduced chat arm 1.846 on the newer 093736 step500 checkpoint. Before blaming training, map whether inference has headroom at larger draft windows on the BEST operating point.
+
+## Host scope
+spark-2 ONLY. Inference only. Do not train.
+
+## Inputs
+Use T66 current-best GGUF `/home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf` and MiniMax target `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`. Reuse T64's best prompt construction: MiniMax native chat-template text.
+
+## Fast experiment
+2 prompts x <=512 output, temp=0/top_k=1. Sweep draft_max {5,7,9,11,13,15} if all fit within 45 min; if not, do {7,9,13}. Use raw measured runtime accept_length only.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T68_CURRENT_BEST_DRAFTMAX_CEILING.md` and comment table draft_max -> mean AL. Verdict: CEILING_NEAR_2 (plateaus <2), WINDOW_HEADROOM (>=2.3 but <3), or GOAL_HIT (>=3).
+
+## Global hard rules
+- FAST-ITERATION: produce a numeric/decision artifact within <=1 hour; prefer <=15 min. If staging will exceed 10 min, shrink scope and still produce a result.
+- Campaign goal is measured runtime AL >= 3.0 on OUR MiniMax target in actual practice. Report raw measured accept_length only; no multiplier/extrapolation.
+- Host scope is the named host ONLY. Do not touch spark-4. Do not Kasa-cycle. Do not launch training unless this body explicitly says training.
+- One actor per host: preflight for train.py/tmux/llama-server/GPU compute apps; if the host is occupied by another dflash-al3 task, block with exact evidence instead of contending.
+- Use corrected MiniMax/buun path: target MiniMax-M2.7 GGUF, draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59], corrected d2t-OFFSET rule target_ids = arange(len(d2t)) + d2t.
+- Preserve user-locked knobs: no max_anchors/block_size/hidden/intermediate/layers/seq_len/FSDP/multihost changes.
+
+
+
+Latest summary:
+Completed and verified the T68 MiniMax native chat-arm draft_max ceiling sweep on spark-2. Report written at /home/dnola/v18_fix/T68_CURRENT_BEST_DRAFTMAX_CEILING.md; best mean raw runtime AL was 2.368 at draft_max=13, so verdict is WINDOW_HEADROOM, not GOAL_HIT.
+
+Comments (1):
+  [2026-05-29 05:29] atlasdflash4: T68 verified on spark-2; numeric artifact exists at `/home/dnola/v18_fix/T68_CURRENT_BEST_DRAFTMAX_CEILING.md`.
+
+| draft_max | n | mean raw runtime AL | AL list |
+|---:|---:|---:|---|
+| 7 | 2 | 1.400265 | [1.351254, 1.449275] |
+| 9 | 2 | 1.845758 | [1.771802, 1.919715] |
+| 13 | 2 | 2.367952 | [2.277892, 2.458011] |
+
+Verdict: `WINDOW_HEADROOM` (best mean AL 2.368 >=2.3 but <3.0). Sweep wall time: 1649.7s. Post-check: no llama-server/train/vLLM contender left on spark-2.
+
+Events (13):
+  [2026-05-29 04:27] created {'assignee': 'atlasdflash4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 04:27] [run 574] claimed {'lock': 'macmini.local:16952', 'expires': 1780054975, 'run_id': 574}
+  [2026-05-29 04:27] [run 574] spawned {'pid': 86321}
+  [2026-05-29 04:37] [run 574] heartbeat {'note': 'T68 sweep script launched on spark-2; checking whether remote run survived local execute_code timeout.'}
+  [2026-05-29 04:52] [run 574] claim_extended {'reason': 'pid_alive', 'worker_pid': 86321, 'claim_lock': 'macmini.local:16952', 'claim_expires_was': 1780055537, 'claim_expires_now': 1780056452, 'last_heartbeat_at': 1780054637}
+  [2026-05-29 04:58] [run 574] heartbeat {'note': 'First T68 full-sweep attempt hit health timeout before first sample (large MiniMax GGUF load exceeded 7m). Shrinking to required {7,9,13} and increasing server health timeout to preserve <=1h numeric artifact.'}
+  [2026-05-29 05:03] [run 574] heartbeat {'note': 'spark-2 MiniMax server is alive but still loading target GGUF for draft_max=7 (HTTP 503 loading, ~103GB GPU mem used). Continuing read-only wait; no training launched.'}
+  [2026-05-29 05:18] [run 574] claim_extended {'reason': 'pid_alive', 'worker_pid': 86321, 'claim_lock': 'macmini.local:16952', 'claim_expires_was': 1780057116, 'claim_expires_now': 1780058021, 'last_heartbeat_at': 1780056216}
+  [2026-05-29 05:27] [run 574] timed_out {'pid': 86321, 'elapsed_seconds': 3601, 'limit_seconds': 3600, 'sigkill': False}
+  [2026-05-29 05:27] [run 581] claimed {'lock': 'macmini.local:16977', 'expires': 1780058578, 'run_id': 581}
+  [2026-05-29 05:27] [run 581] spawned {'pid': 1870}
+  [2026-05-29 05:29] commented {'author': 'atlasdflash4', 'len': 473}
+  [2026-05-29 05:29] [run 581] completed {'result_len': 0, 'summary': 'Completed and verified the T68 MiniMax native chat-arm draft_max ceiling sweep on spark-2. Report written at /home/dnola/v18_fix/T68_CURRENT_BEST_DRAFTMAX_CEILING.md; best mean raw runtime AL was 2.368 at draft_max=13, so verdict is WINDOW_HEADROOM, not GOAL_HIT.'}
+
+Runs (2):
+  #574 timed_out    @atlasdflash4  3603s  2026-05-29 04:27
+        ! elapsed 3601s > limit 3600s
+  #581 completed    @atlasdflash4  78s  2026-05-29 05:27
+        → Completed and verified the T68 MiniMax native chat-arm draft_max ceiling sweep on spark-2. Report written at /home/dnola/v18_fix/T68_CURRENT_BEST_DRAFTMAX_CEILI

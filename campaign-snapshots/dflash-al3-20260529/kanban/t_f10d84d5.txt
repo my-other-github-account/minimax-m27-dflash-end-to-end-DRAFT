@@ -1,0 +1,67 @@
+Task t_f10d84d5: T76: FAST AL of T75 fresh checkpoint on MiniMax/buun
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_f10d84d5
+  max-retries: 2 (default)
+  created:   2026-05-29 06:14 by user
+  started:   2026-05-29 06:38
+  completed: 2026-05-29 07:12
+  parents:   t_b2d5b4f2
+
+Body:
+
+# T76: FAST AL of T75 fresh checkpoint on MiniMax/buun (<1h)
+
+## Mission
+As soon as T75 produces a CKPT_READY handoff, measure its raw runtime AL on OUR MiniMax target using the current corrected MiniMax/buun path. Campaign goal: measured runtime AL >=3.0 in actual practice.
+
+## Dependency
+Parent T75. Start only after T75 is done; read its handoff for the newest complete checkpoint path. If T75 did not produce CKPT_READY, complete with `NO_CKPT_FROM_T75` and cite the blocker.
+
+## Host scope
+spark-2 ONLY for conversion/inference. Do not touch spark-3 except reading T75 handoff; do not touch spark-1/spark-work/spark-4. No Kasa. No training.
+
+## Steps
+1. Preflight one-actor lease on spark-2: no train.py/trainer tmux/unrelated llama-server/GPU compute apps; >=90GB free. If occupied by a live task, block `SPARK2_BUSY`.
+2. Convert/rebake T75's freshest checkpoint through the validated corrected MiniMax path: MiniMax target GGUF, draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59], corrected d2t-OFFSET mapping `target_id = arange(len(d2t)) + d2t`.
+3. Run fast MiniMax native-chat AL smoke, raw measured runtime only: draft_max=15 first (T72 optional probe averaged 2.9216 and is closest to goal), 5 prompts <=512 output, temp=0/top_k=1. If draft_max=15 mean AL>=3 on 5 prompts, add a quick 3-prompt draft_max=13 continuity row if time remains.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T76_T75_CKPT_MINIMAX_AL.md` and comment:
+- exact ckpt path, GGUF path, runner args, per-prompt accept_length, mean AL, draft_n_accepted/draft_n_decoded if available.
+- Verdict: `GOAL_HIT` if AL>=3.0; `IMPROVED_BUT_SHORT` if >T72 comparable but <3; `NO_IMPROVEMENT` otherwise.
+
+## Hard rules
+Measured runtime AL only; no multiplier/extrapolation. Fast signal <=1h. One actor per host. Preserve locked knobs. No spark-4.
+
+
+Latest summary:
+Measured T75 step600 checkpoint on spark-2 via corrected MiniMax/buun OFFSET path. Report written to /home/dnola/v18_fix/T76_T75_CKPT_MINIMAX_AL.md; primary draft_max=15 5-prompt mean raw runtime AL=2.820702, below T72 comparable 2.921564 and below the >=3.0 goal, so verdict is NO_IMPROVEMENT.
+
+Comments (1):
+  [2026-05-29 07:12] atlasdflash4: T76 result posted: `/home/dnola/v18_fix/T76_T75_CKPT_MINIMAX_AL.md`
+
+Verdict: `NO_IMPROVEMENT`.
+- Source checkpoint: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T75_spark3_bounded_step650_ckpt50_20260529T132624Z/step_00000600`
+- Local spark-2 copy: `/home/dnola/v18_fix/t76_t75_step600/source_step_00000600`
+- Draft GGUF: `/home/dnola/v18_fix/t76_t75_step600/t75_step600_minimax_buun_offset_rebaked.gguf`
+- Target GGUF: `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`
+- Runner args: `llama-server -m <target> -md <draft> --spec-type dflash --draft-max {15,13} --temp 0 --top-k 1 -c 8192 -ngl 99 -ngld 99 --port 18094 --host 127.0.0.1 --no-webui`; requests `n_predict=max_tokens=512`, non-streaming.
+- draft_max=15: 5-prompt mean raw runtime AL `2.820702`; per-prompt `[2.806499, 2.980176, 2.761506, 2.703488, 2.851838]`; draft_n_decoded `[2031, 2270, 1912, 2408, 2693]`; draft_n_accepted `[90, 128, 80, 89, 125]`.
+- optional draft_max=13: 3-prompt mean raw runtime AL `2.437658`; per-prompt `[2.294381, 2.484896, 2.533698]`.
+- Comparable baseline used for verdict: T72 optional draft_max=15 mean `2.921564`, so T76 did not improve and missed >=3.0.
+
+Events (9):
+  [2026-05-29 06:14] created {'assignee': 'atlasdflash4', 'status': 'todo', 'parents': ['t_b2d5b4f2'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 06:37] promoted
+  [2026-05-29 06:38] [run 591] claimed {'lock': 'macmini.local:17068', 'expires': 1780062791, 'run_id': 591}
+  [2026-05-29 06:38] [run 591] spawned {'pid': 18966}
+  [2026-05-29 06:39] [run 591] heartbeat {'note': 'Preflight spark-2 passed: no GPU compute/server contenders, 115GiB available RAM, 940G disk free. Preparing T75 checkpoint copy/rebake on spark-2.'}
+  [2026-05-29 06:49] [run 591] heartbeat {'note': 'T75 checkpoint copied to spark-2 and rebaked via corrected OFFSET mapping; draft GGUF written. Starting draft_max=15 native-chat AL smoke (5 prompts).'}
+  [2026-05-29 07:05] [run 591] claim_extended {'reason': 'pid_alive', 'worker_pid': 18966, 'claim_lock': 'macmini.local:17068', 'claim_expires_was': 1780063495, 'claim_expires_now': 1780064416, 'last_heartbeat_at': 1780062595}
+  [2026-05-29 07:12] commented {'author': 'atlasdflash4', 'len': 1202}
+  [2026-05-29 07:12] [run 591] completed {'result_len': 0, 'summary': 'Measured T75 step600 checkpoint on spark-2 via corrected MiniMax/buun OFFSET path. Report written to /home/dnola/v18_fix/T76_T75_CKPT_MINIMAX_AL.md; primary draft_max=15 5-prompt mean raw runtime AL=2.820702, below T72 comparable 2.921564 and below the >=3.0 goal, so verdict is NO_IMPROVEMENT.'}
+
+Runs (1):
+  #591 completed    @atlasdflash4  2052s  2026-05-29 06:38
+        → Measured T75 step600 checkpoint on spark-2 via corrected MiniMax/buun OFFSET path. Report written to /home/dnola/v18_fix/T76_T75_CKPT_MINIMAX_AL.md; primary dra

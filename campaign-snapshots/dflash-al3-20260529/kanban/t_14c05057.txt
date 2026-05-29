@@ -1,0 +1,259 @@
+Task t_14c05057: T5: Background AL sweep on spark-1 — repro, draft-max sweep, deep-dive, public-ref benchmarks (NEVER completes)
+  status:    blocked
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 07:33 by user
+  started:   2026-05-28 12:27
+
+Body:
+# T5: Background AL sweep (long-running, never completes) — keeps spark-1 busy on benchmark refinement
+
+## PURPOSE
+
+This task NEVER completes on its own. It exists to keep spark-1 productive whenever no other dflash-al3 task needs it. The driver cron will unblock + redispatch this task whenever spark-1 is idle.
+
+## YOUR JOB (one cycle per dispatch)
+
+Each time you're dispatched, do ONE of the following productive things on spark-1, then block yourself with `review-required` and a comment summarizing what you produced. The driver will unblock you next tick.
+
+Pick the highest-value action from this menu based on the current best ckpt:
+
+### Menu (in priority order)
+
+1. **Re-benchmark the latest exported v18 ckpt** with a LARGER prompt set than T16's 25-prompt baseline.
+   - Find the newest `/home/dnola/exports/c15_iq4v18_step*_postfix/` or fallback to `/home/dnola/exports/c15_iq4v18_step2500/`.
+   - Run the 25-prompt benchmark AGAIN on the same harness as T16 to verify reproducibility (different RNG seed if possible). Compare `mean_real_AL` to prior run. Save as `<workspace>/repro_run_<ckpt>_<n>.json`.
+   - Then EXTEND to 50 prompts (10/family) if the 25-run reproduces within ±0.05. Save as `<workspace>/extended50_<ckpt>.json`.
+
+2. **Vary draft_max** (currently 7). Re-run the 25-prompt benchmark at draft_max ∈ {5, 9, 11} to map the AL-vs-draft-max curve. Save as `<workspace>/draftmax_sweep_<ckpt>.json` with rows.
+
+3. **Per-family deep-dive**: pick the family with WORST AL from latest benchmark. Generate 10 NEW prompts in that family, benchmark them, report mean_real_AL on the deep-dive subset. Save as `<workspace>/deepdive_<family>_<ckpt>.json`.
+
+4. **Public-reference reproduction**: clone a public DFlash spec-decode benchmark prompt set (e.g. HumanEval, GSM8K small subset, MT-Bench-101) and run it against our v18 ckpt + verifier. Report measured AL on that public-reference suite for apples-to-apples comparison vs z-lab/Kimi cards. Save as `<workspace>/publicref_<suite>_<ckpt>.json`.
+
+5. **Cross-validate library vs API** on a larger prompt set (50+ prompts) — same as T16's cross-val gate but at scale. If delta exceeds 0.1 anywhere, find which prompts diverge most and report. Save as `<workspace>/crossval_<ckpt>_<n>.json`.
+
+### After ONE menu item completes
+
+- Write the result file to `<workspace>/`.
+- Comment on this task summarizing what you found (one line per metric).
+- Block with `review-required` reason like "cycle N complete: <one-line result>; ready for next cycle".
+- Done. Driver picks you up next tick.
+
+### If NO menu item is currently viable
+
+(e.g. there are no exports newer than the one you last benchmarked, AND you've already done 5+ cycles on the current ckpt)
+
+- Comment with the rate-limit reason.
+- Block with `review-required` reason `WAITING-FOR-NEW-CKPT-cycle-N-rate-limited`.
+- Driver will deprioritize you until T3 produces a new ckpt.
+
+## HARD RULES
+
+- **Host scope: spark-1 ONLY.** Do not touch spark-2 (T1/T3 own it). Do not touch other hosts.
+- **Do not modify any export directory.** Read-only. Write benchmark outputs into `<workspace>/` only.
+- **Do not GGUF-convert** unless a new postfix ckpt has appeared that hasn't been converted yet. Heavy disk usage; reuse existing converted ckpts at `*_dflash_mm_tok_prepped`.
+- **Never claim AL>3 unless your own benchmark numbers show it.** If you measure AL>3, comment "TARGET MET candidate: AL=X on <suite>" and block; the driver will escalate.
+- Assignee: atlasdflash3. Same profile as T2; this task runs whenever T2 is done.
+- Required skills: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+
+Latest summary:
+review-required: cycle complete — MT-Bench math rows30-39 draft_max 11/max_tokens 256 measured runtime AL=1.523421, -0.005044 vs draft_max 7/max256; no AL>3; ready for next cycle
+
+Comments (32):
+  [2026-05-28 08:09] driver: RECOVERY: board was accidentally archived by external/default worker; restored filler to ready. Continue spark-1 only.
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 12:47] default: Driver preempting lower-priority spark-1 filler to free GPU for priority Track B tasks T14/T15 after T12 telemetry landed. Blocked/reclaimed; resume filler after priority measurements yield or block.
+  [2026-05-28 12:47] default: BLOCKED: paused filler: free spark-1 GPU for priority T14/T15 measurements
+  [2026-05-28 15:16] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Produced workspace artifacts from the completed spark-1 v18 step2500 repro/extend run:
+  - `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/repro_run_c15_iq4v18_step2500_1.json`
+  - `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/extended50_c15_iq4v18_step2500.json`
+- Repro25 gate: weighted measured runtime AL = 1.350632 vs prior T16 1.362642, abs delta = 0.012009, reproduces within ±0.05.
+- Extended50 (draft_max=7, max_tokens=128): 50 requested / 49 numeric successes, weighted measured runtime AL = 1.397716, mean per-prompt AL = 1.441611, min/max per-prompt AL = 1.291712 / 1.722222.
+- Extended50 family weighted measured runtime AL: math 1.646844 (best), code 1.482407, qa 1.384587, summarization 1.353328 (9 numeric successes), writing 1.300387 (worst).
+- No AL>3 observed. spark-1 currently has priority T15 sweep process active (`/home/dnola/t15_sweep1.py` + llama-server draft_max=13 on port 18113), so I did not start another GPU benchmark cycle.
+  [2026-05-28 18:23] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Produced draft_max sweep artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/draftmax_sweep_c15_iq4v18_step2500.json`
+- Local row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t15_source_sweep1_rows/` (source `spark-1:/home/dnola/t15_t_a9564cc2/sweep1_draftmax.json`). Prompt set verified identical to `/home/dnola/exports/c15_iq4v18_step2500/benchmarks/dflash.jsonl`.
+- Measured runtime AL axis only (weighted accept_length; no multiplier/extrapolation). Same-sweep draft_max=7 baseline = 1.362642.
+- Requested sweep results: draft_max=5 AL=1.276929 (delta vs d7 -0.085712); draft_max=9 AL=1.364616 (delta +0.001974); draft_max=11 AL=1.371047 (delta +0.008405).
+- Best requested point: draft_max=11, but improvement over 7 is tiny (+0.0084 AL); 5 is clearly worse.
+- No AL>3 observed. Note: I launched a T5 rerun on spark-1 and its draft_max=5 partial rows matched the completed source sweep exactly; the rerun’s `/tmp` output vanished after the remote process exited, so I preserved the completed spark-1 source measurements instead of spending another full GPU cycle.
+  [2026-05-28 20:58] driver: DRIVER 20:57: spark-1 has no active dflash-al3 kanban lease; T31 holds spark-2. Resume one spark-1-only filler cycle. Do not touch spark-2; if no new ckpt/export exists, run next highest-value inference-side benchmark cycle or block review-required with numeric finding.
+  [2026-05-28 21:09] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 3 per-family deep-dive on the prior worst family: writing, using 10 new writing prompts, v18 step2500, draft_max=7, max_tokens=128.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/deepdive_writing_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/deepdive_writing_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_deepdive_writing.py`.
+- Measured runtime AL axis only (weighted accept_length; no multiplier/extrapolation): new writing deep-dive weighted AL = 1.290303, mean per-prompt AL = 1.289522, min/max = 1.276753 / 1.302857; 10/10 numeric successes, 0 errors.
+- Compared to prior extended50 writing slice weighted AL = 1.300387, the new writing deep-dive is -0.010084 AL, confirming writing remains the worst family and is tightly clustered around ~1.29–1.30.
+- Aggregate per-position accept = [0.268890, 0.021412, 0, 0, 0, 0, 0] over n_accept=1410 / n_draft=4857.
+- No AL>3 observed; spark-1 only, no export dirs modified.
+  [2026-05-28 21:51] dflash-al3-driver: DRIVER 21:52: T33 completed and spark-1 has no active priority lease. Resume one spark-1-only filler cycle. Use current canonical comparator from T33 (z-lab GSM8K 4096/thinking AL=5.849 n=7) only as reference; do not touch spark-2 or spark-work; one menu item then block review-required.
+  [2026-05-28 22:21] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on a static 10-prompt GSM8K/math_reasoning subset, v18 step2500, draft_max=7, max_tokens=256; answer correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_gsm8k10_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_gsm8k10_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_gsm8k10.py`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.370950, mean per-prompt AL = 1.373241, bootstrap CI95 = [1.363384, 1.383418], min/max = 1.350877 / 1.402899; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.288827, 0.069832, 0.009125, 0.003166, 0, 0, 0] over n_accept=1992 / n_draft=5370.
+- External reference supplied by driver remains z-lab GSM8K 4096/thinking AL=5.849 n=7; not directly comparable in prompt length/verifier, but our measured runtime AL on this public GSM8K-style subset is far below that reference. No AL>3 observed; spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-28 22:50] dflash-al3-driver: Driver 22:50 PDT: accepting latest filler cycle result. T33 is done and spark-1 is otherwise free; run ONE spark-1-only background AL/public-reference cycle. Do not touch spark-work/T35 or spark-2/T32 artifacts. Block review-required after one cycle.
+  [2026-05-28 23:02] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on a static 10-prompt HumanEval-style coding subset, v18 step2500, draft_max=7, max_tokens=128; functional correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_humaneval10_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_humaneval10_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_humaneval10.py`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.270011, mean per-prompt AL = 1.266712, bootstrap CI95 = [1.259252, 1.273727], min/max = 1.241379 / 1.284872; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.243330, 0.026041, 0.000640, 0, 0, 0, 0] over n_accept=1265 / n_draft=4685.
+- This is below the earlier GSM8K static10 AL=1.370950 and below the extended50 code-family slice AL=1.482407; no AL>3 observed. spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-28 23:27] dflash-al3-driver: Driver 23:27 PDT: board had zero running workers. Auto-approving prior T5 review-required cycle (HumanEval static10 AL=1.270011, no AL>3). Resume ONE spark-1-only fast inference filler cycle; do not touch spark-2/spark-3/spark-work/spark-4. Highest-value next signal: another small public-axis or buun/z-lab sanity check that finishes <30 min; numeric AL only, then block review-required.
+  [2026-05-28 23:39] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on actual public MT-Bench first-turn questions (first 10 rows from FastChat `mt_bench/question.jsonl`), v18 step2500, draft_max=7, max_tokens=128; answer quality/correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench10_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench10_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_mtbench10.py`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.324158, mean per-prompt AL = 1.309225, bootstrap CI95 = [1.284125, 1.329725], min/max = 1.226190 / 1.340517; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.291647, 0.032511, 0, 0, 0, 0, 0] over n_accept=1366 / n_draft=4214; wall clock 550.26s.
+- The first 10 MT-Bench rows are all writing-category prompts; result sits near prior writing deep-dive AL=1.290303 and below GSM8K static10 AL=1.370950. No AL>3 observed; spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-28 23:42] dflash-al3-driver: Driver 23:44 PDT: auto-approved T5 MT-Bench first10 cycle (measured runtime AL=1.324158, no AL>3). Resume ONE more spark-1-only fast filler cycle; keep it <30 min, numeric AL only, no source/export mutation, no spark-2/spark-3/spark-work/spark-4. If no new public-axis measurement is worthwhile, do the smallest discriminating sanity check and block review-required.
+  [2026-05-28 23:53] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on actual public MT-Bench rows 10-19 (question_ids 91-100, all `roleplay` category), v18 step2500, draft_max=7, max_tokens=128; answer quality/correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows10_19_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows10_19_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_mtbench_rows10_19.py`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.265432, mean per-prompt AL = 1.274203, bootstrap CI95 = [1.260791, 1.291663], min/max = 1.251420 / 1.342105; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.246275, 0.018518, 0.000639, 0, 0, 0, 0] over n_accept=1247 / n_draft=4698; wall clock 514.47s.
+- This roleplay public-axis slice is below MT-Bench first10/writing AL=1.324158 and near/below prior worst writing deep-dive AL=1.290303. No AL>3 observed; spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-29 00:01] dflash-al3-driver: Driver 00:00 PDT: auto-approved T5 MT-Bench rows10-19 cycle (measured runtime AL=1.265432, no AL>3). Resume ONE spark-1-only fast filler cycle; keep it <30 min, numeric AL only, no source/export mutation, no spark-2/spark-3/spark-work/spark-4. Prefer a fresh public-axis slice or smallest discriminating sanity check, then block review-required.
+  [2026-05-29 00:10] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on actual public MT-Bench rows 20-29 (question_ids 101-110, all `reasoning` category), v18 step2500, draft_max=7, max_tokens=128; answer quality/correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows20_29_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows20_29_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_mtbench_rows20_29.py`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.293869, mean per-prompt AL = 1.295329, bootstrap CI95 = [1.285218, 1.307075], min/max = 1.273077 / 1.337662; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.271213, 0.022657, 0, 0, 0, 0, 0] over n_accept=1323 / n_draft=4502; wall clock 462.30s.
+- This MT-Bench reasoning public-axis slice is below MT-Bench first10/writing AL=1.324158 and above MT-Bench rows10-19/roleplay AL=1.265432. No AL>3 observed; spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-29 00:19] dflash-al3-driver: Driver 00:18 PDT: auto-approved T5 MT-Bench rows20-29 reasoning cycle (measured runtime AL=1.293869, no AL>3). Resume ONE spark-1-only fast filler cycle; keep it <30 min, numeric measured AL only, no source/export mutation, no spark-2/spark-3/spark-work/spark-4. Prefer next MT-Bench slice rows30-39 or another small discriminating public-axis check, then block review-required.
+  [2026-05-29 00:27] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on actual public MT-Bench rows 30-39 (question_ids 111-120, all `math` category), v18 step2500, draft_max=7, max_tokens=128; answer quality/correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows30_39_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows30_39_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_mtbench_rows30_39.py`; server log copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows30_39_logs/server.log`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.507054, mean per-prompt AL = 1.549843, bootstrap CI95 = [1.483434, 1.655227], min/max = 1.437309 / 2.000000; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.353740, 0.115251, 0.035401, 0.002662, 0, 0, 0] over n_accept=1905 / n_draft=3757; wall clock 399.24s.
+- This MT-Bench math public-axis slice is the strongest MT-Bench slice so far (above first10/writing 1.324158, roleplay 1.265432, reasoning 1.293869) but still nowhere near AL>3. spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-29 00:38] dflash-al3-driver: Driver 00:40 PDT: auto-approved T5 MT-Bench rows30-39 math cycle (measured runtime AL=1.507054, strongest MT-Bench slice but no AL>3). Resume ONE spark-1-only fast filler cycle; keep it <30 min, numeric measured AL only, no source/export mutation, no spark-2/spark-3/spark-work/spark-4. Prefer next MT-Bench slice rows40-49 or another small public-axis check, then block review-required.
+  [2026-05-29 00:49] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on actual public MT-Bench rows 40-49 (question_ids 121-130, all `coding` category), v18 step2500, draft_max=7, max_tokens=128; answer quality/correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows40_49_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows40_49_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_mtbench_rows40_49.py`; server log copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows40_49_logs/server.log`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.257359, mean per-prompt AL = 1.244861, bootstrap CI95 = [1.220821, 1.265433], min/max = 1.159574 / 1.276316; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.225470, 0.031480, 0.000409, 0, 0, 0, 0] over n_accept=1259 / n_draft=4892; wall clock 492.34s.
+- This MT-Bench coding public-axis slice is the weakest MT-Bench slice so far (below roleplay 1.265432, reasoning 1.293869, writing 1.324158, math 1.507054). No AL>3 observed; spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-29 00:55] dflash-al3-driver: Driver 00:56 PDT: auto-approved T5 MT-Bench rows40-49 coding cycle (measured runtime AL=1.257359, no AL>3). Resume ONE spark-1-only fast filler cycle now; keep it <30 min, numeric measured AL only, no source/export mutation, no spark-2/spark-3/spark-work/spark-4. Prefer next MT-Bench slice rows50-59 or smallest discriminating public-axis check, then block review-required.
+  [2026-05-29 01:04] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on actual public MT-Bench rows 50-59 (question_ids 131-140, `extraction` category), v18 step2500, draft_max=7, max_tokens=128; answer quality/correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows50_59_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows50_59_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_mtbench_rows50_59.py`; server log copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows50_59_logs/`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.346124, mean per-prompt AL = 1.360636, bootstrap CI95 = [1.340632, 1.381873], min/max = 1.322738 / 1.431373; 10/10 API successes, 9/10 numeric AL rows (row question_id=140 produced completion but no parseable speculative counters), 0 errors.
+- Aggregate per-position accept = [0.290916, 0.055207, 0, 0, 0, 0, 0] over n_accept=884 / n_draft=2554; wall clock 371.23s.
+- This MT-Bench extraction public-axis slice is below math 1.507054 but above writing 1.324158, reasoning 1.293869, roleplay 1.265432, and coding 1.257359. No AL>3 observed; spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-29 01:31] dflash-al3-driver: Driver 01:31 PDT: auto-approved prior T5 cycle (MT-Bench rows50-59 AL=1.346124, no AL>3). spark-1 has no active priority lease from this board; resume ONE spark-1-only fast filler cycle. Prefer the next public-axis MT-Bench slice or smallest discriminating AL check; numeric measured AL only; no spark-2/spark-3/spark-work/spark-4; block review-required after one cycle.
+  [2026-05-29 01:41] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on actual public MT-Bench rows 60-69 (question_ids 141-150, `stem` category), v18 step2500, draft_max=7, max_tokens=128; answer quality/correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows60_69_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows60_69_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_mtbench_rows60_69.py`; server log copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows60_69_logs/`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.281762, mean per-prompt AL = 1.281572, bootstrap CI95 = [1.271766, 1.291354], min/max = 1.253165 / 1.309524; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.259185, 0.022576, 0, 0, 0, 0, 0] over n_accept=1273 / n_draft=4518; wall clock 474.97s.
+- This MT-Bench STEM public-axis slice is below extraction 1.346124 and writing 1.324158, above coding 1.257359 and roleplay 1.265432, and far below math 1.507054. No AL>3 observed; spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-29 01:49] dflash-al3-driver: Driver 01:49 PDT: auto-approved T5 MT-Bench rows60-69 STEM cycle (measured runtime AL=1.281762, no AL>3). Resume ONE spark-1-only fast filler cycle now; keep it <30 min, numeric measured AL only, no source/export mutation, no spark-2/spark-3/spark-work/spark-4. Prefer next MT-Bench slice rows70-79 or smallest discriminating AL check; block review-required after one cycle.
+  [2026-05-29 02:01] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed menu item 4 public-reference reproduction on actual public MT-Bench rows 70-79 (question_ids 151-160, `humanities` category), v18 step2500, draft_max=7, max_tokens=128; answer quality/correctness not scored.
+- Produced artifact: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows70_79_c15_iq4v18_step2500.json`
+- Row-source copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows70_79_rows/`; runner script: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/t5_publicref_mtbench_rows70_79.py`; server log copy: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows70_79_logs/`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): weighted AL = 1.242292, mean per-prompt AL = 1.237974, bootstrap CI95 = [1.222992, 1.249985], min/max = 1.183962 / 1.263274; 10/10 numeric successes, 0 errors.
+- Aggregate per-position accept = [0.219071, 0.021888, 0.001332, 0, 0, 0, 0] over n_accept=1273 / n_draft=5254; wall clock 529.40s.
+- This MT-Bench humanities public-axis slice is the weakest MT-Bench slice so far (below coding 1.257359, roleplay 1.265432, STEM 1.281762, reasoning 1.293869, writing 1.324158, extraction 1.346124, math 1.507054). No AL>3 observed; spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-29 02:59] dflash-al3-driver: driver auto-approved prior T5 filler review cycle. Resume ONE spark-1-only fast inference/background AL cycle now. Current campaign facts: buun harness reproduces z-lab published AL=5.849; OUR measured MiniMax path remains below target (T53 step500 AL=1.651; T59 running latest-ckpt AL). Do not touch spark-2/spark-3/spark-4. Prefer a <30min numeric AL/cause-isolation cycle that complements T59/T60; block review-required after one cycle.
+  [2026-05-29 03:15] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed a cause-isolation public-axis rerun on the prior strongest MT-Bench slice: rows30-39 math, same v18 step2500 ckpt, same draft_max=7, but max_tokens raised from 128 to 256.
+- Produced artifacts:
+  - `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows30_39_max256_c15_iq4v18_step2500.json`
+  - `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/cause_max_tokens_mtbench_math_rows30_39_128_vs_256_c15_iq4v18_step2500.json`
+  - row/log copies under `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows30_39_max256_rows/` and `.../publicref_mtbench_rows30_39_max256_logs/`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): max_tokens=256 weighted AL = 1.528464, mean per-prompt AL = 1.566661, bootstrap CI95 = [1.513807, 1.653724], min/max = 1.492707 / 1.938931; 10/10 numeric successes, 0 errors.
+- Direct comparison to the prior same-slice max_tokens=128 run: weighted AL 1.507054 -> 1.528464, delta +0.021411. This small gain says the 128-token cap is not the main explanation for the low MiniMax-path AL on this math slice.
+- Aggregate per-position accept at 256 = [0.354851, 0.122341, 0.037502, 0.012050, 0.001721, 0, 0] over n_accept=4298 / n_draft=8133; wall clock 796.90s.
+- No AL>3 observed (max prompt AL 1.938931); spark-1 only, no export dirs modified, no llama-server left running.
+  [2026-05-29 03:35] dflash-al3-driver: Driver 03:35 PDT: auto-approved prior T5 filler cycle (MT-Bench math rows30-39 max_tokens=256 measured AL=1.528464, only +0.021 vs max_tokens=128; no AL>3). Resume ONE spark-1-only fast filler cycle now. Keep it <30 min, numeric measured AL only, no source/export mutation, no spark-2/spark-3/spark-work/spark-4. Prefer a complementary discriminating AL/cause-isolation check while T59 owns spark-2; block review-required after one cycle.
+  [2026-05-29 03:53] atlasdflash3: review-required handoff (T5 cycle, spark-1 only):
+- Completed a cause-isolation public-axis rerun on the prior strongest MT-Bench slice: rows30-39 math, same v18 step2500 ckpt, max_tokens=256, draft_max raised from 7 to 11.
+- Produced artifacts:
+  - `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows30_39_dmax11_max256_c15_iq4v18_step2500.json`
+  - `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/cause_draftmax_mtbench_math_rows30_39_d7_vs_d11_max256_c15_iq4v18_step2500.json`
+  - row/log copies under `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_14c05057/publicref_mtbench_rows30_39_dmax11_max256_rows/` and `.../publicref_mtbench_rows30_39_dmax11_max256_logs/`.
+- Measured runtime AL axis only (raw accept_length; no multiplier/extrapolation): d11/max256 weighted AL = 1.523421, mean per-prompt AL = 1.562555, bootstrap CI95 = [1.510245, 1.646474], min/max = 1.497592 / 1.938931; 10/10 numeric successes, 0 errors.
+- Direct comparison: d7/max256 weighted AL 1.528464 -> d11/max256 1.523421, delta -0.005044. Versus original d7/max128 1.507054, d11/max256 is only +0.016367. Raising draft_max to 11 does not materially improve the low MiniMax-path AL on this math slice.
+- Aggregate per-position accept at d11/max256 = [0.350949, 0.122868, 0.037473, 0.010449, 0.001681, 0, 0, 0, 0, 0, 0] over n_accept=4358 / n_draft=8326; wall clock 982.73s.
+- No AL>3 observed (max prompt AL 1.938931); spark-1 only, no export dirs modified, no llama-server left running.
+
+Events (157):
+  [2026-05-29 02:01] [run 551] blocked {'reason': 'review-required: cycle complete — public MT-Bench rows70-79 humanities measured runtime AL=1.242292 (10/10 successes), no AL>3; ready for next cycle'}
+  [2026-05-29 02:59] commented {'author': 'dflash-al3-driver', 'len': 439}
+  [2026-05-29 02:59] unblocked
+  [2026-05-29 02:59] [run 561] claimed {'lock': 'macmini.local:64645', 'expires': 1780049686, 'run_id': 561}
+  [2026-05-29 02:59] [run 561] spawned {'pid': 64647}
+  [2026-05-29 03:00] [run 561] heartbeat {'note': 'starting T5 spark-1-only filler cycle after driver 02:59: inspecting workspace artifacts/scripts and spark-1 state before selecting one <30min numeric AL/cause-isolation check'}
+  [2026-05-29 03:01] [run 561] heartbeat {'note': 'T5 cause-isolation run launched on spark-1: MT-Bench math rows30-39 rerun at max_tokens=256 (vs prior 128), draft_max=7; waiting for rows/summary'}
+  [2026-05-29 03:07] [run 561] heartbeat {'note': 'T5 max_tokens=256 cause-isolation run active on spark-1: 4/10 rows complete, partial weighted measured AL=1.5671; waiting for remaining rows'}
+  [2026-05-29 03:15] commented {'author': 'atlasdflash3', 'len': 1487}
+  [2026-05-29 03:15] [run 561] blocked {'reason': 'review-required: cycle complete — MT-Bench math rows30-39 max_tokens 256 measured runtime AL=1.528464, only +0.021411 vs 128; no AL>3; ready for next cycle'}
+  [2026-05-29 03:35] commented {'author': 'dflash-al3-driver', 'len': 438}
+  [2026-05-29 03:35] unblocked
+  [2026-05-29 03:35] [run 567] claimed {'lock': 'macmini.local:73661', 'expires': 1780051848, 'run_id': 567}
+  [2026-05-29 03:35] [run 567] spawned {'pid': 73664}
+  [2026-05-29 03:36] [run 567] heartbeat {'note': 'starting T5 spark-1-only filler cycle after driver 03:35: inspecting workspace artifacts/scripts and spark-1 state before selecting one <30min numeric AL/cause-isolation check'}
+  [2026-05-29 03:36] [run 567] heartbeat {'note': 'T5 cause-isolation run launched on spark-1: MT-Bench math rows30-39 with draft_max=11 and max_tokens=256, comparing against prior draft_max=7/max256; waiting for rows/summary'}
+  [2026-05-29 03:43] [run 567] heartbeat {'note': 'T5 draft_max=11/max_tokens=256 MT-Bench math run active on spark-1: 3/10 rows complete, partial weighted measured AL=1.60855; waiting for remaining rows'}
+  [2026-05-29 03:49] [run 567] heartbeat {'note': 'T5 draft_max=11/max_tokens=256 MT-Bench math run active on spark-1: 7/10 rows complete, partial weighted measured AL=1.53177; waiting for final rows'}
+  [2026-05-29 03:53] commented {'author': 'atlasdflash3', 'len': 1542}
+  [2026-05-29 03:53] [run 567] blocked {'reason': 'review-required: cycle complete — MT-Bench math rows30-39 draft_max 11/max_tokens 256 measured runtime AL=1.523421, -0.005044 vs draft_max 7/max256; no AL>3; ready for next cycle'}
+
+Runs (20):
+  #2   reclaimed    @atlasdflash3  1904s  2026-05-28 07:35
+        ! manual_reclaim: user stop: campaign retired
+  #201 blocked      @atlasdflash3  0s  2026-05-28 08:07
+        → user stop: dflash-al3 campaign retired
+  #211 crashed      @atlasdflash3  2863s  2026-05-28 08:09
+        ! pid 60361 not alive
+  #217 blocked      @atlasdflash3  31s  2026-05-28 08:57
+        → user stop final
+  #223 blocked      @atlasdflash3  1177s  2026-05-28 12:27
+        → paused filler: free spark-1 GPU for priority T14/T15 measurements
+  #243 blocked      @atlasdflash3  111s  2026-05-28 15:14
+        → review-required: cycle complete — extended50 v18 step2500 measured runtime AL=1.397716 weighted (49/50 numeric); ready for next cycle when spark-1 is idle
+  #257 blocked      @atlasdflash3  2981s  2026-05-28 17:33
+        → review-required: cycle complete — draft_max sweep says 11 is best among {5,9,11} at AL=1.371047, only +0.008405 vs draft_max=7; ready for next cycle
+  #413 blocked      @atlasdflash3  672s  2026-05-28 20:58
+        → review-required: cycle complete — writing deep-dive new10 measured runtime AL=1.290303 (10/10 successes), confirming writing remains worst; ready for next cycle
+  #493 blocked      @atlasdflash3  1833s  2026-05-28 21:51
+        → review-required: cycle complete — publicref GSM8K static10 measured runtime AL=1.370950 (10/10 successes), far below driver z-lab GSM8K reference; ready for nex
+  #497 blocked      @atlasdflash3  738s  2026-05-28 22:50
+        → review-required: cycle complete — publicref HumanEval-style static10 measured runtime AL=1.270011 (10/10 successes), no AL>3; ready for next cycle
+  #527 blocked      @atlasdflash3  711s  2026-05-28 23:27
+        → review-required: cycle complete — public MT-Bench first10 measured runtime AL=1.324158 (10/10 successes), no AL>3; ready for next cycle
+  #529 blocked      @atlasdflash3  670s  2026-05-28 23:42
+        → review-required: cycle complete — public MT-Bench rows10-19 roleplay measured runtime AL=1.265432 (10/10 successes), no AL>3; ready for next cycle
+  #531 blocked      @atlasdflash3  553s  2026-05-29 00:01
+        → review-required: cycle complete — public MT-Bench rows20-29 reasoning measured runtime AL=1.293869 (10/10 successes), no AL>3; ready for next cycle
+  #535 blocked      @atlasdflash3  499s  2026-05-29 00:19
+        → review-required: cycle complete — public MT-Bench rows30-39 math measured runtime AL=1.507054 (10/10 successes), no AL>3; ready for next cycle
+  #539 blocked      @atlasdflash3  623s  2026-05-29 00:38
+        → review-required: cycle complete — public MT-Bench rows40-49 coding measured runtime AL=1.257359 (10/10 successes), no AL>3; ready for next cycle
+  #541 blocked      @atlasdflash3  490s  2026-05-29 00:55
+        → review-required: cycle complete — public MT-Bench rows50-59 extraction measured runtime AL=1.346124 (9/10 numeric, 10/10 API successes), no AL>3; ready for next
+  #548 blocked      @atlasdflash3  595s  2026-05-29 01:31
+        → review-required: cycle complete — public MT-Bench rows60-69 STEM measured runtime AL=1.281762 (10/10 successes), no AL>3; ready for next cycle
+  #551 blocked      @atlasdflash3  718s  2026-05-29 01:49
+        → review-required: cycle complete — public MT-Bench rows70-79 humanities measured runtime AL=1.242292 (10/10 successes), no AL>3; ready for next cycle
+  #561 blocked      @atlasdflash3  933s  2026-05-29 02:59
+        → review-required: cycle complete — MT-Bench math rows30-39 max_tokens 256 measured runtime AL=1.528464, only +0.021411 vs 128; no AL>3; ready for next cycle
+  #567 blocked      @atlasdflash3  1090s  2026-05-29 03:35
+        → review-required: cycle complete — MT-Bench math rows30-39 draft_max 11/max_tokens 256 measured runtime AL=1.523421, -0.005044 vs draft_max 7/max256; no AL>3; re

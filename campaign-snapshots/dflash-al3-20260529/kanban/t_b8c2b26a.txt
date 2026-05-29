@@ -1,0 +1,83 @@
+Task t_b8c2b26a: T35: Non-PR llama.cpp DFlash harness implementation — reproduce z-lab AL without ruixiang PR
+  status:    done
+  assignee:  atlaspatch3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b8c2b26a
+  max-retries: 2 (default)
+  created:   2026-05-28 21:33 by user
+  started:   2026-05-28 21:33
+  completed: 2026-05-28 21:48
+  children:  t_936ecd6d
+
+Body:
+# T35: Non-PR llama.cpp DFlash harness implementation — reproduce z-lab AL without ruixiang PR
+
+## Latest user directive / correction
+21:25 PDT: user explicitly rejected ruixiang PR #22105: "The rui one is not an option it doesn't work and it isn't flexible." Do NOT use PR #22105 as the solution path.
+
+Campaign mission remains: deliver a WORKING DFlash inference path on llama.cpp that reproduces published z-lab AL numbers, then can swap in our v18b checkpoint for trajectory measurement. Deliverable is a binary + GGUF + benchmark invocation, not a verdict report.
+
+## Host scope
+Use spark-work if idle; spark-3 or spark-4 only if spark-work is unusable. Do NOT touch spark-1 (T33/T5 lease) or spark-2 (T32 training lease). No Kasa cycling unless this task is the explicit lease holder for the host you chose.
+
+## Job
+Implement the non-ruixiang path in our llama.cpp/dflash-llama stack:
+1. Treat z-lab original repo and/or SGLang registered DFlash test as the behavioral oracle, not PR #22105.
+2. Inspect current `/home/dnola/dflash-llama/` implementation and identify the exact AL-underreporting cause(s): acceptance accounting, KV cache reuse on accept/reject, tree expansion, EOS, temperature/top-k determinism, draft block semantics, hidden-state/tokenizer mismatch.
+3. Patch the local llama.cpp/dflash-llama path enough to run z-lab known-good drafter under published GSM8K-style conditions. Keep patches minimal and auditable.
+4. Build the binary on the chosen Spark. Produce exact build path, git diff, and invocation.
+5. Run a small smoke (1-5 prompts) proving the patched binary is not obviously undercounting (per-position acceptance must be nonzero when aggregate AL > 1).
+6. Write `/home/dnola/v18_fix/T35_NON_RUI_LLAMA_DFLASH_IMPLEMENTATION.md` with:
+   - chosen host and build path
+   - changed files / diff summary
+   - exact GGUF paths for verifier + z-lab drafter
+   - exact benchmark command
+   - smoke AL and per-position acceptance
+   - remaining validation steps for T36
+
+## Hard rules
+- Do NOT use ruixiang/PR #22105 as the adopted solution. You may read it as a reference only if already locally present, but the deliverable must be our flexible path.
+- Do NOT modify training artifacts.
+- Do NOT change locked training shape knobs.
+- Do NOT claim success from a single aggregate AL if `per_position_accept=[0,...,0]`; that is still a harness bug.
+- Time-box: 3 hours. If full patch not complete, leave a compileable branch or a precise blocker + next patch location.
+
+## Acceptance criteria
+- A buildable local llama.cpp/dflash-llama binary exists on the chosen host.
+- z-lab known-good drafter + verifier GGUF invocation is documented.
+- Smoke benchmark emits internally consistent acceptance telemetry.
+- `/home/dnola/v18_fix/T35_NON_RUI_LLAMA_DFLASH_IMPLEMENTATION.md` exists.
+
+
+Latest summary:
+review-required: telemetry patch + build + 3-prompt smoke completed, but clean non-ruixiang requirement is not satisfied because spark-work lacked /home/dnola/dflash-llama and smoke used existing PR-derived DFlash branch/compat GGUF.
+
+Comments (2):
+  [2026-05-28 21:41] atlaspatch3: review-required handoff:
+{
+  "chosen_host": "spark-work",
+  "repo_path": "/home/dnola/llama.cpp.upstream",
+  "build_binary": "/home/dnola/llama.cpp.upstream/build/bin/llama-speculative-simple",
+  "doc": "/home/dnola/v18_fix/T35_NON_RUI_LLAMA_DFLASH_IMPLEMENTATION.md",
+  "diff_path": "/home/dnola/v18_fix/t35/T35_llamacpp.diff",
+  "changed_files": ["/home/dnola/llama.cpp.upstream/examples/speculative-simple/speculative-simple.cpp"],
+  "build_log": "/home/dnola/v18_fix/T35_build.log",
+  "smoke_artifacts": ["/home/dnola/v18_fix/t35/T35_smoke_driver.log", "/home/dnola/v18_fix/t35/T34_gsm8k_pr22105_b7_n128_1.jsonl", "/home/dnola/v18_fix/t35/T34_gsm8k_pr22105_b7_n128_1_summary.json"],
+  "tests_run": ["cmake --build build -j $(nproc) --target llama-speculative-simple", "3-prompt GSM8K-style DFlash smoke, draft_max=7, max_tokens=128"],
+  "smoke_summary": {"aggregate_AL_inferred": 5.391891891891892, "mean_prompt_AL_inferred": 5.405484949832776, "total_n_predict": 399, "total_n_accept": 325, "per_position_accept_nonzero": true},
+  "important_caveat": "This is not a clean non-ruixiang implementation: spark-work lacks /home/dnola/dflash-llama, and the smoke uses the existing DFlash-capable PR-derived checkout plus compatibility GGUF. The produced artifact is buildable and telemetry-consistent, but the true non-PR port remains for T36/review."
+}
+  [2026-05-28 21:48] macmini-chat: Superseded by t_b898e7fb (T35 buun-llama-cpp, atlas6dflash5 on spark-work) — that task has the specific fork URL (spiritbuun/buun-llama-cpp) USER pointed to with the mature DFlash impl. Closing this duplicate driver-filed task.
+
+Events (8):
+  [2026-05-28 21:33] created {'assignee': 'atlaspatch3', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-28 21:33] [run 489] claimed {'lock': 'macmini.local:81350', 'expires': 1780030132, 'run_id': 489}
+  [2026-05-28 21:33] [run 489] spawned {'pid': 81355}
+  [2026-05-28 21:39] [run 489] heartbeat {'note': 'Patched llama-speculative-simple telemetry on spark-work and built target; starting 1-prompt DFlash smoke with z-lab drafter compat GGUF.'}
+  [2026-05-28 21:41] commented {'author': 'atlaspatch3', 'len': 1353}
+  [2026-05-28 21:41] [run 489] blocked {'reason': 'review-required: telemetry patch + build + 3-prompt smoke completed, but clean non-ruixiang requirement is not satisfied because spark-work lacked /home/dnola/dflash-llama and smoke used existing PR-derived DFlash branch/compat GGUF.'}
+  [2026-05-28 21:48] commented {'author': 'macmini-chat', 'len': 227}
+  [2026-05-28 21:48] completed {'result_len': 0, 'summary': None}
+
+Runs (1):
+  #489 blocked      @atlaspatch3  481s  2026-05-28 21:33
+        → review-required: telemetry patch + build + 3-prompt smoke completed, but clean non-ruixiang requirement is not satisfied because spark-work lacked /home/dnola/d

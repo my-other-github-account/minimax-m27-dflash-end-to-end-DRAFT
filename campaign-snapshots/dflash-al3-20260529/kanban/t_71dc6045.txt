@@ -1,0 +1,108 @@
+Task t_71dc6045: T34v2: RESUME the PR #22105 100-sample GSM8K run on spark-work (user reversed the kill, evaluate on real data)
+  status:    done
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_71dc6045
+  skills:    spark-cluster-operations, llama-cpp
+  max-retries: 2 (default)
+  created:   2026-05-28 21:42 by user
+  started:   2026-05-28 21:42
+  completed: 2026-05-28 21:46
+
+Body:
+# T34v2: RESUME the PR #22105 100-sample GSM8K run on spark-work (user reversed the kill)
+
+## Context (USER 2026-05-28 21:28 PDT)
+USER initially said "PR #22105 is not an option, doesn't work, isn't flexible" → chat killed T34. Then USER clarified: "Keep T34 alive until the 100-sample number is in, then re-evaluate based on real data."
+
+The previous T34 worker (atlas6dflash5, completed task t_5b6ff68c) had already accomplished a LOT before being killed:
+- Built llama.cpp + PR #22105 on spark-work
+- Converted z-lab drafter to GGUF
+- Downloaded Qwen3.6-35B-A3B-UD-IQ4_XS verifier
+- Ran 3 samples (summary at `/home/dnola/v18_fix/t34/T34_gsm8k_pr22105_b16_n256_3_summary.json`)
+- Was 5 samples into a 100-sample GSM8K run (max-tokens=4096, draft-max=16, no-AR) when chat killed it
+- First 5 sample ALs (still on disk in `/home/dnola/v18_fix/t34/T34_gsm8k_b16_100_run.log`):
+  - SPEC 0  AL=6.924  n_accept=859/n_predict=1004
+  - SPEC 1  AL=8.231  n_accept=282/n_predict=321
+  - SPEC 2  AL=7.792  n_accept=2126/n_predict=2439
+  - SPEC 3  AL=8.243  n_accept=804/n_predict=915
+  - SPEC 4  AL=8.206  n_accept=1434/n_predict=1633
+
+These numbers are AT OR ABOVE z-lab's published B16 expectations for Qwen3.6-35B-A3B on math reasoning. The hypothesis "PR #22105 doesn't work" needs to be tested against 100 samples, not 5, before adjudication.
+
+## Your job (spark-work ONLY, no redo of completed steps)
+
+### Phase 1 — Verify state on disk
+1. `ssh spark-work 'ls -la /home/dnola/v18_fix/t34/'` — should show the binary build, gguf conversions, partial 100-sample log, venv, t34_run_gsm8k.py, etc.
+2. `ssh spark-work 'ls -la /home/dnola/llama.cpp.upstream/build/bin/llama-speculative-simple'` — confirm the PR #22105 binary still exists.
+3. `ssh spark-work 'ls -la /home/dnola/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf /tmp/t34_zlab_pr22105_bf16.gguf'` — confirm both GGUFs intact.
+
+If any artifact is missing, the previous worker's outputs were transient — fall back to rebuilding them, but only what's missing.
+
+### Phase 2 — Resume the GSM8K 100-sample run
+1. Check `T34_gsm8k_b16_100_run.log` for the last sample index logged. The kill happened around sample 5.
+2. Re-launch the GSM8K run with offset or skip-existing logic so already-completed samples don't get re-done. The runner script is at `/home/dnola/v18_fix/t34/t34_run_gsm8k.py` — check if it supports `--skip-existing` / `--resume` / `--start-from`. If not, the worker can either (a) just restart at sample 0 (acceptable — only ~5 samples wasted), or (b) edit the runner to start from the next sample index. Pick whichever is faster.
+3. Launch in tmux so it survives ssh drops:
+   ```bash
+   ssh spark-work 'tmux new-session -d -s t34v2_gsm8k \
+     "/home/dnola/v18_fix/t34/venv/bin/python /home/dnola/v18_fix/t34/t34_run_gsm8k.py \
+        --max-samples 100 --max-tokens 4096 --draft-max 16 --no-ar \
+        > /home/dnola/v18_fix/t34/T34v2_gsm8k_b16_100_run.log 2>&1"'
+   ```
+4. Heartbeat every 10 minutes with progress (samples completed, running AL mean).
+5. At ~25 samples and ~50 samples, compute running AL mean and report — if it's holding steady in the 6.5-8.5 range, the 5-sample signal was real.
+
+### Phase 3 — Verdict
+Three outcomes, write `/home/dnola/v18_fix/T34v2_VERDICT.md`:
+
+- **PR22105_REPRODUCES_PUBLISHED**: 100-sample GSM8K AL mean ≥ 5.5 (within published range). PR #22105 works for z-lab/Qwen3.6 + Qwen3.6-35B-A3B verifier on math reasoning at published settings. Document the build + invocation. Note that this proves PR #22105 IS a working DFlash inference path for at least the z-lab use case.
+
+  IMPORTANT: this does NOT yet prove PR #22105 will work for OUR v18b checkpoints (MiniMax M2.7 verifier, V=32768 draft vocab, num_layers=6, block_size=8). That's a separate test that should be a follow-up task. The USER's "isn't flexible" comment likely targets exactly this generalization gap.
+
+  Surface BOTH: "PR #22105 reproduces published z-lab numbers" AND "PR #22105 has not yet been validated on our v18b shape, which is a real concern given USER feedback on flexibility."
+
+- **PR22105_BELOW_PUBLISHED**: 100-sample mean < 5.5. The 5-sample signal was noise. Document the actual mean + variance. PR #22105 is then not the answer; file T35 for alternate inference path (sglang container, EAGLE3 PR #18039 as base, vLLM speculative, or our-fork-fix).
+
+- **PR22105_BROKE_DURING_RUN**: process crashed, OOM, hung, or returned malformed AL. Document the failure mode + at which sample.
+
+### Phase 4 — Flexibility probe (only if PR22105_REPRODUCES_PUBLISHED)
+Document in the verdict file what would be needed to extend PR #22105 to OUR v18b shape:
+- V=32768 draft vocab vs z-lab's V=151936 (Qwen3) — the PR's `src/models/dflash.cpp` and `convert_hf_to_gguf.py` may have hard-coded vocab dimensions or assumptions.
+- block_size=8 vs z-lab's block_size=16
+- num_layers=6 drafter vs z-lab's count
+- MiniMax M2.7 verifier (V=200064) vs z-lab's Qwen3.6 (V=151936) — fundamentally different vocab geometry.
+
+Don't fix any of these — just document the inflexibility points so the user can adjudicate whether to push on PR #22105, fork it for v18b, or pivot to a different runtime.
+
+## Hard rules
+- Host scope: spark-work ONLY.
+- Do NOT modify the PR source. Do NOT modify the runner. Do NOT touch z-lab drafter or verifier weights.
+- Reuse all on-disk artifacts from the killed T34 — do not redo build/convert/download.
+- 4-hour time-box. 100 samples × ~30s/sample ≈ 50 min for the run, plus startup and verdict writing.
+- Surface the inflexibility risk explicitly in the verdict.
+
+## Acceptance criteria
+- 100 GSM8K samples completed on PR #22105 binary
+- AL mean + variance + per-sample histogram in the verdict file
+- Adjudication of whether 5-sample signal was real or noise
+- Explicit list of PR #22105 "flexibility gaps" relative to our v18b shape
+
+## Reference
+- Original T34: `t_5b6ff68c` (done, killed prematurely by chat at 21:25 PDT, reversed at 21:28 PDT)
+- Prior work on disk: `/home/dnola/v18_fix/t34/` on spark-work
+- PR: https://github.com/ggml-org/llama.cpp/pull/22105
+- Prior killed run log: `/home/dnola/v18_fix/t34/T34_gsm8k_b16_100_run.log`
+- z-lab card: https://huggingface.co/z-lab/Qwen3.6-35B-A3B-DFlash
+
+Comments (1):
+  [2026-05-28 21:46] macmini-chat: 21:42 PDT USER reframed: pointed at https://github.com/spiritbuun/buun-llama-cpp. After verifying: 630 stars/67 forks, active DFlash dev (branches experiment/SD-073 through SD-089-pflash, fix/issue-38..44), src/models/dflash_draft.cpp is 27KB (vs PR22105's 5KB), conversion/minimax.py EXISTS (resolves the v18b flexibility concern — our verifier is MiniMax M2.7), benches/dgx-spark/ shows they target our exact GB10 hardware. The 'zlab_qwen36_35b_a3b_dflash_buun.gguf' filename token 'buun' = spiritbuun's naming convention; our z-lab gguf was BUILT for this fork. PR22105 was the wrong fork to chase. Killing T34v2 cleanly; T35 stands up buun-llama-cpp instead.
+
+Events (6):
+  [2026-05-28 21:42] created {'assignee': 'atlas6dflash5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': ['spark-cluster-operations', 'llama-cpp']}
+  [2026-05-28 21:42] [run 490] claimed {'lock': 'macmini.local:16977', 'expires': 1780030651, 'run_id': 490}
+  [2026-05-28 21:42] [run 490] spawned {'pid': 83328}
+  [2026-05-28 21:43] [run 490] heartbeat {'note': 'spark-work artifacts verified; relaunched 100-sample GSM8K PR #22105 run in tmux session t34v2_gsm8k, writing /home/dnola/v18_fix/t34/T34v2_gsm8k_b16_100_run.log'}
+  [2026-05-28 21:46] commented {'author': 'macmini-chat', 'len': 662}
+  [2026-05-28 21:46] [run 490] completed {'result_len': 0, 'summary': None}
+
+Runs (1):
+  #490 completed    @atlas6dflash5  219s  2026-05-28 21:42

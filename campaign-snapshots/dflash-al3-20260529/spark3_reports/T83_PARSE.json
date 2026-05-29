@@ -1,0 +1,103 @@
+{
+  "artifacts": [
+    "/home/dnola/v18_fix/T83_PARSE.json",
+    "/home/dnola/v18_fix/T83_RUN_LABEL.txt",
+    "/home/dnola/iq4_full_run/launch_T83_spark3_bounded.sh",
+    "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/train.log"
+  ],
+  "checkpoint_last_inepoch": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/checkpoint_last_inepoch",
+  "checkpoints": [
+    {
+      "exists": true,
+      "files": [
+        "config.json",
+        "config.py",
+        "model.safetensors",
+        "optimizer_state_dict.pt",
+        "scheduler_state_dict.pt",
+        "trainer_state.json"
+      ],
+      "global_step": 700,
+      "is_symlink": true,
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000700",
+      "realpath": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700"
+    },
+    {
+      "exists": true,
+      "files": [
+        "config.json",
+        "config.py",
+        "model.safetensors",
+        "optimizer_state_dict.pt",
+        "scheduler_state_dict.pt",
+        "trainer_state.json"
+      ],
+      "global_step": 750,
+      "is_symlink": false,
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750",
+      "realpath": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750"
+    }
+  ],
+  "fresh_checkpoint": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750",
+  "global_step_reached": 800,
+  "host": "spark-3",
+  "max_train_steps": 800,
+  "post_run_free_g": "total        used        free      shared  buff/cache   available\nMem:             119          21          39          16          76          97\nSwap:             15           0          15",
+  "post_run_gpu_compute_apps": 0,
+  "post_run_gpu_compute_raw": "",
+  "post_run_train_processes": 0,
+  "preflight_hidden_state_sample": "1000/1000 = 100.0%",
+  "preflight_memory": "free -g available 98 GiB before launch; 97 GiB after completion",
+  "run_label": "c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z",
+  "save": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z",
+  "source_checkpoint": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700",
+  "train_end": {
+    "full_acc": 0.207,
+    "global_step": 799,
+    "loss": 4.719
+  },
+  "train_log": "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/train.log",
+  "train_records_parsed": 100,
+  "train_start": {
+    "full_acc": 0.158,
+    "global_step": 700,
+    "loss": 4.625
+  },
+  "val_every_steps": 50,
+  "val_in_epoch_max_batches": 20,
+  "val_metrics": [
+    {
+      "AL_HI": 2.132152073085308,
+      "AL_LO": 1.3962801784167742,
+      "full_acc_epoch": 0.1618559133261442,
+      "loss_epoch": 5.1390625,
+      "position_accs": [
+        0.3168261207640171,
+        0.21333448365330696,
+        0.1531973894685507,
+        0.12937594763934612,
+        0.11362349800765514,
+        0.10549400262534618,
+        0.10030063092708588
+      ],
+      "step": "step_00000700"
+    },
+    {
+      "AL_HI": 2.2780925810337065,
+      "AL_LO": 1.4698393885226873,
+      "full_acc_epoch": 0.1827240727841854,
+      "loss_epoch": 5.121875,
+      "position_accs": [
+        0.3595125526189804,
+        0.2533527508378029,
+        0.18175846487283706,
+        0.1424707230180502,
+        0.12437228597700596,
+        0.11156787723302841,
+        0.10505792647600173
+      ],
+      "step": "step_00000750"
+    }
+  ],
+  "verdict": "CKPT_READY"
+}

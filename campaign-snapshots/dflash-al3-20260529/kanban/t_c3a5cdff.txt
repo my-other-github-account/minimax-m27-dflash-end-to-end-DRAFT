@@ -1,0 +1,69 @@
+Task t_c3a5cdff: T41: FAST v18b training smoke (200 steps) — early proof <15min
+  status:    blocked
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_c3a5cdff
+  skills:    spark-cluster-operations, dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 23:00 by user
+  started:   2026-05-28 23:00
+
+Body:
+# T41: FAST contention-safe v18b training smoke — early proof in <15 min, produce a fresh checkpoint
+
+## Mission (user pivot): EARLY PROOF, FAST. No run needing >1hr wait. Bounded smokes + iteration.
+
+## Host: ONE of {spark-1, spark-2, spark-3}. spark-4 OFF-LIMITS (sero vLLM).
+
+## MANDATORY pre-launch (contention fix)
+1. ssh <host> 'pgrep -af scripts/train.py' — abort if a train.py already runs (kill if unowned orphan).
+2. export TORCHINDUCTOR_COMPILE_THREADS=4 OMP_NUM_THREADS=8 (caps inductor fork pool = the OOM fork-bomb).
+3. ssh <host> 'free -g' — need >=90GB available.
+4. Use LOCAL hidden states /home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_LOCAL_T32_first700 (93GB, first 700 batches). NOT FUSE NasFS.
+
+## The run (FAST)
+Adapt /home/dnola/v18_fix/launch_c15_v18b_T32_LOCAL_first700.sh: MAX_TRAIN_STEPS=200, checkpoint-freq=100 (saves @100 and @200), val-every-steps 200, val-in-epoch-max-batches 5. Keep C15 winning config. Add export TORCHINDUCTOR_COMPILE_THREADS=4. Named tmux. Expect <15 min total.
+
+## Acceptance -> /home/dnola/v18_fix/T41_FAST_SMOKE.md
+- STABLE+CKPT: 200 steps, loss descending from ~10.x, no wedge, ckpt dirs @100 & @200 with model.safetensors+config.json. Report loss@1/@100/@200 + ckpt paths. Hand ckpt to T42.
+- WEDGE_RECURRED: only if wedges despite single-run+capped-threads+local-data — capture dmesg|tail -50 + nvidia-smi.
+
+## Hard rules
+One train.py per host. TORCHINDUCTOR_COMPILE_THREADS=4. Local data. Holds host lease. Do NOT touch spark-4. 45-min box. Note if ckpt config.json draft_vocab_size=200064 while lm_head is [32768,3072].
+
+## Reference
+T37 clean run: /home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_spark3_20260529T055112Z/train.log. Launcher: /home/dnola/v18_fix/launch_c15_v18b_T32_LOCAL_first700.sh. Skill dflash-c15-fp8-hybrid-winning-config-and-health-rules Pitfall 11 = contention/OOM fix.
+
+
+Latest summary:
+WEDGE_RECURRED: spark-2 became unreachable during T41 at global_step~80; need human power-recovery or verified spark-2 Kasa outlet mapping before dmesg/nvidia-smi and checkpoint status can be collected.
+
+Comments (3):
+  [2026-05-28 23:08] dflash-al3-driver: URGENT CONTENTION/RECOVERY NOTE from driver tick: T43 reported spark-2 became unreachable across TS/88-net/QSFP immediately after a DFlash smoke at ~23:07. Your heartbeat says you launched T41 on spark-2, so you are the current spark-2 lease-holder. Do NOT let a second actor mutate spark-2. If your train smoke is still progressing, continue and write ckpt paths. If spark-2 is unreachable, perform worker-owned recovery per spark-cluster-operations/kasa policy (driver will not Kasa-cycle), then resume the bounded 200-step smoke with TORCHINDUCTOR_COMPILE_THREADS=4 and one train.py only. If recovery is impossible, block with exact evidence and whether any checkpoint was produced.
+  [2026-05-28 23:20] atlasdflash3: T41 WEDGE_RECURRED handoff (blocked before host-side dmesg/nvidia-smi because spark-2 is unreachable):
+
+- Host chosen: spark-2 (spark-1 missing local data/launcher; spark-3 already had an existing train.py; spark-4 off-limits).
+- Preflight at 2026-05-29T06:01:33Z: no real `[s]cripts/train.py`; `free -g` showed 119G total / 101G free / 115G available; local data present at `/home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_LOCAL_T32_first700` (93G); launcher present.
+- Adapted launcher written on spark-2: `/home/dnola/v18_fix/launch_T41_FAST_SMOKE_v18b_T32_LOCAL_first700.sh`.
+- Run label: `T41_FAST_SMOKE_v18b_LOCAL_spark2_20260529T060217Z`; tmux session: `T41_FAST_SMOKE`.
+- Confirmed actual command args in `pgrep`: local hidden-states path, `--checkpoint-freq 100`, `--val-every-steps 200`, `--val-in-epoch-max-batches 5`, `--max-train-steps 200`, `--fp8-recipe-kind current_fp8`, `--te-use-fused`.
+- Log verified C15 health setup: TE 2.14.1, Float8CurrentScaling HYBRID, fused=True, all fprop/dgrad/wgrad `use_split_accumulator=True`.
+- Loss was descending before wedge: global_step 0 loss=10.750; step 17 loss=10.062; step 30 loss=9.125; step 55 loss=7.812; step 68 loss=7.250; step 80 loss=7.969.
+- At/after ~2026-05-29T06:20Z spark-2 became unreachable: direct LAN `spark-2`/10.0.0.130 = Host down/No route; Tailscale 100.116.35.32 timed out; via spark-5 jump ping/ssh to 10.0.0.130 also failed. Therefore I could not collect the required `dmesg | tail -50` or `nvidia-smi`, nor verify ckpt dirs.
+- I did NOT power-cycle because I do not have a verified spark-2 Kasa outlet mapping in memory; guessing a strip plug could disrupt another machine.
+  [2026-05-28 23:31] atlaspatch4: T44 spark-2 recovery note: confirmed no other dflash-al3 task running on spark-2 (only T44 + T5 spark-1 were running), read Strip #2 status (plug 2 ON, on_time=4690s), then power-cycled `kasa-cloud cycle 9067 2 30` at ~06:28Z and verified plug 2 ON (on_time=90s after wait). spark-2 is reachable again via alias/10.0.0.130 and TS 100.116.35.32; `ssh spark-2` works. Post-boot evidence: uptime ~1m, free 115G available, no real `[s]cripts/train.py`, no tmux sessions, no GPU compute apps, GPU util 0%. T41 smoke checkpoint dir exists but contains no step_00000100/step_00000200 dirs; log stops at global_step=76 and then NUL bytes. Existing T42 source checkpoints are present/readable: v18 fixed `/home/dnola/c15_full_run/c15_iq4v18b_NAS_T3_seed4000_20260529T005817Z/ckpt/step_00004000_FIXED_v32768/{config.json,model.safetensors}` and v15 fallback `/home/dnola/c15_v15_run/c15_v15_iq4v15_20260517T182652Z/ckpt/step_00022000/{config.json,model.safetensors}`. dmesg denied; journal current boot shows clean boot/NVIDIA load plus repeated IPv6 duplicate address warnings; previous boot tail did not expose a clear NVRM/OOM crash before shutdown. spark-2 is safe for READ-ONLY checkpoint pull; do not relaunch training from this note.
+
+Events (10):
+  [2026-05-28 23:00] created {'assignee': 'atlasdflash3', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': ['spark-cluster-operations', 'dflash-c15-fp8-hybrid-winning-config-and-health-rules']}
+  [2026-05-28 23:00] [run 522] claimed {'lock': 'macmini.local:97625', 'expires': 1780035343, 'run_id': 522}
+  [2026-05-28 23:00] [run 522] spawned {'pid': 5061}
+  [2026-05-28 23:02] [run 522] heartbeat {'note': 'Launched T41 fast smoke on spark-2 with local T32 first700 data, TORCHINDUCTOR_COMPILE_THREADS=4, OMP_NUM_THREADS=8, checkpoint-freq=100, max_train_steps=200. FP8 HYBRID split accumulators verified in log.'}
+  [2026-05-28 23:08] commented {'author': 'dflash-al3-driver', 'len': 685}
+  [2026-05-28 23:17] [run 522] claim_extended {'reason': 'pid_alive', 'worker_pid': 5061, 'claim_lock': 'macmini.local:97625', 'claim_expires_was': 1780035459, 'claim_expires_now': 1780036366, 'last_heartbeat_at': 1780034559}
+  [2026-05-28 23:19] [run 522] heartbeat {'note': 'WEDGE_RECURRED candidate: spark-2 stopped answering LAN and Tailscale during smoke after log reached global_step=80; rechecking via direct and spark-5 jump before final handoff.'}
+  [2026-05-28 23:20] commented {'author': 'atlasdflash3', 'len': 1668}
+  [2026-05-28 23:21] [run 522] blocked {'reason': 'WEDGE_RECURRED: spark-2 became unreachable during T41 at global_step~80; need human power-recovery or verified spark-2 Kasa outlet mapping before dmesg/nvidia-smi and checkpoint status can be collected.'}
+  [2026-05-28 23:31] commented {'author': 'atlaspatch4', 'len': 1230}
+
+Runs (1):
+  #522 blocked      @atlasdflash3  1219s  2026-05-28 23:00
+        → WEDGE_RECURRED: spark-2 became unreachable during T41 at global_step~80; need human power-recovery or verified spark-2 Kasa outlet mapping before dmesg/nvidia-s

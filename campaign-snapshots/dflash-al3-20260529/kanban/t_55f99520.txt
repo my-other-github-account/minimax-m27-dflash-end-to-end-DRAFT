@@ -1,0 +1,133 @@
+Task t_55f99520: T28: Validate spark-3 as alternate single-Spark training host (bounded smoke)
+  status:    done
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_55f99520
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules, spark-cluster-operations, kasa-power-strips
+  max-retries: 2 (default)
+  created:   2026-05-28 19:15 by user
+  started:   2026-05-28 19:15
+  completed: 2026-05-28 20:23
+
+Body:
+# T28: Validate spark-3 as alternate single-Spark training host (bounded smoke)
+
+## Context
+T24 verdict BLOCK_FOR_HARDWARE on spark-2: under the locked v18b shape (max_anchors=3072, total_seq_len=8192, V=32768, num_layers=6, FP8), spark-2 reproducibly host-resets within 30 steps. Root cause per T24's evidence: unified-memory pressure path triggered by flex_attention materializing the full scores matrix at this seq_len × anchors product. Compile-disabled mitigation made it worse (rebooted before step 1). T25 sits as a USER_ACTION_REQUIRED gate.
+
+User has explicitly said "keep things moving." Within the inviolable constraints (single-Spark training, no FSDP/DDP, no shape reduction), the only mechanical path is to swap training to a DIFFERENT physical Spark with the same GB10 architecture but presumably without spark-2's specific instability.
+
+**Candidate: spark-3.** Confirmed UP, GPU IDLE (0% util), uptime 3.4 days, no contending dflash-al3 work assigned. Same GB10 hardware as spark-2 — so this test ALSO empirically answers whether the wedge is spark-2-specific OR a GB10/Spark-class issue. Both outcomes are valuable.
+
+## Your job (spark-3 ONLY)
+
+### Phase 1 — environment setup
+1. SSH to spark-3. Confirm /home/dnola exists and has standard tooling.
+2. Copy launcher from spark-2: `scp spark-2:/home/dnola/iq4_full_run/launch_c15_v18b_NAS.sh spark-3:/home/dnola/iq4_full_run/launch_c15_v18b_NAS_spark3.sh`. If spark-2 ssh is shaky, fetch from spark-1 or from the most recent git ref. If neither is available, reconstruct from the body description in T21.
+3. Verify NasFS access on spark-3: `ssh spark-3 'ls /home/dnola/nasfs.py'` and `ls /home/dnola/venvs/nas-fuse/bin/python`. If NasFS is not installed on spark-3, install — copy the script + venv from spark-2 / spark-1, mount with same args:
+   ```
+   tmux new-session -d -s nasfs '/home/dnola/venvs/nas-fuse/bin/python /home/dnola/nasfs.py --host nas --remote-root /volume1/dnola/traces --mount-point /home/dnola/nas_traces --cache-dir /dev/shm/nasfs-cache --cache-bytes 50000000000 -f 2>&1 | tee /tmp/nasfs.log'
+   ```
+4. Verify dataset directory present: `ls /home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/`. If missing, rsync from spark-2 over the 200G fabric (192.168.200.2 ↔ 192.168.200.3). Speed should be ≥5 GB/s.
+5. Verify speculators-c15-api code: `ls /home/dnola/speculators-c15-api/scripts/train.py`. If missing, rsync from spark-2 or git-clone from origin.
+
+### Phase 2 — BOUNDED SMOKE (mandatory before any production run)
+Run a `MAX_TRAIN_STEPS=100` smoke with the ACCEPTED v18b launcher (not the compile-disabled variant that worsened pressure). Watch for the T24 failure signature:
+- coverage gate PASS
+- TE FP8 wrap PASS
+- training loss progression (10.x → 9.x over first 30 steps)
+- host reset / memory pressure / unclean journal before step 100
+
+Use this exact incantation:
+```bash
+ssh spark-3 'cd /home/dnola/iq4_full_run && \
+  RUN_LABEL=c15_iq4v18b_NAS_T28_spark3_smoke_$(date -u +%Y%m%dT%H%M%SZ) \
+  SESSION=t28_v18b_smoke_s3 \
+  MAX_TRAIN_STEPS=100 \
+  tmux new-session -d -s t28_v18b_smoke_s3 \
+  "bash /home/dnola/iq4_full_run/launch_c15_v18b_NAS_spark3.sh 2>&1"'
+```
+
+If MAX_TRAIN_STEPS is not respected by the launcher, set it via the speculators-c15-api train.py `--max-train-steps` arg directly.
+
+### Phase 3 — outcomes
+Three possible verdicts in `/home/dnola/v18_fix/T28_SPARK3_SMOKE_VERDICT.md`:
+
+- **SPARK3_TRAINING_VIABLE**: smoke reached step ≥40 without host reset, loss trajectory healthy, GPU memory stable. → unblock T3 with assignee swap to spark-3, document the host swap, comment on T25 to close the gate.
+- **SPARK3_SAME_FAILURE**: smoke reset spark-3 within 40 steps, same memory-pressure pattern. → this is a GB10-CLASS hardware issue, not spark-2-specific. T25 remains a real user gate; comment on T25 with this evidence. The user will need to authorize either (a) shape reduction (anchors↓ or seq_len↓), (b) FSDP across two sparks, or (c) different hardware.
+- **SPARK3_DIFFERENT_FAILURE**: smoke fails differently (CUDA error, OOM, dataloader bus, etc.). → file T29 to chase the new failure, document evidence.
+
+### Phase 4 — handoff
+Block review-required with the verdict. The driver cron will read the verdict + T22's baseline + T23's calibration and either unblock T3 (Spark3 viable), or surface to user (Spark3 same failure).
+
+## Hard rules
+- **Host scope: spark-3 ONLY.** Do not touch spark-2 (T25 is blocking it). Do not touch spark-4 (other DFlash work). Do not touch spark-1 (T27 is recovering it).
+- Use the ACCEPTED launcher. Do NOT use the failed compile-disabled variant from T24.
+- Locked shape inviolable: max_anchors=3072, block_size=8, hidden=3072, intermediate=4096, num_layers=6, total_seq_len=8192, draft_vocab_size=32768.
+- Single-host: NO FSDP, NO DDP, NO multi-host.
+- Kasa cycle authority: spark-3 plug 3 ONLY, and only if spark-3 wedges during YOUR smoke window. Do NOT cycle other sparks. Use `~/bin/kasa-cloud cycle 9067 3 30`.
+- Time-box: 90 minutes max. If you can't get a verdict in that window, block review-required with what you have.
+
+## Acceptance criteria
+- `/home/dnola/v18_fix/T28_SPARK3_SMOKE_VERDICT.md` exists on spark-3 with one of the three verdicts above + train.log path + step reached + observed memory pattern.
+- If SPARK3_TRAINING_VIABLE: launcher path documented; ready for T3 dispatch.
+- If SPARK3_SAME_FAILURE: comment on T25 with the GB10-class evidence.
+- If SPARK3_DIFFERENT_FAILURE: T29 filed with specific evidence.
+
+## Reference
+- T24 diagnosis: `/home/dnola/v18_fix/T24_SPARK2_HOSTLOCK_DIAGNOSIS.md`
+- T22 fixed-harness baseline AL=1.363 (P1=0.297) on v18 step 2500 — this is what v18b training is trying to beat
+- T23 fixed-harness z-lab AL=2.796 (P1 not extracted) — published 4.797 — harness still underreports, treat AL trajectory as relative-only
+
+Latest summary:
+SPARK3_TRAINING_VIABLE: 100-step locked-shape v18b smoke completed cleanly on spark-3; healthy loss/full_acc trajectory and no host reset. spark-3 is approved as alternate single-Spark training host for T3; spark-2 remains blocked behind T25.
+
+Comments (3):
+  [2026-05-28 20:11] atlasdflash3: review-required handoff:
+```json
+{
+  "verdict": "SPARK3_TRAINING_VIABLE",
+  "host": "spark-3",
+  "launcher": "/home/dnola/iq4_full_run/launch_c15_v18b_NAS_spark3.sh",
+  "verdict_file": "/home/dnola/v18_fix/T28_SPARK3_SMOKE_VERDICT.md",
+  "train_log": "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T28_spark3_smoke_20260529T022305Z/train.log",
+  "max_train_steps": 100,
+  "step_reached": 100,
+  "coverage_gate": "PASS",
+  "te_fp8_wrap": "PASS",
+  "split_accumulators": {"fprop": true, "dgrad": true, "wgrad": true},
+  "locked_shape": {"max_anchors": 3072, "total_seq_len": 8192, "block_size": 8, "hidden": 3072, "intermediate": 4096, "num_layers": 6, "draft_vocab_size": 32768},
+  "loss_initial": 10.75,
+  "loss_final": 6.656,
+  "full_acc_initial": 0.0,
+  "full_acc_final": 0.086,
+  "host_reset": false,
+  "journal_memory_reset_scan": "clean",
+  "comments_added": {"T25": "t_36b1e363#187", "T3": "t_6781d383#188"},
+  "notes": [
+    "Original T21 launcher was not present on spark-3; reconstructed spark-3 launcher from T21/T28 locked-shape spec without touching spark-2.",
+    "Needed PYTHONPATH=/home/dnola/speculators-c15-api/src so the modified local train/trainer code was used instead of the older installed package."
+  ]
+}
+```
+  [2026-05-28 20:23] driver: review APPROVED. Verified /home/dnola/v18_fix/T28_SPARK3_SMOKE_VERDICT.md on spark-3: SPARK3_TRAINING_VIABLE; 100-step v18b bounded smoke completed cleanly at locked shape (max_anchors=3072, seq_len=8192, block=8, V=32768), coverage PASS, TE FP8/split-acc PASS, loss 10.75 -> 6.656, full_acc 0 -> 0.086, no host reset/journal memory warnings. Closing T28 and releasing spark-3 lease for T3.
+  [2026-05-28 20:47] macmini-chat: USER 20:42 PDT: revoked spark-3 from campaign scope. T28 verdict was SPARK3_TRAINING_VIABLE but cannot be used. T3 retraining on spark-3 has been killed and ckpts on spark-3 are stranded (not on a permitted host). T3 must re-block behind T25 user-gate.
+
+Events (12):
+  [2026-05-28 19:15] created {'assignee': 'atlasdflash3', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': ['dflash-c15-fp8-hybrid-winning-config-and-health-rules', 'spark-cluster-operations', 'kasa-power-strips']}
+  [2026-05-28 19:15] [run 277] claimed {'lock': 'macmini.local:17094', 'expires': 1780021814, 'run_id': 277}
+  [2026-05-28 19:15] [run 277] spawned {'pid': 42634}
+  [2026-05-28 19:26] [run 277] heartbeat {'note': 'spark-3 smoke running; coverage+TE FP8 wrap PASS, split accumulators True, reached global_step=6 with loss around 10.6 and no host reset yet.'}
+  [2026-05-28 19:39] [run 277] heartbeat {'note': 'spark-3 smoke crossed global_step=41 with tmux/train process still alive; no host reset. Continuing toward MAX_TRAIN_STEPS=100 to strengthen verdict.'}
+  [2026-05-28 19:54] [run 277] claim_extended {'reason': 'pid_alive', 'worker_pid': 42634, 'claim_lock': 'macmini.local:17094', 'claim_expires_was': 1780023240, 'claim_expires_now': 1780024150, 'last_heartbeat_at': 1780022340}
+  [2026-05-28 20:09] [run 277] claim_extended {'reason': 'pid_alive', 'worker_pid': 42634, 'claim_lock': 'macmini.local:17094', 'claim_expires_was': 1780024150, 'claim_expires_now': 1780025053, 'last_heartbeat_at': 1780022340}
+  [2026-05-28 20:11] commented {'author': 'atlasdflash3', 'len': 1232}
+  [2026-05-28 20:11] [run 277] blocked {'reason': 'review-required: SPARK3_TRAINING_VIABLE — 100-step v18b smoke on spark-3 completed cleanly with healthy loss and no reset; T3/T25 comments added with relaunch evidence.'}
+  [2026-05-28 20:23] commented {'author': 'driver', 'len': 390}
+  [2026-05-28 20:23] [run 371] completed {'result_len': 0, 'summary': 'SPARK3_TRAINING_VIABLE: 100-step locked-shape v18b smoke completed cleanly on spark-3; healthy loss/full_acc trajectory and no host reset. spark-3 is approved as alternate single-Spark training host for T3; spark-2 remains blocked behind T25.'}
+  [2026-05-28 20:47] commented {'author': 'macmini-chat', 'len': 252}
+
+Runs (2):
+  #277 blocked      @atlasdflash3  3369s  2026-05-28 19:15
+        → review-required: SPARK3_TRAINING_VIABLE — 100-step v18b smoke on spark-3 completed cleanly with healthy loss and no reset; T3/T25 comments added with relaunch e
+  #371 completed    @atlasdflash3  0s  2026-05-28 20:23
+        → SPARK3_TRAINING_VIABLE: 100-step locked-shape v18b smoke completed cleanly on spark-3; healthy loss/full_acc trajectory and no host reset. spark-3 is approved a

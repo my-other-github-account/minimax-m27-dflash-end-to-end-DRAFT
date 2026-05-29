@@ -1,0 +1,80 @@
+{
+  "label": "c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z",
+  "save": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z",
+  "log": "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/train.log",
+  "train_count": 100,
+  "train_start": {
+    "step": 600,
+    "loss": 5.375,
+    "full_acc": 0.119
+  },
+  "train_end": {
+    "step": 699,
+    "loss": 4.875,
+    "full_acc": 0.196
+  },
+  "vals": [
+    {
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/val_in_epoch/step_00000600.json",
+      "step": "step_00000600",
+      "loss_epoch": 5.4109375,
+      "full_acc_epoch": 0.14426071494817733,
+      "position_accs": [
+        0.2646817214787006,
+        0.1836784802377224,
+        0.13962815925478936,
+        0.119141785800457,
+        0.1078032098710537,
+        0.09970380179584026,
+        0.09453188218176364
+      ]
+    },
+    {
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/val_in_epoch/step_00000650.json",
+      "step": "step_00000650",
+      "loss_epoch": 5.125,
+      "full_acc_epoch": 0.16470656618475915,
+      "position_accs": [
+        0.3273520298302174,
+        0.22142985314130784,
+        0.1607556752860546,
+        0.12757223844528198,
+        0.11547689065337181,
+        0.10318727307021618,
+        0.09630763530731201
+      ]
+    }
+  ],
+  "ckpts": [
+    {
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000600",
+      "global_step": 600,
+      "checkpoint_tag": "step_00000600",
+      "files": [
+        "config.json",
+        "config.py",
+        "model.safetensors",
+        "optimizer_state_dict.pt",
+        "scheduler_state_dict.pt",
+        "trainer_state.json"
+      ]
+    },
+    {
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000650",
+      "global_step": 650,
+      "checkpoint_tag": "step_00000650",
+      "files": [
+        "config.json",
+        "config.py",
+        "model.safetensors",
+        "optimizer_state_dict.pt",
+        "scheduler_state_dict.pt",
+        "trainer_state.json"
+      ]
+    }
+  ],
+  "al_lines": [],
+  "anchor_skip_count": 0,
+  "gpu_apps_after": "",
+  "train_ps_after": ""
+}

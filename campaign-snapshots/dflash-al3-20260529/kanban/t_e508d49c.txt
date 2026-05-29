@@ -1,0 +1,53 @@
+Task t_e508d49c: T44: recover spark-2 for T42 fast AL path (Kasa plug 2, evidence, unblock)
+  status:    done
+  assignee:  atlaspatch4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_e508d49c
+  max-retries: 2 (default)
+  created:   2026-05-28 23:27 by user
+  started:   2026-05-28 23:27
+  completed: 2026-05-28 23:31
+
+Body:
+
+# T44: RECOVER spark-2 for fast AL path — worker-owned Kasa cycle + postmortem, then unblock T42
+
+## Why this exists
+The driver is pure orchestration and MUST NOT Kasa-cycle. T41/T42/T43 are all blocked because spark-2 went unreachable during/after fast work, and T42 needs read-only access to pull the fixed-vocab checkpoint for the first OUR-adapter AL on the validated buun harness. Do this recovery as the single spark-2 lease-holder.
+
+## Host scope / authority
+Host: spark-2 ONLY. Do NOT touch spark-1/spark-3/spark-4/spark-work except for control-plane verification from macmini if needed. Kasa mapping is verified by the loaded Kasa skill: Strip #2 selector `9067`, plug `2` = spark-2. Use cloud path, not local KLAP:
+`/Users/macmini/bin/kasa-cloud cycle 9067 2 30`
+This task holds the spark-2 mutation lease while running.
+
+## Fast steps (<30 min)
+1. Confirm no other dflash-al3 worker is currently running on spark-2 via board status/comments. Do not wait for user approval.
+2. Read current power state: `/Users/macmini/bin/kasa-cloud status 9067` and capture plug-2 state.
+3. Power-cycle spark-2: `/Users/macmini/bin/kasa-cloud cycle 9067 2 30`; wait 90s; verify plug 2 is ON via `kasa-cloud status 9067`.
+4. Use Tailscale status and/or SSH from a context that works for workers to verify spark-2 is back. Do not loop forever; 5 min max.
+5. Once reachable, collect READ-ONLY postmortem evidence:
+   - `uptime; free -g; pgrep -af scripts/train.py || true; tmux ls || true; nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader || true`
+   - tail the T41 run log if present: `/home/dnola/v18_fix/launch_T41_FAST_SMOKE_v18b_T32_LOCAL_first700.sh` and the run label mentioned in T41 comments (`T41_FAST_SMOKE_v18b_LOCAL_spark2_20260529T060217Z`). Look for step>=100 checkpoint dirs.
+   - dmesg/journal tail only if accessible without disrupting boot.
+6. Comment on T41, T42, and T43 with one concise recovery note: power cycled plug 2, reachability, any live/orphan train.py, whether ckpt@100/200 exists, and whether spark-2 is safe for READ-ONLY checkpoint pull.
+7. If spark-2 is reachable and no `scripts/train.py` is live, unblock T42 first. T42 is read-only checkpoint pull + AL measurement on spark-work, highest priority. Do NOT relaunch T41/T43 from this task unless T42 cannot be unblocked; training/inference follow-ups should be separate tasks.
+8. If spark-2 does not return after the cycle, block this task with exact evidence and do not retry more than once.
+
+## Hard rules
+- One mutating actor on spark-2: YOU. Driver will not Kasa-cycle.
+- Do not launch training or inference. Recovery + evidence + unblock T42 only.
+- Do not touch spark-4.
+- Keep it bounded; signal in <30 min.
+
+
+Latest summary:
+Recovered spark-2 by Kasa-cycling Strip #2 plug 2, verified host reachability/SSH and no live train.py/GPU jobs, posted recovery notes to T41/T42/T43, and unblocked T42 for read-only checkpoint pull. T41 smoke did not reach step100/200 (log stops at global_step=76), but the primary v18 fixed checkpoint and v15 fallback are present/readable on spark-2.
+
+Events (4):
+  [2026-05-28 23:27] created {'assignee': 'atlaspatch4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-28 23:27] [run 526] claimed {'lock': 'macmini.local:12039', 'expires': 1780036941, 'run_id': 526}
+  [2026-05-28 23:27] [run 526] spawned {'pid': 12040}
+  [2026-05-28 23:31] [run 526] completed {'result_len': 0, 'summary': 'Recovered spark-2 by Kasa-cycling Strip #2 plug 2, verified host reachability/SSH and no live train.py/GPU jobs, posted recovery notes to T41/T42/T43, and unblocked T42 for read-only checkpoint pull. T41 smoke did not reach step100/200 (log stops at global_step=76), but the primary v18 fixed checkpoint and v15 fallback are present/readable on spark-2.'}
+
+Runs (1):
+  #526 completed    @atlaspatch4  276s  2026-05-28 23:27
+        → Recovered spark-2 by Kasa-cycling Strip #2 plug 2, verified host reachability/SSH and no live train.py/GPU jobs, posted recovery notes to T41/T42/T43, and unblo

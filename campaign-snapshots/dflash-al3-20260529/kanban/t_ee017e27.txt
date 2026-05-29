@@ -1,0 +1,61 @@
+Task t_ee017e27: T70: FAST spark-3 ANCHOR-SKIP root-cause + one-step proof
+  status:    done
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_ee017e27
+  max-retries: 2 (default)
+  created:   2026-05-29 04:45 by user
+  started:   2026-05-29 04:45
+  completed: 2026-05-29 04:51
+  parents:   t_f2dc0d8b
+  children:  t_fbe81fc2
+
+Body:
+# T70: FAST spark-3 ANCHOR-SKIP root-cause + one-optimizer-step proof
+
+## Why
+T54 proved spark-3 is clean but every post-resume batch after step500 was `[ANCHOR-SKIP][train] No valid anchors` (700/700), so blind continuation cannot produce checkpoints. We need the fastest discriminating fix/proof, not another wait.
+
+## Host scope
+spark-3 ONLY. Do not touch spark-1/spark-2/spark-work/spark-4. No Kasa. Holds the spark-3 lease while running.
+
+## Inputs
+- T54 deliverable: `/home/dnola/v18_fix/T54_SPARK3_STEP700_SMOKE.md`
+- Starting ckpt: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500`
+- Failed run logs named like `/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T54_spark3_*`
+- Prompt mappings: `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/{d2t.npy,t2d.npy}`
+
+## Fast experiment (<1h, target <20min)
+1. Preflight one actor: `pgrep -af scripts/train.py`; if any live train.py exists, block `SPARK3_BUSY` with exact lines. Verify free >=90GB and no GPU compute apps.
+2. Read the T54 failed logs and the trainer/data code path that emits `[ANCHOR-SKIP][train] No valid anchors`. Determine whether skip is caused by resume sampler offset, first700 local-data slice exhaustion, `on-missing skip` + hidden_states path mismatch, anchor coverage filter, or config/mapping mismatch.
+3. Run a TINY bounded proof that must produce at least ONE `train/loss`/optimizer step without stacking: prefer a 5-20 batch/step probe using the SAME ckpt and a corrected data/sampler setting. Keep `TORCHINDUCTOR_COMPILE_THREADS=4 OMP_NUM_THREADS=8`; use LOCAL/warmed data where possible; never raw FUSE if it causes contention.
+4. If a one-step proof succeeds, optionally run only up to +20 optimizer steps and save/checkpoint if cheap. Do NOT run a long training continuation.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T70_ANCHOR_SKIP_ROOT_CAUSE.md` and comment one verdict:
+- `ANCHOR_SKIP_FIXED`: exact root cause, exact launcher/data change, proof log path, loss lines, any checkpoint path.
+- `ANCHOR_SKIP_ROOT_CAUSE_ONLY`: exact cause plus next one-line fix if it cannot be safely changed inside this task.
+- `SPARK3_BUSY`: exact process evidence.
+- `BLOCKED`: exact missing artifact or code error.
+
+## Hard rules
+- FAST-ITERATION: numeric/log proof within <=1h; shrink to one optimizer step rather than waiting.
+- Contention-safe: one `scripts/train.py` per host, compile threads capped, free>=90GB.
+- Preserve locked knobs: no max_anchors/block_size/hidden/intermediate/layers/seq_len/FSDP/multihost changes.
+- Do not claim AL; this task only unblocks production of the next candidate checkpoint for AL measurement.
+
+Latest summary:
+ANCHOR_SKIP_ROOT_CAUSE_ONLY: spark-3 T54 skipped every post-resume batch because all 198486 hidden-state symlinks under `iq4_v17_consolidated/hidden_states_nas` point into absent `/home/dnola/nas_traces/by_hash`, causing `--on-missing skip` to produce empty batches (`loss_mask_sum=0`). Wrote `/home/dnola/v18_fix/T70_ANCHOR_SKIP_ROOT_CAUSE.md` with evidence and the exact next fix (restore/mount or repoint the v17 hidden-state targets, then rerun the bounded step500 probe with a symlink-target coverage gate).
+
+Comments (1):
+  [2026-05-29 04:51] atlasdflash3: ANCHOR_SKIP_ROOT_CAUSE_ONLY: root cause is `--on-missing skip` over a 100% broken `hidden_states_nas` symlink farm on spark-3 (`198486/198486` links point into absent `/home/dnola/nas_traces/by_hash`; dataloader batches have `lengths=[0]`, `loss_mask_sum=0`). Deliverable written: `/home/dnola/v18_fix/T70_ANCHOR_SKIP_ROOT_CAUSE.md`. Next one-line fix: restore/mount real `/home/dnola/nas_traces/by_hash` on spark-3 or repoint `hidden_states_nas` to a local copy, then rerun the bounded step500 probe with a symlink-target `Path.exists()` coverage gate.
+
+Events (5):
+  [2026-05-29 04:45] created {'assignee': 'atlasdflash3', 'status': 'ready', 'parents': ['t_f2dc0d8b'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 04:45] [run 577] claimed {'lock': 'macmini.local:90775', 'expires': 1780056047, 'run_id': 577}
+  [2026-05-29 04:45] [run 577] spawned {'pid': 90778}
+  [2026-05-29 04:51] commented {'author': 'atlasdflash3', 'len': 553}
+  [2026-05-29 04:51] [run 577] completed {'result_len': 0, 'summary': 'ANCHOR_SKIP_ROOT_CAUSE_ONLY: spark-3 T54 skipped every post-resume batch because all 198486 hidden-state symlinks under `iq4_v17_consolidated/hidden_states_nas` point into absent `/home/dnola/nas_traces/by_hash`, causing `--on-missing skip` to produce empty batches (`loss_mask_sum=0`). Wrote `/home/dnola/v18_fix/T70_ANCHOR_SKIP_ROOT_CAUSE.md` with evidence and the exact next fix (restore/mount or '}
+
+Runs (1):
+  #577 completed    @atlasdflash3  349s  2026-05-29 04:45
+        → ANCHOR_SKIP_ROOT_CAUSE_ONLY: spark-3 T54 skipped every post-resume batch because all 198486 hidden-state symlinks under `iq4_v17_consolidated/hidden_states_nas`

@@ -1,0 +1,58 @@
+Task t_a088a79d: T78: FAST spark-3 bounded continuation from T75 to next checkpoint
+  status:    done
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a088a79d
+  max-retries: 2 (default)
+  created:   2026-05-29 06:49 by user
+  started:   2026-05-29 06:49
+  completed: 2026-05-29 07:08
+  children:  t_4106997b, t_77ba24fa
+
+Body:
+# T78: FAST spark-3 bounded continuation from T75 step600/650 toward next checkpoint (<1h)
+
+## Mission
+Keep spark-3 productive with another bounded training slice while T76 measures the T75 checkpoint on spark-2. Produce the next fresh candidate checkpoint quickly; do NOT run a full training job. Campaign goal remains measured runtime AL >=3.0, but this task only creates the next candidate checkpoint for the AL path.
+
+## Host scope
+spark-3 ONLY. Do not touch spark-1/spark-2/spark-work/spark-4. No Kasa. You hold the spark-3 lease while running.
+
+## Inputs
+- Source checkpoint from T75: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T75_spark3_bounded_step650_ckpt50_20260529T132624Z/step_00000600`
+- T75 report: `/home/dnola/v18_fix/T75_SPARK3_BOUNDED_CONTINUATION.md`
+- T71 optimizer-resume patch remains the known-good scoped patch: AdamW foreach/fused disabled on resume; backup `/home/dnola/v18_fix/trainer.py.pre_t71_foreach_patch`.
+- Hidden-state mount from T71/T73/T75 should be live; verify before launch.
+
+## Fast experiment
+1. Preflight one-actor lease: no existing `scripts/train.py`, no trainer tmux, no GPU compute apps; `free -g` >=90GB. If another live actor owns spark-3, block `SPARK3_BUSY` with exact evidence. Do not kill live owned work.
+2. Verify hidden-state visibility with a 1000-entry Path.exists sample over `hidden_states_nas`; require >=95% before training.
+3. Resume from T75 step600 for at most +100 optimizer steps (target around global_step 700). Set checkpoint frequency / val every 50 so at least one fresh checkpoint is saved before stop.
+4. Use `TORCHINDUCTOR_COMPILE_THREADS=4 OMP_NUM_THREADS=8`; one train.py only; preserve all locked knobs: max_anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, seq_len=8192, no FSDP/multihost.
+5. Stop after the bounded run; do not leave a long trainer running.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T78_SPARK3_BOUNDED_CONTINUATION.md` and comment:
+- `CKPT_READY`: checkpoint path(s), global_step reached, train/val loss+full_acc start/end, and whether any AL_LO/AL_HI lines are logged.
+- `PATCH_FAIL`, `DATA_UNAVAILABLE`, or `SPARK3_BUSY` with exact evidence.
+
+## Hard rules
+FAST signal <=1h, target <=30min. No AL claim. No mutation beyond scoped launcher/run artifacts and existing T71 optimizer patch. No spark-4. No SSH/Kasa from driver; worker owns spark-3 only.
+
+
+Latest summary:
+CKPT_READY: spark-3 bounded continuation completed from T75 step600, stopped cleanly at max_train_steps=700, and wrote `/home/dnola/v18_fix/T78_SPARK3_BOUNDED_CONTINUATION.md`. Fresh candidate checkpoint is `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000650`; no trainer/GPU compute apps left running.
+
+Comments (1):
+  [2026-05-29 07:08] atlasdflash3: CKPT_READY: spark-3 bounded continuation completed and stopped. Fresh checkpoint: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000650`; run reached global_step=700 (trained records 600..699), trainer_state in fresh ckpt global_step=650. Train start step600 loss=5.375 full_acc=0.119; train end step699 loss=4.875 full_acc=0.196. Val step600 loss_epoch=5.4109375 full_acc_epoch=0.14426071494817733; val step650 loss_epoch=5.125 full_acc_epoch=0.16470656618475915. No AL_LO/AL_HI lines logged; no ANCHOR-SKIP lines. Report: `/home/dnola/v18_fix/T78_SPARK3_BOUNDED_CONTINUATION.md`. Post-run GPU compute apps and train.py process checks were empty.
+
+Events (6):
+  [2026-05-29 06:49] created {'assignee': 'atlasdflash3', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 06:49] [run 594] claimed {'lock': 'macmini.local:16939', 'expires': 1780063457, 'run_id': 594}
+  [2026-05-29 06:49] [run 594] spawned {'pid': 21580}
+  [2026-05-29 06:54] [run 594] heartbeat {'note': 'Preflight passed no trainer/GPU contention; running bounded 1000-entry hidden-state visibility gate on spark-3.'}
+  [2026-05-29 07:08] commented {'author': 'atlasdflash3', 'len': 712}
+  [2026-05-29 07:08] [run 594] completed {'result_len': 0, 'summary': 'CKPT_READY: spark-3 bounded continuation completed from T75 step600, stopped cleanly at max_train_steps=700, and wrote `/home/dnola/v18_fix/T78_SPARK3_BOUNDED_CONTINUATION.md`. Fresh candidate checkpoint is `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000650`; no trainer/GPU compute apps left running.', 'artifacts': ['/home/dnola/v18_fix/T78_PARSE.json', '/home/dnola/v18_fix/T78_RUN_LABEL.txt', '/home/dnola/iq4_full_run/launch_T78_spark3_bounded.sh', '/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/train.log']}
+
+Runs (1):
+  #594 completed    @atlasdflash3  1142s  2026-05-29 06:49
+        → CKPT_READY: spark-3 bounded continuation completed from T75 step600, stopped cleanly at max_train_steps=700, and wrote `/home/dnola/v18_fix/T78_SPARK3_BOUNDED_C

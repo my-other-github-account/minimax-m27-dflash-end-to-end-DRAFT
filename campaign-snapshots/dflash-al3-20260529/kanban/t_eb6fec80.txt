@@ -1,0 +1,73 @@
+Task t_eb6fec80: T47: FAST AL of our adapter with compatible MiniMax 3072 target
+  status:    blocked
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_eb6fec80
+  max-retries: 2 (default)
+  created:   2026-05-29 00:19 by user
+  started:   2026-05-29 00:19
+
+Body:
+# T47: FAST first AL of OUR adapter using a compatible 3072-wide MiniMax target — fix T42 target mismatch
+
+## Why this exists
+T42 successfully produced/copy-verified our converted draft GGUF but could not run it against the Qwen3.6-35B-A3B target: Qwen target hidden size is 2048, while our v18 draft expects DFlash features shaped 5 * 3072 (dflash_fc.weight source [3072,15360]). That is a target/draft incompatibility, not an adapter AL measurement. The correct next move is to find/use the compatible MiniMax target GGUF that matches OUR training target, then run the same fast AL proof.
+
+## Host scope
+spark-2 ONLY for this fast inference task. Do not touch spark-1/spark-3/spark-work/spark-4. No training. No Kasa. No source mutation.
+
+## Starting artifacts from T42 on spark-2
+- Draft GGUF: `/home/dnola/v18_fix/t42/our_v18_dflash_buun.gguf` sha256 `e3b19e78b149e35508fbce360ef9591582c0f570fd276314d6d87b03a2ea9a2d`
+- buun server: `/home/dnola/llama.cpp.buun/build/bin/llama-server` sha256 `4befeb19510606d6bd8aa668b6d773db59d3ab912fa810fe20c64ab9f0c2978e`
+- T42 failure log: `/home/dnola/v18_fix/t42/T42_our_dflash_server_18082.log`
+- z-lab control log: `/home/dnola/v18_fix/t42/T42_zlab_control_server_18083.log`
+
+## Steps (FAST, aim <20 min)
+1. Locate a compatible MiniMax target GGUF on spark-2/spark-work/spark-1 read-only. Search likely roots: `/home/dnola/models`, `/home/dnola/*MiniMax*`, `/home/dnola/exports`, `/mnt`, but do not do long filesystem crawls >5 min. Need target metadata with embedding_length=3072 and DFlash target layers matching the v18 training config (5 captured layers / fc input 15360). If multiple candidates, prefer the exact MiniMax-M2.7 verifier used by v18 traces.
+2. Verify metadata before launch: target `embedding_length=3072` (or equivalent llama.cpp metadata), tokenizer/vocab compatible with the draft mapping, and expected layer taps. If no compatible target exists locally, block `TARGET_GGUF_MISSING` with exact searched paths and the required metadata.
+3. Launch buun DFlash with the compatible target + `/home/dnola/v18_fix/t42/our_v18_dflash_buun.gguf`, draft_max=7, temp=0, top-k=1/greedy, short output. Use the same current flag surface T42 verified (`--spec-type dflash`/`--spec-dflash-default`, not obsolete `--dflash`).
+4. Run 3 GSM8K-style prompts at max_out=512 if server loads. Record real DFlash stats (`draft_n_accepted` or equivalent) and mean measured runtime AL. No multiplier/extrapolation.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T47_OUR_ADAPTER_AL_COMPAT_TARGET.md` and comment summary:
+- `OUR_ADAPTER_AL=<mean>` if measured; compare to campaign goal AL>=3 and z-lab harness AL=5.849 (different target, reference only).
+- `TARGET_GGUF_MISSING` if no compatible 3072-wide MiniMax target is available.
+- `RUNTIME_BLOCKED` if a compatible target exists but server fails; include exact log + first failing assertion.
+
+## Hard rules
+Fast only; no training; no mutation of model/source directories; no spark-4; no Kasa; no invalid hidden-size remapping/slicing.
+
+Latest summary:
+TARGET_GGUF_MISSING: spark-2 has a 3072-wide MiniMax target, but it is MiniMax-tokenizer/vocab 200064 while OUR draft is qwen35/vocab 248320; no compatible target/draft pair found in searched paths.
+
+Comments (1):
+  [2026-05-29 00:22] atlas6dflash5: TARGET_GGUF_MISSING handoff:
+{
+  "artifact": "/home/dnola/v18_fix/T47_OUR_ADAPTER_AL_COMPAT_TARGET.md",
+  "host_used": "spark-2 only",
+  "searched_paths": ["/home/dnola/models", "/home/dnola/*MiniMax*", "/home/dnola/exports", "/mnt"],
+  "starting_artifacts_verified": {
+    "draft_sha256": "e3b19e78b149e35508fbce360ef9591582c0f570fd276314d6d87b03a2ea9a2d",
+    "server_sha256": "4befeb19510606d6bd8aa668b6d773db59d3ab912fa810fe20c64ab9f0c2978e"
+  },
+  "candidate_found_but_rejected": {
+    "target": "/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf",
+    "target_embedding_length": 3072,
+    "target_tokenizer_pre": "minimax-m2",
+    "target_vocab_size": 200064,
+    "draft_tokenizer_pre": "qwen35",
+    "draft_vocab_size": 248320,
+    "reason": "tokenizer/vocab incompatible; invalid AL measurement pair"
+  },
+  "al_measured": false
+}
+
+Events (5):
+  [2026-05-29 00:19] created {'assignee': 'atlas6dflash5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 00:19] [run 537] claimed {'lock': 'macmini.local:25552', 'expires': 1780040091, 'run_id': 537}
+  [2026-05-29 00:19] [run 537] spawned {'pid': 25555}
+  [2026-05-29 00:22] commented {'author': 'atlas6dflash5', 'len': 878}
+  [2026-05-29 00:22] [run 537] blocked {'reason': 'TARGET_GGUF_MISSING: spark-2 has a 3072-wide MiniMax target, but it is MiniMax-tokenizer/vocab 200064 while OUR draft is qwen35/vocab 248320; no compatible target/draft pair found in searched paths.'}
+
+Runs (1):
+  #537 blocked      @atlas6dflash5  159s  2026-05-29 00:19
+        → TARGET_GGUF_MISSING: spark-2 has a 3072-wide MiniMax target, but it is MiniMax-tokenizer/vocab 200064 while OUR draft is qwen35/vocab 248320; no compatible targ

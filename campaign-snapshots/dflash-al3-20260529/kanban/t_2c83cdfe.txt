@@ -1,0 +1,65 @@
+Task t_2c83cdfe: T62: FAST corrected d2t-offset rebake of T53 step500 + tiny AL smoke
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_2c83cdfe
+  max-retries: 2 (default)
+  created:   2026-05-29 03:00 by user
+  started:   2026-05-29 03:00
+  completed: 2026-05-29 03:17
+
+Body:
+# T62: FAST corrected d2t-OFFSET rebake of T53 step500 + tiny MiniMax/buun AL smoke (<1h)
+
+## Why
+T60 verified the current T53/T59 MiniMax prep path is invalid: canonical `d2t` is an OFFSET mapping (`target_id = draft_id + d2t[draft_id]`), but T53 used `d2t` as absolute token ids. That scattered only 20,681 non-floor output rows instead of 32,768, so T53 STEP500_AL=1.651 is not a trustworthy checkpoint readout and T59 later-checkpoint measurements through the same prep path are paused.
+
+## Mission
+Produce the fastest corrected measured runtime AL smoke for OUR MiniMax adapter path. This is the new highest-priority diagnostic number toward campaign goal measured AL >= 3.
+
+## Host scope
+- spark-2 ONLY for conversion/inference.
+- No training.
+- No Kasa.
+- Do NOT touch spark-3 active trainer except read-only if absolutely required for the already-known step500 source checkpoint.
+- Do NOT touch spark-4.
+- One actor per host: preflight spark-2 for no train.py/tmux trainer/GPU compute apps before starting; if occupied, block with exact evidence.
+
+## Inputs
+- T53 source/report: `/home/dnola/v18_fix/T53_STEP500_MINIMAX_AL.md` and `/home/dnola/v18_fix/t53/` on spark-2.
+- T53 bad GGUF: `/home/dnola/v18_fix/t53/step500_minimax_buun_rebaked.gguf` (do not overwrite; use new t62 paths).
+- T60 workspace report: `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_52a74ba0/T60_AL165_ROOT_CAUSE_AND_NEXT_LEVER.md`.
+- Correct mapping rule: `target_ids = arange(len(d2t)) + d2t`; assert unique/in-range/t2d-covered 32,768 rows; output-head non-floor rows must equal 32,768.
+
+## Steps (FAST)
+1. On spark-2, copy/adapt the T53 prep script into `/home/dnola/v18_fix/t62/`.
+2. Rebake T53 step500 with OFFSET scatter. Hard assertions before benchmark:
+   - `len(d2t)=32768`
+   - `target_ids = arange(32768)+d2t` has 32,768 unique in-range ids
+   - every target_id is true in `t2d`
+   - rebaked full-vocab `output.weight` non-floor rows = 32,768
+   - tokenizer_pre remains `minimax-m2`; hidden/taps remain [2,16,30,45,59], n_target_features=15360
+3. Convert/write corrected GGUF under `/home/dnola/v18_fix/t62/step500_minimax_buun_offset_rebaked.gguf`.
+4. Run the SAME tiny MiniMax/buun runtime AL smoke but capped even tighter for speed: <=2 prompts x <=256 output, draft_max=9, temp=0/greedy. Raw measured accept_length only; no multiplier.
+5. Write `/home/dnola/v18_fix/T62_OFFSET_REBAKE_AL.md` with per-prompt AL, mean AL, comparison to T53 invalid 1.651 and target 3.0.
+
+## Verdict
+- If corrected AL > 1.651: mapping bug was suppressing AL; file/advise next task to rerun the 3x512 T53 and resume latest-checkpoint T59 path with offset rebake.
+- If corrected AL <= 1.651 but mapping assertions pass: pivot to BOS/tokenization harness check (T60 noted BOS mismatch: GGUF BOS=200034 vs verifier generation_config.bos_token_id=200019).
+- If conversion/runtime blocks: include exact failing assertion/log and block.
+
+Hard rules: fast signal within <=1h, measured runtime AL only, no full training, no spark-4, no source/model directory mutation outside `/home/dnola/v18_fix/t62/`.
+
+Latest summary:
+Completed T62 corrected d2t-OFFSET rebake on spark-2 and wrote `/home/dnola/v18_fix/T62_OFFSET_REBAKE_AL.md`. Corrected GGUF passed mapping/metadata assertions and tiny 2x256 MiniMax/buun smoke measured mean raw runtime AL=1.680, slightly above invalid T53 1.651 but still far below target 3.0.
+
+Events (6):
+  [2026-05-29 03:00] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 03:00] [run 563] claimed {'lock': 'macmini.local:64900', 'expires': 1780049738, 'run_id': 563}
+  [2026-05-29 03:00] [run 563] spawned {'pid': 64902}
+  [2026-05-29 03:04] [run 563] heartbeat {'note': 'spark-2 preflight clear; running corrected offset prep/rebake under /home/dnola/v18_fix/t62'}
+  [2026-05-29 03:08] [run 563] heartbeat {'note': 'corrected GGUF converted; llama-server loading MiniMax target+draft on spark-2 for 2x256 AL smoke'}
+  [2026-05-29 03:17] [run 563] completed {'result_len': 0, 'summary': 'Completed T62 corrected d2t-OFFSET rebake on spark-2 and wrote `/home/dnola/v18_fix/T62_OFFSET_REBAKE_AL.md`. Corrected GGUF passed mapping/metadata assertions and tiny 2x256 MiniMax/buun smoke measured mean raw runtime AL=1.680, slightly above invalid T53 1.651 but still far below target 3.0.'}
+
+Runs (1):
+  #563 completed    @atlaspatch5  985s  2026-05-29 03:00
+        → Completed T62 corrected d2t-OFFSET rebake on spark-2 and wrote `/home/dnola/v18_fix/T62_OFFSET_REBAKE_AL.md`. Corrected GGUF passed mapping/metadata assertions

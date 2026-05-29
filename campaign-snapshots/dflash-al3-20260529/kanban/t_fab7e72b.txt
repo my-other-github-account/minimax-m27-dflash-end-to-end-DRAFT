@@ -1,0 +1,84 @@
+Task t_fab7e72b: T48: FAST MiniMax reconvert of OUR adapter + first valid AL
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_fab7e72b
+  max-retries: 2 (default)
+  created:   2026-05-29 00:38 by user
+  started:   2026-05-29 00:38
+  completed: 2026-05-29 01:06
+
+Body:
+# T48: FAST reconvert OUR v18 draft for the actual MiniMax target, then run 3x512 AL
+
+## Why this exists
+T42/T47 proved the runtime path but did NOT produce a valid OUR-adapter AL: the converted draft GGUF metadata is wrong for the actual MiniMax target. T47 found the compatible 3072-wide target exists at `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`, but rejected the existing draft because its GGUF says tokenizer_pre=`qwen35`, vocab=248320. That is almost certainly a conversion-target mistake, not proof the adapter is unmeasurable.
+
+## Host scope
+spark-2 ONLY. Fast inference/conversion only. No training. No Kasa. Do not touch spark-1/spark-3/spark-work/spark-4.
+
+## Mission / deliverable
+Produce the FIRST valid measured runtime AL for OUR adapter against the actual MiniMax target, or a precise converter blocker.
+Write `/home/dnola/v18_fix/T48_MINIMAX_RECONVERT_AL.md` and comment the verdict.
+
+## Starting evidence / artifacts
+- Source ckpt primary: `/home/dnola/c15_full_run/c15_iq4v18b_NAS_T3_seed4000_20260529T005817Z/ckpt/step_00004000_FIXED_v32768/`
+  - NOTE: `model.safetensors` was surgically fixed/sliced; `config.json` may still lie. Inspect tensor shapes, do not trust config blindly.
+- Existing invalid draft from T42: `/home/dnola/v18_fix/t42/our_v18_dflash_buun.gguf` (metadata says qwen35/vocab 248320; do not benchmark this against MiniMax)
+- Compatible target candidate from T47: `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`
+- buun runtime on spark-2: `/home/dnola/llama.cpp.buun/build/bin/llama-server`
+- T42/T47 logs under `/home/dnola/v18_fix/t42/` and `/home/dnola/v18_fix/T47_OUR_ADAPTER_AL_COMPAT_TARGET.md`
+
+## FAST steps (target <45 min, block with partial findings if over)
+1. Read the source ckpt tensors/config and the available mapping files (`d2t.npy`, `t2d.npy`, token_freq, tokenizer files). Determine the TRUE axes:
+   - draft hidden=3072, fc input=15360 (=5×3072), draft lm_head rows should be 32768 after fix.
+   - target must be MiniMax M2.7, hidden=3072, vocab/tokenizer minimax-m2 / 200064 with reduced-draft-vocab mapping if needed.
+2. Re-run or patch the buun/llama.cpp conversion so the output GGUF is paired to MiniMax, NOT qwen35. Prefer a no-source-mutation wrapper/local patch under `/home/dnola/v18_fix/t48/`.
+   - If the converter needs `--target-model-dir`, point it to the MiniMax HF/GGUF metadata source, not Qwen.
+   - If reduced-vocab mapping is needed, include d2t/t2d metadata; do NOT inflate or silently remap to qwen.
+3. Verify output metadata BEFORE launch: target/draft hidden compatible (15360 feature input), tokenizer_pre minimax-m2 or explicit MiniMax mapping, draft vocab/mapping sane (32768 reduced draft vocab is OK if mapped to target vocab). If metadata still says qwen35, stop and block.
+4. Launch buun DFlash with MiniMax target + fixed draft, draft_max=7, temp=0/top-k=1, max_out=512. Run 3 short GSM8K-style prompts. Record raw measured runtime accept_length / draft_n_accepted only — no multiplier.
+
+## Verdicts
+- `OUR_ADAPTER_AL=<mean>` if measured. Compare to campaign goal AL>=3 and old v18 step2500 public-axis ~1.27–1.51. If AL>=3, report TARGET HIT candidate loudly.
+- `CONVERTER_METADATA_FIX_NEEDED` if you identify the exact metadata/source patch but cannot safely finish in time. Include file/function/fields.
+- `NO_VALID_MAPPING` if the reduced-vocab mapping needed to pair the 32768-row draft with MiniMax target is absent and cannot be reconstructed fast. Include exact searched paths.
+- `RUNTIME_BLOCKED` if metadata is correct but buun load fails. Include log + first failing assertion.
+
+## Hard rules
+Fast proof only. No training. No model/source-dir mutation outside `/home/dnola/v18_fix/t48/`. No invalid hidden-size or tokenizer slicing. No spark-4. Do not claim AL without a valid target/draft pair.
+
+Latest summary:
+Measured OUR v18 step4000 adapter against actual MiniMax-M2.7 on spark-2 after MiniMax-tokenizer conversion and v17 d2t lm_head rebake. Final report written to /home/dnola/v18_fix/T48_MINIMAX_RECONVERT_AL.md; result OUR_ADAPTER_AL=1.334, below AL>=3 target and in the old v18 public-axis band.
+
+Comments (1):
+  [2026-05-29 01:18] atlaspatch5: Additional candidate after current T48 measured step4000 adapter (from T49 read-only spark-3 harvest):
+
+classification: CKPT_AVAILABLE
+
+Candidate checkpoint for FAST AL conversion/measurement:
+`/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/step_00000500`
+
+Verified on spark-3 at 2026-05-29T01:17:04-07:00:
+- `model.safetensors` 2,280,441,827 bytes
+- `config.json` 1,588 bytes
+- `config.py` 3,104 bytes
+- `trainer_state.json` says `{"epoch": 0, "global_step": 500, "checkpoint_tag": "step_00000500"}`
+- `checkpoint_last_inepoch -> step_00000500`
+- train.log line: `Pre-validation checkpoint saved to .../step_00000500 (global_step=500)` after `train/loss=5.219` at step 500
+- config axes: `DFlashDraftModel`, `draft_vocab_size=32768`, target vocab `200064`, block_size `8`, max_anchors `3072`, aux/target layers `[2,16,30,45,59]`, draft hidden `3072`, 6 layers, intermediate `4096`, dtype `bfloat16`, mask_token_id `200054`, verifier `/home/dnola/iq4_full_run/verifier_meta_v11`
+- setup log loaded mappings from `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/d2t.npy` and `.../t2d.npy`
+
+Caveat: no separate val/eval metrics artifact found in inspected paths; original PID is no longer live, but checkpoint is present and complete enough for conversion attempt.
+
+Events (7):
+  [2026-05-29 00:38] created {'assignee': 'atlasdflash4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 00:38] [run 540] claimed {'lock': 'macmini.local:29739', 'expires': 1780041239, 'run_id': 540}
+  [2026-05-29 00:38] [run 540] spawned {'pid': 29741}
+  [2026-05-29 00:40] [run 540] heartbeat {'note': 'Oriented on T48; spark-2 reachable. Verified source tensors: hidden=3072, fc=3072x15360, embed vocab=200064, lm_head rows=32768; now testing MiniMax-tokenizer prep/conversion under /home/dnola/v18_fix/t48 only.'}
+  [2026-05-29 00:53] [run 540] heartbeat {'note': 'Converted a MiniMax-tokenizer GGUF; first runtime load rejected 32768-row output.weight. Rebuilt with v17 d2t scatter to full 200064-row lm_head and launched buun on spark-2; waiting on MiniMax target load/health.'}
+  [2026-05-29 01:06] [run 540] completed {'result_len': 0, 'summary': 'Measured OUR v18 step4000 adapter against actual MiniMax-M2.7 on spark-2 after MiniMax-tokenizer conversion and v17 d2t lm_head rebake. Final report written to /home/dnola/v18_fix/T48_MINIMAX_RECONVERT_AL.md; result OUR_ADAPTER_AL=1.334, below AL>=3 target and in the old v18 public-axis band.'}
+  [2026-05-29 01:18] commented {'author': 'atlaspatch5', 'len': 1308}
+
+Runs (1):
+  #540 completed    @atlasdflash4  1626s  2026-05-29 00:38
+        → Measured OUR v18 step4000 adapter against actual MiniMax-M2.7 on spark-2 after MiniMax-tokenizer conversion and v17 d2t lm_head rebake. Final report written to

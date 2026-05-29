@@ -1,0 +1,82 @@
+Task t_c6d4b9e4: T51: FAST cause-isolation plan from T48 low AL — choose next <1hr lever
+  status:    done
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_c6d4b9e4
+  max-retries: 2 (default)
+  created:   2026-05-29 01:13 by user
+  started:   2026-05-29 01:13
+  completed: 2026-05-29 01:31
+
+Body:
+# T51: FAST cause-isolation from T48 low AL — choose the next <1hr lever
+
+## Why
+T48 measured OUR valid MiniMax adapter AL=1.334, below AL>=3. We need fast evidence-driven next steps, not guesses. This task reads the actual T48/T43/T41/T46 artifacts/logs and produces the next one or two bounded (<1hr) experiments to move AL upward.
+
+## Host scope
+spark-1 or spark-work READ/analysis preferred; no training launch; no Kasa. If you need remote reads, keep them read-only. Do not touch spark-2 if T50 is running; do not touch spark-3 if the live trainer owns it; spark-4 off-limits.
+
+## Required inputs
+- T48 report: `/home/dnola/v18_fix/T48_MINIMAX_RECONVERT_AL.md` (AL=1.334)
+- T43 draft_max sweep: `/home/dnola/v18_fix/T43_DRAFTMAX_SWEEP.md` (z-lab plateau ~5.0-5.2, draft_max=9)
+- T41/T46/T49 comments for live training state and any fresh ckpt
+- Training-side eval/val metrics for the measured ckpt if available near `/home/dnola/c15_full_run/c15_iq4v18b_NAS_T3_seed4000_20260529T005817Z/` and `/home/dnola/v18_fix/t48/`
+
+## Questions to answer with evidence
+1. Is T48 AL=1.334 consistent with training-side per-position metrics for that ckpt, or is runtime below prediction? Label axes (runtime measured vs training-side LO/HI).
+2. Did the MiniMax rebake scatter introduce a plausible quality loss (e.g. d2t/t2d mapping mismatch, unmapped logits, config/tensor mismatch)? Cite concrete files/logs.
+3. Which FAST next experiment has the highest information value: v15 deep AL (T50), fresh spark-3 ckpt AL (from T49), draft_max=9 rerun on T48, data/target-layer audit, or a 100-300 step recipe tweak?
+
+## Deliverable
+Write `/home/dnola/v18_fix/T51_LOW_AL_CAUSE_ISOLATION.md` with:
+- facts only (no unverified "probably")
+- metric labels: runtime measured AL, training-side τ_LO/τ_HI if available
+- ranked next actions, each bounded to <1hr and assigned host/profile suggestion
+Then block review-required with a concise verdict.
+
+## Hard rules
+No guessing without checking. No training/inference launch unless it is a <10min read-only smoke and does not contend with T50/T49. No spark-4. Keep under 45 minutes.
+
+
+Latest summary:
+Reviewed/accepted T51: next highest-value actions are (1) fast mapping/scatter audit of T48 rebake and (2) let T50 v15 AL finish; fresh spark-3 step500 AL is queued after T50 to avoid spark-2 contention.
+
+Comments (2):
+  [2026-05-29 01:19] atlas6dflash5: review-required handoff:
+{
+  "artifact": "/home/dnola/v18_fix/T51_LOW_AL_CAUSE_ISOLATION.md",
+  "local_copy": "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_c6d4b9e4/T51_LOW_AL_CAUSE_ISOLATION.md",
+  "sha256": "618e207f6892d71b2bd1bf7b7a60776ade6760211d3c9e5caf2a714063bcb5af",
+  "key_verdict": "T48 runtime load/run is valid, but T48 rebake mapping has a concrete inconsistency: d2t unique=20681 not 32768, t2d is bool mask, and only 56.05% of T48 generated content tokens are in unique d2t coverage.",
+  "metric_labels": {
+    "T48_runtime_measured_AL_mean": 1.334,
+    "T48_exact_ckpt_training_side_tau_LO": "not available in inspected files",
+    "T48_exact_ckpt_training_side_tau_HI": "not available in inspected files",
+    "nearest_v18_step2500_tau_LO_context_only": 1.772151,
+    "nearest_v18_step2500_tau_HI_context_only": 2.844541
+  },
+  "ranked_next_actions": [
+    "CPU/read-only mapping+target-layer audit of T48 rebake (highest IV, 15-30min)",
+    "Let T50 v15 deep MiniMax AL finish; do not contend with spark-2",
+    "Rerun T48 at draft_max=9 only after mapping audit or T50 idle",
+    "Use fresh spark-3 ckpt AL only if T49 reports CKPT_AVAILABLE",
+    "Defer 100-300 step recipe tweak until mapping/T50 facts are known"
+  ],
+  "remote_verification": "scp wrote report to spark-2 and read back wc/sha/head"
+}
+  [2026-05-29 01:31] dflash-al3-driver: review APPROVED. Verified T51 key finding: T48 runtime AL=1.334, exact training-side tau unavailable, and concrete mapping/scatter inconsistency found (d2t unique=20681 not 32768; only 56.05% generated content-token coverage). Filing fast bounded follow-ups: mapping/scatter audit now, fresh step500 AL after T50 frees spark-2.
+
+Events (7):
+  [2026-05-29 01:13] created {'assignee': 'atlas6dflash5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 01:13] [run 544] claimed {'lock': 'macmini.local:37935', 'expires': 1780043321, 'run_id': 544}
+  [2026-05-29 01:13] [run 544] spawned {'pid': 37938}
+  [2026-05-29 01:19] commented {'author': 'atlas6dflash5', 'len': 1340}
+  [2026-05-29 01:19] [run 544] blocked {'reason': 'review-required: T51 report written; verdict is mapping/scatter audit first because T48 rebake d2t unique=20681 (not 32768) and exact ckpt training-side τ is unavailable, so do not launch recipe tweak from AL=1.334 alone.'}
+  [2026-05-29 01:31] commented {'author': 'dflash-al3-driver', 'len': 327}
+  [2026-05-29 01:31] [run 546] completed {'result_len': 0, 'summary': 'Reviewed/accepted T51: next highest-value actions are (1) fast mapping/scatter audit of T48 rebake and (2) let T50 v15 AL finish; fresh spark-3 step500 AL is queued after T50 to avoid spark-2 contention.'}
+
+Runs (2):
+  #544 blocked      @atlas6dflash5  333s  2026-05-29 01:13
+        → review-required: T51 report written; verdict is mapping/scatter audit first because T48 rebake d2t unique=20681 (not 32768) and exact ckpt training-side τ is un
+  #546 completed    @atlas6dflash5  0s  2026-05-29 01:31
+        → Reviewed/accepted T51: next highest-value actions are (1) fast mapping/scatter audit of T48 rebake and (2) let T50 v15 AL finish; fresh spark-3 step500 AL is qu

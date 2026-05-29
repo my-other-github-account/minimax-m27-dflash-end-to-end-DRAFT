@@ -1,0 +1,98 @@
+Task t_b14b49a6: T19: Fix v18 vocab-axis regression + fused/streaming CE-backward microprototype
+  status:    done
+  assignee:  atlasdflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b14b49a6
+  max-retries: 2 (default)
+  created:   2026-05-28 13:55 by user
+  started:   2026-05-28 13:55
+  completed: 2026-05-28 14:11
+  parents:   t_3e38d826
+
+Body:
+# T19: Fix v18 vocab-axis regression + fused/streaming CE-backward microprototype (spark-2 ONLY)
+
+## CONTEXT
+T7/T7-follow-up/T18 did NOT hit the throughput gate. Current measured baseline remains 5974.5 ms/step = 0.167 it/s, with backward 4801.8 ms (80.4%). Existing Liger fused CE OOMs; Python chunked Liger CE is numerically correct but ~58.4 s/step and not production-viable.
+
+T18 verified the crucial blocker:
+- Locked-shape isolated CE/lm_head profile at T=24576, H=3072, V=32768 measured 436.25 ms total, 271.80 ms backward, 6.3446 GiB peak.
+- But the resumed full trainer path is actually V=200064 (`_LayerNormLinearBackward` shape [1,24576,200064]) because `/home/dnola/v18_throughput_audit/throwaway_ckpt/step_00004000/config.json` has `draft_vocab_size: 200064` despite the intended 32768-vocab path.
+- Therefore first fix is the vocab-axis/config/mapping regression; only then does fused CE-backward make sense.
+
+Read first:
+- /home/dnola/v18_throughput_audit/sweep_summary.md
+- /home/dnola/v18_throughput_audit/t7_followup_final_summary.md
+- /home/dnola/v18_throughput_audit/operator_deepdive/memory_shapes.md
+- /home/dnola/v18_throughput_audit/operator_deepdive/fused_ce_backward_plan.md
+
+## YOUR JOB — one bounded spark-2 cycle
+1. Determine why `--draft-vocab-size 32768` is not enforced on resume/checkpoint config. Check launcher args, trainer config load/merge, checkpoint config overwrite, tokenizer/vocab mapping, lm_head construction, and any resume-from-checkpoint path.
+2. Patch the smallest correct place so the locked v18 run uses the intended reduced vocabulary axis V=32768 end-to-end. Do NOT change max_anchors, block_size, hidden, intermediate, num_layers, total_seq_len, batch size, or training host scope.
+3. Run a bounded one-step/short audit that proves the full trainer now logs/uses V=32768 (no [1,24576,200064] final-head path). Write evidence to `/home/dnola/v18_throughput_audit/vocab_axis_fix/`.
+4. If time remains after V=32768 proof, implement the first Triton or custom-autograd fused/streaming weighted linear+CE microprototype from T18. Validate against PyTorch on tiny shapes first; then benchmark one locked-shape row. If no prototype is feasible within this cycle, write the concrete next patch with exact files/functions.
+5. Produce artifacts:
+   - `/home/dnola/v18_throughput_audit/vocab_axis_fix/root_cause.md`
+   - `/home/dnola/v18_throughput_audit/vocab_axis_fix/diff.patch`
+   - `/home/dnola/v18_throughput_audit/vocab_axis_fix/proof_v32768.json`
+   - optional `/home/dnola/v18_throughput_audit/vocab_axis_fix/fused_ce_microproto_result.json`
+
+## HARD RULES
+- HOST SCOPE: spark-2 ONLY.
+- NO FSDP, NO DDP, NO multi-host, NO multi-spark.
+- NEVER change capacity locks: max_anchors=3072, block_size=8, hidden_size=3072, intermediate_size=4096, num_layers=6, total_seq_len=8192. Do NOT reduce batch size or anchors.
+- Do not launch/touch full production training/tmux. Bounded throwaway audits only.
+- Do not claim gate success unless a measured audit row is <=2000ms/step with sanity/loss pass.
+- If you discover V=200064 is intentional, block review-required with code evidence and a plan for full-vocab fused CE; do NOT silently accept the 200064 path as a throughput fix.
+
+Latest summary:
+review-required: vocab-axis regression fixed/proved on spark-2 (lm_head [32768,3072]); artifacts under /home/dnola/v18_throughput_audit/vocab_axis_fix need review before treating patch as accepted.
+
+Comments (2):
+  [2026-05-28 14:07] atlasdflash2: review-required handoff:
+{
+  "changed_files": [
+    "/home/dnola/speculators-c15-api/scripts/train.py",
+    "/home/dnola/v18_throughput_audit/instrumented_src/speculators/train/vocab_mapping.py",
+    "/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/token_freq.pt",
+    "/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/d2t.npy",
+    "/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/t2d.npy"
+  ],
+  "artifacts": {
+    "root_cause": "/home/dnola/v18_throughput_audit/vocab_axis_fix/root_cause.md",
+    "diff": "/home/dnola/v18_throughput_audit/vocab_axis_fix/diff.patch",
+    "proof": "/home/dnola/v18_throughput_audit/vocab_axis_fix/proof_v32768.json",
+    "proof_log": "/home/dnola/v18_throughput_audit/vocab_axis_fix/proof_v32768.log"
+  },
+  "tests_run": [
+    "python -m py_compile patched train.py and vocab_mapping.py",
+    "parse_vocab_mappings generated v17 token_freq/d2t/t2d with d2t_shape=[32768], t2d_shape=[200064], t2d_sum=32768",
+    "bounded spark-2 one-step full trainer audit with locked capacity flags and --draft-vocab-size 32768"
+  ],
+  "proof_summary": {
+    "requested_draft_vocab_size": 32768,
+    "effective_draft_vocab_size": 32768,
+    "lm_head_shape": [32768, 3072],
+    "use_draft_vocab": true,
+    "audit_rows": 1,
+    "no_layernormlinear_200064_in_proof_log": true
+  },
+  "notes": [
+    "Old throwaway_ckpt/step_00004000 is genuinely full-vocab and should not be used for reduced-vocab timing.",
+    "No fused CE microprototype implemented in this cycle; root_cause.md includes exact next patch files/functions."
+  ]
+}
+  [2026-05-28 14:11] driver: review APPROVED. Verified spark-2 artifacts: proof_v32768.json exists and proves requested/effective draft_vocab_size=32768, lm_head_shape=[32768,3072], no LayerNormLinear 200064 path in proof log; root_cause.md identifies missing token_freq/mapping fallback as the cause; diff.patch patches train.py/vocab_mapping.py. Treat vocab-axis fix as accepted for next throughput audit. Gate is NOT met yet: first one-step proof was cold 16.2s and not a steady audit. Next worker must measure steady V=32768 throughput before any T9/T3 training unlock.
+
+Events (8):
+  [2026-05-28 13:55] created {'assignee': 'atlasdflash2', 'status': 'ready', 'parents': ['t_3e38d826'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-28 13:55] [run 238] claimed {'lock': 'macmini.local:53404', 'expires': 1780002603, 'run_id': 238}
+  [2026-05-28 13:55] [run 238] spawned {'pid': 53406}
+  [2026-05-28 14:02] [run 238] heartbeat {'note': 'patched vocab parsing to enforce --draft-vocab-size; generating v17 token_freq/mapping proof on spark-2'}
+  [2026-05-28 14:07] commented {'author': 'atlasdflash2', 'len': 1564}
+  [2026-05-28 14:07] [run 238] blocked {'reason': 'review-required: vocab-axis regression fixed/proved on spark-2 (lm_head [32768,3072]); artifacts under /home/dnola/v18_throughput_audit/vocab_axis_fix need review before treating patch as accepted.'}
+  [2026-05-28 14:11] commented {'author': 'driver', 'len': 544}
+  [2026-05-28 14:11] completed {'result_len': 0, 'summary': None}
+
+Runs (1):
+  #238 blocked      @atlasdflash2  722s  2026-05-28 13:55
+        → review-required: vocab-axis regression fixed/proved on spark-2 (lm_head [32768,3072]); artifacts under /home/dnola/v18_throughput_audit/vocab_axis_fix need revi

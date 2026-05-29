@@ -1,0 +1,106 @@
+{
+  "artifacts": [
+    "/home/dnola/v18_fix/T86_PARSE.json",
+    "/home/dnola/v18_fix/T86_RUN_LABEL.txt",
+    "/home/dnola/iq4_full_run/launch_T86_spark3_bounded.sh",
+    "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/train.log"
+  ],
+  "checkpoint_last_inepoch": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/checkpoint_last_inepoch",
+  "checkpoints": [
+    {
+      "files": [
+        "config.json",
+        "config.py",
+        "model.safetensors",
+        "optimizer_state_dict.pt",
+        "scheduler_state_dict.pt",
+        "trainer_state.json"
+      ],
+      "global_step": 750,
+      "is_symlink": true,
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/step_00000750",
+      "realpath": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750"
+    },
+    {
+      "files": [
+        "config.json",
+        "config.py",
+        "model.safetensors",
+        "optimizer_state_dict.pt",
+        "scheduler_state_dict.pt",
+        "trainer_state.json"
+      ],
+      "global_step": 800,
+      "is_symlink": false,
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/step_00000800",
+      "realpath": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/step_00000800"
+    }
+  ],
+  "fresh_checkpoint": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/step_00000800",
+  "global_step_reached": 850,
+  "host": "spark-3",
+  "max_train_steps": 850,
+  "post_run_free_g": "total        used        free      shared  buff/cache   available\nMem:             119          21          35          16          80          98\nSwap:             15           0          15",
+  "post_run_gpu_compute_apps": 0,
+  "post_run_gpu_compute_raw": "",
+  "post_run_train_process_raw": "",
+  "post_run_train_processes": 0,
+  "preflight_hidden_state_sample": "1000/1000 = 100.0% (Path.exists sample; elapsed 222.63s)",
+  "preflight_memory": "free -g available 97 GiB before launch",
+  "run_label": "c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z",
+  "save": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z",
+  "source_checkpoint": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750",
+  "train_end": {
+    "full_acc": 0.21,
+    "global_step": 849,
+    "loss": 4.688
+  },
+  "train_log": "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/train.log",
+  "train_records_parsed": 100,
+  "train_start": {
+    "full_acc": 0.172,
+    "global_step": 750,
+    "loss": 4.469
+  },
+  "val_every_steps": 50,
+  "val_in_epoch_max_batches": 20,
+  "val_metrics": [
+    {
+      "AL_HI": 2.2236839983612304,
+      "AL_LO": 1.4387811435827944,
+      "full_acc_epoch": 0.17494362965226173,
+      "global_step": 750,
+      "loss_epoch": 5.0625,
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/val_in_epoch/step_00000750.json",
+      "position_accs": [
+        0.34359949454665184,
+        0.231802861392498,
+        0.16859736740589143,
+        0.13792499378323556,
+        0.12177227102220059,
+        0.113538483902812,
+        0.10644852630794048
+      ],
+      "step": "step_00000750"
+    },
+    {
+      "AL_HI": 2.3152524646371604,
+      "AL_LO": 1.486921489312614,
+      "full_acc_epoch": 0.18803566098213195,
+      "global_step": 800,
+      "loss_epoch": 5.03125,
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T86_spark3_bounded_step850_ckpt50_20260529T152740Z/val_in_epoch/step_00000800.json",
+      "position_accs": [
+        0.3695644199848175,
+        0.2610688075423241,
+        0.18517207652330397,
+        0.14700963199138642,
+        0.12939222306013107,
+        0.11507238186895848,
+        0.10797292366623878
+      ],
+      "step": "step_00000800"
+    }
+  ],
+  "verdict": "CKPT_READY"
+}

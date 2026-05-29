@@ -1,0 +1,114 @@
+Task t_d8ecc736: T39: Launch REAL v18b training — contention-safe, full trajectory
+  status:    done
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_d8ecc736
+  skills:    spark-cluster-operations, dflash-c15-fp8-hybrid-winning-config-and-health-rules, ugreen-nas-fuse-mount-bypass
+  max-retries: 2 (default)
+  created:   2026-05-28 22:56 by user
+  started:   2026-05-28 22:56
+  completed: 2026-05-28 22:59
+
+Body:
+# T39: Launch the REAL v18b training run — contention-safe, full trajectory to a usable checkpoint
+
+## Why now
+The spark-2 "wedge" is SOLVED. Root cause was OOM from CONTENTION (user called it 2026-05-28): multiple stacked scripts/train.py runs on one box PLUS an uncapped ~20-worker torch-inductor compile pool fork-bombing the 128GB unified memory during compile. PROOF: T37's controlled single run with local data ran cleanly to global_step=60 ("Stopping training early at global_step=60") — past the step ~13-20 wedge that killed every prior contended attempt. A broken orphan run on spark-3 (anchor-skip spam, FUSE-backed) was killed. The fix is operational discipline, NOT hardware avoidance.
+
+## Host scope (PROMOTED 2026-05-28 — sparks 1,2,3 available; spark-4 OCCUPIED by sero)
+Pick ONE clean host from {spark-1, spark-2, spark-3}. spark-4 is OFF-LIMITS (sero's DeepSeek-V4 vLLM, 107GB GPU + 113GB RAM in use). One training run PER host — never stack two train.py on the same box.
+
+## MANDATORY pre-launch hygiene (the actual fix)
+1. `ssh <host> 'pgrep -af scripts/train.py'` — if ANY train.py is already running on the host, pick a different host or kill the stray ONLY if it's an unowned orphan (no kanban task owns it). Never launch a second concurrent train.py.
+2. Export `TORCHINDUCTOR_COMPILE_THREADS=4` (cap the inductor fork pool — default ~20 was the fork-bomb). Also set `OMP_NUM_THREADS=8`.
+3. `ssh <host> 'free -g'` — confirm >=90GB available before launch.
+4. Use LOCAL hidden states, not the FUSE NasFS path, to also avoid the separate Errno-5 dataloader symptom. T32 staged `/home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_LOCAL_T32_first700` (first 700 batches, 93GB). For a full run beyond 700 batches, either stage more locally OR warm the NasFS cache first (see ugreen-nas-fuse-mount-bypass skill) — but a single warmed/local run will NOT wedge.
+
+## The run
+Use the C15 winning config (already in the launcher): FP8 HYBRID + te_use_fused + te_fp8_params + compile_flex_attention + use_split_accumulator=True on all 3 GEMMs, max_anchors=3072, block_size=8, num_layers=6, hidden=3072, intermediate=4096, total_seq_len=8192, draft_vocab_size=32768 with d2t.npy/t2d.npy present (verify [VOCAB_AXIS] log line shows effective=32768). Liger fused-linear-ce ON.
+
+Launch in a NAMED tmux. MAX_TRAIN_STEPS for this task: run to at least global_step=2000 with checkpoints every 500 steps, healthy loss trajectory (10.x descending). This is the first real checkpoint-producing run; it feeds T38's conversion + the AL trajectory.
+
+## Acceptance -> /home/dnola/v18_fix/T39_REAL_TRAIN_VERDICT.md
+- **TRAINING_STABLE**: >=2000 steps logged, healthy descending loss, checkpoints on disk at 500/1000/1500/2000, host never wedged. Report the loss trajectory + checkpoint paths. File follow-up to continue to epoch 1 + feed T38/trajectory.
+- **WEDGE_RECURRED**: if the host wedges DESPITE single-run + capped compile threads + local data, THEN and only then it's a deeper issue — capture dmesg/nvidia-smi-dmon and escalate. (Low probability given T37 step-60 success.)
+
+## Hard rules
+- One train.py per host. Cap TORCHINDUCTOR_COMPILE_THREADS=4. Local/warmed data only.
+- This task holds the lease on whichever host it picks. No other task touches that host.
+- Do NOT touch spark-4.
+- 5-hour time-box.
+
+## Reference
+- T37 proof (step-60 clean run): /home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_spark3_20260529T055112Z/train.log
+- Local-data launcher: /home/dnola/v18_fix/launch_c15_v18b_T32_LOCAL_first700.sh (adapt MAX_TRAIN_STEPS up, add TORCHINDUCTOR_COMPILE_THREADS=4)
+- Winning config + pitfalls: skill dflash-c15-fp8-hybrid-winning-config-and-health-rules
+
+
+Latest summary:
+Superseded by T41 fast-smoke (200 steps). User pivoted to fast-iteration / no >1hr waits.
+
+Events (80):
+  [2026-05-28 22:58] [run 515] claimed {'lock': 'macmini.local:16939', 'expires': 1780035230, 'run_id': 515}
+  [2026-05-28 22:58] [run 515] spawned {'pid': 4578}
+  [2026-05-28 22:58] [run 515] crashed {'pid': 4578, 'claimer': 'macmini.local:16939'}
+  [2026-05-28 22:58] gave_up {'failures': 2, 'effective_limit': 2, 'limit_source': 'dispatcher', 'error': 'pid 4578 not alive', 'trigger_outcome': 'crashed', 'pid': 4578, 'claimer': 'macmini.local:16939'}
+  [2026-05-28 22:58] promoted
+  [2026-05-28 22:58] [run 516] claimed {'lock': 'macmini.local:17068', 'expires': 1780035232, 'run_id': 516}
+  [2026-05-28 22:58] [run 516] spawned {'pid': 4591}
+  [2026-05-28 22:58] [run 516] crashed {'pid': 4591, 'claimer': 'macmini.local:17068'}
+  [2026-05-28 22:58] [run 517] claimed {'lock': 'macmini.local:17012', 'expires': 1780035233, 'run_id': 517}
+  [2026-05-28 22:58] [run 517] spawned {'pid': 4607}
+  [2026-05-28 22:58] [run 517] crashed {'pid': 4607, 'claimer': 'macmini.local:17012'}
+  [2026-05-28 22:58] gave_up {'failures': 2, 'effective_limit': 2, 'limit_source': 'dispatcher', 'error': 'pid 4607 not alive', 'trigger_outcome': 'crashed', 'pid': 4607, 'claimer': 'macmini.local:17012'}
+  [2026-05-28 22:58] promoted
+  [2026-05-28 22:58] [run 518] claimed {'lock': 'macmini.local:17094', 'expires': 1780035237, 'run_id': 518}
+  [2026-05-28 22:58] [run 518] spawned {'pid': 4611}
+  [2026-05-28 22:59] [run 518] crashed {'pid': 4611, 'claimer': 'macmini.local:17094'}
+  [2026-05-28 22:59] [run 519] claimed {'lock': 'macmini.local:49412', 'expires': 1780035243, 'run_id': 519}
+  [2026-05-28 22:59] [run 519] spawned {'pid': 4629}
+  [2026-05-28 22:59] [run 519] reclaimed {'manual': True, 'reason': 'Re-aiming for fast-proof: user wants sub-1hr iteration, early proof. Switching from >=2000-step run to 200-step bounded smoke (ckpt @100/200).', 'prev_lock': 'macmini.local:49412', 'prev_pid': 4629, 'host_local': True, 'termination_attempted': True, 'terminated': True, 'sigkill': False}
+  [2026-05-28 22:59] [run 520] completed {'result_len': 0, 'summary': 'Superseded by T41 fast-smoke (200 steps). User pivoted to fast-iteration / no >1hr waits.'}
+
+Runs (21):
+  #500 crashed      @atlasdflash3  2s  2026-05-28 22:56
+        ! pid 4116 not alive
+  #501 crashed      @atlasdflash3  6s  2026-05-28 22:56
+        ! pid 4132 not alive
+  #502 crashed      @atlasdflash3  3s  2026-05-28 22:56
+        ! pid 4154 not alive
+  #503 crashed      @atlasdflash3  3s  2026-05-28 22:56
+        ! pid 4166 not alive
+  #504 crashed      @atlasdflash3  6s  2026-05-28 22:56
+        ! pid 4180 not alive
+  #505 crashed      @atlasdflash3  40s  2026-05-28 22:57
+        ! pid 4211 not alive
+  #506 crashed      @atlasdflash3  2s  2026-05-28 22:57
+        ! pid 4329 not alive
+  #507 crashed      @atlasdflash3  6s  2026-05-28 22:57
+        ! pid 4333 not alive
+  #508 crashed      @atlasdflash3  1s  2026-05-28 22:57
+        ! pid 4353 not alive
+  #509 crashed      @atlasdflash3  2s  2026-05-28 22:57
+        ! pid 4360 not alive
+  #510 crashed      @atlasdflash3  4s  2026-05-28 22:57
+        ! pid 4376 not alive
+  #511 crashed      @atlasdflash3  5s  2026-05-28 22:57
+        ! pid 4390 not alive
+  #512 crashed      @atlasdflash3  40s  2026-05-28 22:58
+        ! pid 4410 not alive
+  #513 crashed      @atlasdflash3  3s  2026-05-28 22:58
+        ! pid 4542 not alive
+  #514 crashed      @atlasdflash3  5s  2026-05-28 22:58
+        ! pid 4556 not alive
+  #515 crashed      @atlasdflash3  2s  2026-05-28 22:58
+        ! pid 4578 not alive
+  #516 crashed      @atlasdflash3  1s  2026-05-28 22:58
+        ! pid 4591 not alive
+  #517 crashed      @atlasdflash3  4s  2026-05-28 22:58
+        ! pid 4607 not alive
+  #518 crashed      @atlasdflash3  6s  2026-05-28 22:58
+        ! pid 4611 not alive
+  #519 reclaimed    @atlasdflash3  29s  2026-05-28 22:59
+        ! manual_reclaim: Re-aiming for fast-proof: user wants sub-1hr iteration, early proof. Switching from >=2000-step run to 200-step bounded smoke (ckpt @100/200).
+  #520 completed    @atlasdflash3  0s  2026-05-28 22:59
+        → Superseded by T41 fast-smoke (200 steps). User pivoted to fast-iteration / no >1hr waits.

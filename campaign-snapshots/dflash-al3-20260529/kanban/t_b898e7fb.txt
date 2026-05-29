@@ -1,0 +1,131 @@
+Task t_b898e7fb: T35: Stand up buun-llama-cpp DFlash inference on spark-work (the right fork)
+  status:    done
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b898e7fb
+  skills:    spark-cluster-operations, llama-cpp, github-pat-local-storage-and-clone-bake-pitfall
+  max-retries: 2 (default)
+  created:   2026-05-28 21:47 by user
+  started:   2026-05-28 21:48
+  completed: 2026-05-28 22:51
+
+Body:
+# T35: Stand up buun-llama-cpp DFlash inference on spark-work, reproduce z-lab + plan v18b path
+
+## Context (USER 2026-05-28 21:40 PDT)
+USER: "I would be very surprised if you couldn't get good numbers from https://github.com/spiritbuun/buun-llama-cpp"
+
+This is the right fork. Evidence collected before filing:
+- **630 stars, 67 forks, last commit 2026-05-27** (yesterday). Actively maintained.
+- Parent chain: `spiritbuun/buun-llama-cpp` → `TheTom/llama-cpp-turboquant` → `ggml-org/llama.cpp`. Trellis-Coded Quantization fork that also has the mature DFlash work.
+- **`src/models/dflash_draft.cpp` is 27,301 bytes** — substantially more mature than ruixiang63/PR#22105's `src/models/dflash.cpp` (161 lines).
+- **Active DFlash dev branches**: `experiment/SD-073-dflash-swa`, `SD-075-multislot-dflash-tape-fix`, `SD-076-moe-dflash-tape`, `SD-078-multislot-dflash`, `SD-089-pflash`, `fix/issue-38-dflash-mmproj`, `fix/issue-44-partial-offload-tape-replay`. They're in flight on multi-slot + MoE + SWA DFlash variants.
+- **`conversion/minimax.py` EXISTS** in `master` — our v18b verifier (MiniMax M2.7 IQ4) has a conversion path. **This resolves the USER's "isn't flexible" concern from the PR #22105 conversation.**
+- **`benches/dgx-spark/dgx-spark.md`** — they're benching on the same GB10 hardware we have.
+- The existing z-lab gguf on disk (`zlab_qwen36_35b_a3b_dflash_buun.gguf`) was BUILT for this fork — the `buun` suffix is `spiritbuun`'s naming convention.
+
+PR #22105 (T34/T34v2) is closed as wrong fork.
+
+## Your job (spark-work ONLY)
+
+### Phase 1 — Pull and build buun-llama-cpp
+1. SSH to spark-work. Free state from killed T34v2 work: `tmux kill-server 2>/dev/null; pkill -9 -f "t34_run_gsm8k|llama-speculative-simple" 2>/dev/null`. Keep the existing `/home/dnola/llama.cpp.upstream/` (PR22105 build) as reference but don't use it.
+2. Clone: `git clone https://github.com/spiritbuun/buun-llama-cpp ~/llama.cpp.buun`
+3. `cd ~/llama.cpp.buun && git log --oneline -10` — verify recent commits include DFlash work.
+4. Identify which branch has the most mature DFlash that's also stable. Probably `master` (has dflash_draft.cpp); the SD-078 experiment branch has multi-slot improvements but may be less stable. Default to `master` for the first benchmark; only switch to a SD-### branch if `master` produces a bad number.
+5. Build with CUDA per their README:
+   ```
+   cmake -B build \
+     -DGGML_CUDA=ON \
+     -DGGML_NATIVE=ON \
+     -DGGML_CUDA_FA=ON \
+     -DGGML_CUDA_FA_ALL_QUANTS=ON \
+     -DCMAKE_BUILD_TYPE=Release
+   cmake --build build -j$(nproc)
+   ```
+6. Confirm DFlash-aware binaries:
+   ```
+   ls build/bin/llama-{cli,server,speculative-simple}
+   build/bin/llama-cli --help 2>&1 | grep -iE "dflash|draft-max|spec"
+   ```
+7. Check `docs/speculative.md` and `benches/dgx-spark/dgx-spark.md` for the canonical DFlash invocation patterns and recommended flags on GB10.
+
+### Phase 2 — Reproduce z-lab calibration on the working fork
+Use the EXISTING gguf at `/home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/zlab_qwen36_35b_a3b_dflash_buun.gguf` (built for this fork; the "buun" suffix is the signature) and the existing Qwen3.6-35B-A3B-UD-IQ4_XS verifier already on spark-work at `/home/dnola/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/`.
+
+Run a quick 5-sample smoke first to confirm the build works:
+```
+build/bin/llama-speculative-simple \
+  -m /home/dnola/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf \
+  -md /home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/zlab_qwen36_35b_a3b_dflash_buun.gguf \
+  --dflash --draft-max 16 --temp 0 --top-k 1 --seed 42 \
+  -c 8192 -n 4096 -ngl 99 -ngld 99 \
+  -p "<gsm8k_prompt_0>"
+```
+
+If 5-sample mean AL ≥ ~5.5, run the full 100-sample GSM8K to match what T34v2 was trying. Reuse `/home/dnola/v18_fix/t34/t34_run_gsm8k.py` with the new binary path; write outputs under `/home/dnola/v18_fix/t35/`.
+
+### Phase 3 — v18b conversion path investigation (the user's real concern)
+Once Phase 2 confirms the binary works on z-lab, demonstrate the v18b path FEASIBILITY (don't have to actually convert v18b yet since T32 hasn't produced one; T32 is still NasFS-warming on spark-2).
+
+1. Read `~/llama.cpp.buun/conversion/minimax.py` to confirm MiniMax M2.7 verifier conversion is supported. Our v18b verifier is `/home/dnola/iq4_full_run/verifier_meta_v11/` (training reference; the actual production verifier gguf is `MiniMax-M2.7-UD-IQ4_XS.gguf` per memory).
+2. Read `~/llama.cpp.buun/src/models/dflash_draft.cpp` and `convert_hf_to_gguf.py` to confirm the DFlash drafter conversion handles our v18b shape:
+   - `num_layers=6` drafter
+   - `block_size=8`
+   - `hidden_size=3072`
+   - `intermediate_size=4096`
+   - `draft_vocab_size=32768` (reduced via d2t/t2d mapping)
+   - `target_layer_ids=[2,16,30,45,59]`
+   - `mask_token_id=200054`
+   - Stored as `DFlashDraftModel` per HF config.json
+3. Identify what (if anything) needs adaptation. Document in the verdict. **Do NOT modify the fork's source unless required for build; the goal is to demonstrate the conversion path exists, not to write new model code.**
+4. If a known-good DFlash checkpoint of similar shape exists on disk (e.g. our v15/v16/v17 lineage HF checkpoints), do a smoke conversion test with one of them as proxy for v18b. This proves the path end-to-end.
+
+### Phase 4 — Verdict
+Write `/home/dnola/v18_fix/T35_BUUN_LLAMACPP_VERDICT.md`:
+
+- **BUUN_REPRODUCES_PUBLISHED**: z-lab on 100-sample GSM8K mean AL ≥ 5.5. Document the working build, the exact invocation, the v18b conversion path feasibility (paths in convert_hf_to_gguf.py + conversion/minimax.py + src/models/dflash_draft.cpp that handle our shape). Then file T36 to do the actual v18b GGUF conversion + benchmark once T32 produces a checkpoint.
+- **BUUN_BELOW_PUBLISHED**: 100-sample mean < 5.5 on z-lab. Document the gap. Try one experiment branch (`SD-078-multislot-dflash` is most-recent stable). If still < 5.5, file T37 for deeper investigation.
+- **BUUN_V18B_INCOMPATIBLE**: z-lab works but v18b shape is genuinely not supported by the fork's conversion + dflash_draft model code. Enumerate the specific incompatibilities. ESCALATE TO USER — they may have a path forward (the spiritbuun fork has live issue tracker; user may have a relationship there).
+
+## Hard rules
+- Host scope: spark-work ONLY.
+- Do NOT modify the buun fork's source. Only build + run + analyze.
+- 6-hour time-box.
+- Reuse killed-T34v2 artifacts where possible: existing Qwen3.6-35B-A3B-UD-IQ4_XS verifier, existing z-lab gguf, existing GSM8K dataset cache.
+- The deliverable is **a working harness path for both z-lab (validation) and v18b (production)**, not a report.
+
+## Acceptance criteria
+- `~/llama.cpp.buun` exists with `build/bin/llama-speculative-simple` (or equivalent) compiled.
+- z-lab 100-sample GSM8K AL number documented with mean + stdev.
+- v18b conversion path feasibility documented from source inspection (which converter, which model code, what adapts).
+- If feasible: T36 filed to bridge T32's v18b checkpoint into the buun harness once T32 produces one.
+
+## Reference
+- buun-llama-cpp: https://github.com/spiritbuun/buun-llama-cpp
+- TCQ paper / dataset: https://huggingface.co/datasets/spiritbuun/turboquant-tcq-kv-cache
+- DFlash docs in fork: `~/llama.cpp.buun/docs/speculative.md`
+- GB10 bench reference: `~/llama.cpp.buun/benches/dgx-spark/dgx-spark.md`
+- z-lab gguf (built for THIS fork): `/home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/zlab_qwen36_35b_a3b_dflash_buun.gguf`
+- Qwen3.6-35B-A3B verifier gguf: `/home/dnola/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf`
+- Killed T34v2 artifacts on disk for reference: `/home/dnola/v18_fix/t34/`
+- T32 training task: producing v18b checkpoints once NasFS cache-warm completes
+- T33 fork-diff task: still running on spark-1, may inform what's wrong with our `dflash-llama` fork
+
+Comments (1):
+  [2026-05-28 22:51] dflash-al3-driver: Driver verified T35 success at 22:49 PDT: buun-llama-cpp built on spark-work, real DFlash server path used, 100-sample GSM8K completed with mean_prompt_AL=6.1607 and aggregate_AL=5.1378 vs published B8/B16 range. T38 has been filed/running for our v18->buun conversion proof. Closing T35 to prevent double-claim with T38; T38 now owns spark-work.
+
+Events (11):
+  [2026-05-28 21:47] created {'assignee': 'atlas6dflash5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': ['spark-cluster-operations', 'llama-cpp', 'github-pat-local-storage-and-clone-bake-pitfall']}
+  [2026-05-28 21:48] [run 491] claimed {'lock': 'macmini.local:17068', 'expires': 1780030995, 'run_id': 491}
+  [2026-05-28 21:48] [run 491] spawned {'pid': 85290}
+  [2026-05-28 21:49] [run 491] heartbeat {'note': 'spark-work reachable; buun fork cloned on master at 72a5aed38 with mature dflash_draft.cpp and DFlash branches visible; starting CUDA build.'}
+  [2026-05-28 21:57] [run 491] heartbeat {'note': 'CUDA build completed on spark-work with build/bin/llama-speculative-simple; starting 5-sample GSM8K z-lab smoke using existing buun drafter GGUF.'}
+  [2026-05-28 22:03] [run 491] heartbeat {'note': 'llama-speculative-simple legacy path ignores DFlash (falls back to draft-simple); confirmed llama-cli/server path does real DFlash. Server smoke on first prompt succeeded with draft_n_accepted=105/128 (AL≈5.57); running 5-sample server smoke.'}
+  [2026-05-28 22:06] [run 491] heartbeat {'note': '5-sample server smoke completed: mean prompt AL=5.46, aggregate AL=4.54; close enough to proceed to 100-sample GSM8K on buun server path for acceptance verdict.'}
+  [2026-05-28 22:21] [run 491] claim_extended {'reason': 'pid_alive', 'worker_pid': 85290, 'claim_lock': 'macmini.local:17068', 'claim_expires_was': 1780032066, 'claim_expires_now': 1780032992, 'last_heartbeat_at': 1780031166}
+  [2026-05-28 22:36] [run 491] claim_extended {'reason': 'pid_alive', 'worker_pid': 85290, 'claim_lock': 'macmini.local:17068', 'claim_expires_was': 1780032992, 'claim_expires_now': 1780033894, 'last_heartbeat_at': 1780031166}
+  [2026-05-28 22:51] commented {'author': 'dflash-al3-driver', 'len': 346}
+  [2026-05-28 22:51] [run 491] completed {'result_len': 0, 'summary': None}
+
+Runs (1):
+  #491 completed    @atlas6dflash5  3800s  2026-05-28 21:48

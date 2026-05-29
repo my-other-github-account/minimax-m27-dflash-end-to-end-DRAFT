@@ -1,0 +1,100 @@
+Task t_e39debf2: T49: FAST read-only harvest spark-3 step>=500 ckpt and hand to AL path
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_e39debf2
+  max-retries: 2 (default)
+  created:   2026-05-29 01:13 by user
+  started:   2026-05-29 01:13
+  completed: 2026-05-29 01:31
+  children:  t_c7e0c028
+
+Body:
+# T49: FAST read-only harvest spark-3 step>=500 checkpoint and hand it to AL measurement
+
+## Why
+T46 found the spark-3 v18b run live at step 365 with no checkpoint yet and recommended recheck after 00:33 PDT. It is now after that. T48 measured the older step4000 adapter at OUR_ADAPTER_AL=1.334 (<3), so the next fast signal is whether the live spark-3 run has a newer usable ckpt/metrics to measure.
+
+## Host scope
+spark-3 READ-ONLY only. Do not kill/restart/Kasa-cycle/launch training/inference. Do not touch spark-1/spark-2/spark-work/spark-4.
+
+## Steps (<15 min)
+1. Inspect the live run from T46: `c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z`.
+2. Read-only collect: current global_step/loss from train.log, checkpoint directory contents, val metrics if any, effective vocab/axis log lines, pgrep/free/nvidia-smi proof.
+3. If a checkpoint exists (especially step>=500), verify it has model/config and comment the exact path onto T42, T48, and this task as a candidate for FAST AL conversion/measurement.
+4. If no checkpoint but run is live, report current step/loss and next recheck time. If stale/unreachable, report evidence only.
+
+## Deliverable
+Comment JSON-ish summary with classification: `CKPT_AVAILABLE`, `LIVE_NO_CKPT`, `STALE_ORPHAN`, or `UNREACHABLE`. Then block review-required. Fast signal only.
+
+## Hard rules
+READ-ONLY. No mutation. No Kasa. No training/inference launch. No spark-4. Keep under 15 minutes.
+
+
+Latest summary:
+Reviewed/accepted T49: spark-3 checkpoint step_00000500 is available and verified; path=/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/step_00000500.
+
+Comments (2):
+  [2026-05-29 01:18] atlaspatch5: classification: CKPT_AVAILABLE
+
+JSON-ish summary:
+{
+  "task": "T49",
+  "host": "spark-3",
+  "inspection_time": "2026-05-29T01:17:04-07:00",
+  "scope": "READ-ONLY spark-3 only; no training/inference launched; no Kasa; no spark-1/2/work/4 touched",
+  "run_name": "c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z",
+  "checkpoint_candidate": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/step_00000500",
+  "classification": "CKPT_AVAILABLE",
+  "checkpoint_verified_files": {
+    "model.safetensors": 2280441827,
+    "config.json": 1588,
+    "config.py": 3104,
+    "trainer_state.json": 67,
+    "optimizer_state_dict.pt": 2101581965,
+    "scheduler_state_dict.pt": 1531
+  },
+  "checkpoint_last_inepoch": "checkpoint_last_inepoch -> step_00000500",
+  "trainer_state": {"epoch": 0, "global_step": 500, "checkpoint_tag": "step_00000500"},
+  "last_train_log_step": {"global_step": 500, "train_loss": 5.219, "lr": "1.50e-04", "log_time": "00:33:14"},
+  "save_log_line": "Pre-validation checkpoint saved to /home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/step_00000500 (global_step=500)",
+  "config_axes": {
+    "architectures": ["DFlashDraftModel"],
+    "draft_vocab_size": 32768,
+    "target_vocab_size": 200064,
+    "block_size": 8,
+    "max_anchors": 3072,
+    "aux_hidden_state_layer_ids": [2, 16, 30, 45, 59],
+    "draft_hidden_size": 3072,
+    "draft_layers": 6,
+    "intermediate_size": 4096,
+    "dtype": "bfloat16",
+    "mask_token_id": 200054,
+    "verifier": "/home/dnola/iq4_full_run/verifier_meta_v11"
+  },
+  "mapping_log_lines": [
+    "Loading vocab mappings from /home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/d2t.npy and .../t2d.npy",
+    "Added <|MASK|> to tokenizer, mask_token_id=200054 (tokenizer len=200055, vocab_size=200064)"
+  ],
+  "val_metrics": "No separate val/eval metrics artifact found in the inspected run paths; log shows validation trigger and durable pre-validation checkpoint, then torch._dynamo warnings at mtime 00:33:38.",
+  "process_state": "Original run PID 2076071 no longer present; pgrep shows a newer same-recipe run c15_iq4v18b_NAS_T3_spark3_val500_20260529T074947Z active on spark-3 (PID 2142213, GPU 25228 MiB).",
+  "resource_proof": {"free_h": "119Gi total, 45Gi available", "nvidia_compute_app": "2142213 /home/dnola/venvs/te/bin/python 25228 MiB"},
+  "candidate_note": "Use this step_00000500 path as a FAST AL conversion/measurement candidate; it is newer than T48's older step4000 adapter and has native draft_vocab_size=32768 config."
+}
+
+Operational note: my first broad remote `find` timed out and left only my own diagnostic `find` process on spark-3; I terminated those exact diagnostic PIDs after verifying they were mine, and did not touch the training process or any Kasa/training/inference state.
+  [2026-05-29 01:31] dflash-al3-driver: review APPROVED. Verified from T49 handoff: CKPT_AVAILABLE at spark-3 step_00000500 with model/config/trainer_state present; candidate already forwarded to T42/T48/T49. Closing review gate so downstream AL task can depend on it.
+
+Events (7):
+  [2026-05-29 01:13] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 01:13] [run 542] claimed {'lock': 'macmini.local:37935', 'expires': 1780043321, 'run_id': 542}
+  [2026-05-29 01:13] [run 542] spawned {'pid': 37936}
+  [2026-05-29 01:18] commented {'author': 'atlaspatch5', 'len': 2836}
+  [2026-05-29 01:18] [run 542] blocked {'reason': 'review-required: CKPT_AVAILABLE on spark-3; step_00000500 checkpoint verified at /home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/step_00000500 and candidate comments added to T42/T48/T49.'}
+  [2026-05-29 01:31] commented {'author': 'dflash-al3-driver', 'len': 228}
+  [2026-05-29 01:31] [run 545] completed {'result_len': 0, 'summary': 'Reviewed/accepted T49: spark-3 checkpoint step_00000500 is available and verified; path=/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/step_00000500.'}
+
+Runs (2):
+  #542 blocked      @atlaspatch5  313s  2026-05-29 01:13
+        → review-required: CKPT_AVAILABLE on spark-3; step_00000500 checkpoint verified at /home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T
+  #545 completed    @atlaspatch5  0s  2026-05-29 01:31
+        → Reviewed/accepted T49: spark-3 checkpoint step_00000500 is available and verified; path=/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20

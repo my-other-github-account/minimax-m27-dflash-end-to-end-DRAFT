@@ -1,0 +1,78 @@
+Task t_a954121a: T27: Restore spark-1 reachability for harness/trajectory work (worker-owned recovery)
+  status:    done
+  assignee:  atlaspatch2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a954121a
+  max-retries: 2 (default)
+  created:   2026-05-28 19:13 by user
+  started:   2026-05-28 19:13
+  completed: 2026-05-28 19:30
+
+Body:
+# T27: Restore spark-1 reachability for dflash-al3 spark-1 work
+
+## Context
+Driver tick found spark-1 not reachable in Tailscale (`offline, last seen 24d ago`) while Kasa Strip 9067 plug 1 is ON. No dflash-al3 task is currently running on spark-1. Spark-1 work is blocked behind T22/T26/T5/T13, and the cron itself is observe+dispatch only — host recovery must run under a kanban task.
+
+## Your job (spark-1 ONLY)
+1. Confirm whether spark-1 is reachable from your worker context via Tailscale and normal SSH. Do not touch spark-2.
+2. If spark-1 is unreachable, use Kasa Strip #2 plug 1 to power-cycle spark-1 (off 30s then on). This is worker-owned recovery; the driver cron must not cycle directly.
+3. After boot, verify spark-1 returns to Tailscale/SSH and record GPU state (`nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader`) and any leftover tmux/llama-server/dflash processes relevant to dflash-al3.
+4. Do not kill unrelated processes unless they are stale dflash-al3 leftovers from done/blocked tasks and are preventing T26/T22 from running; if you kill any, identify their command and reason in the handoff.
+5. Write a short handoff comment with verdict:
+   - `SPARK1_RECOVERED`: spark-1 SSH+GPU available; safe for T26/T22/T5/T13.
+   - `SPARK1_HARD_DOWN`: Kasa cycle did not restore Tailscale/SSH; include observed plug state and timing.
+   - `SPARK1_BUSY`: reachable but occupied by a live non-dflash-al3 owner; do not interfere.
+6. Block review-required after the handoff so the driver can decide whether to unblock T26 or a filler.
+
+## Hard rules
+- Host scope: spark-1 ONLY. Do not touch spark-2/spark-3/spark-4.
+- No training or benchmarking in this task; recovery/status only.
+- Kasa cycle authority is limited to spark-1 plug 1 and only if spark-1 is unreachable.
+- Keep this bounded; do not loop forever.
+
+
+Latest summary:
+SPARK1_RECOVERED: atlaspatch2 restored tailscaled on spark-1 without Kasa cycle; verified SSH/Tailscale, GPU idle, no dflash-al3 leftovers. Driver approved and released spark-1 lease.
+
+Comments (2):
+  [2026-05-28 19:17] atlaspatch2: review-required handoff:
+{
+  "verdict": "SPARK1_RECOVERED",
+  "host_scope": "spark-1 only",
+  "actions_taken": [
+    "Confirmed initial Tailscale status was offline/no ping while normal SSH via configured LAN HostName 10.0.0.103 worked.",
+    "Did not Kasa power-cycle because host was reachable over normal SSH.",
+    "Found tailscaled inactive and disabled on spark-1; started it with systemctl and enabled it for boot."
+  ],
+  "verification": {
+    "tailscale_status": "100.83.174.4 spark-1 active; direct 10.0.0.103:41641",
+    "tailscale_ping": "pong from spark-1 (100.83.174.4) via 10.0.0.103:41641 in 7ms",
+    "normal_ssh": "ssh spark-1 succeeded; remote uptime 56 min; tailscaled enabled+active; tailscale ip -4 = 100.83.174.4",
+    "kasa_strip_9067_plug_1": "ON; on_time=3419s; no cycle performed"
+  },
+  "gpu_state": {
+    "nvidia_smi_compute_apps": "empty/no compute apps",
+    "gpu_summary": "0, NVIDIA GB10, [N/A], [N/A], 0 %"
+  },
+  "process_state": {
+    "tmux": "no /tmp/tmux-1000/default socket",
+    "relevant_processes": "none matching llama-server/llama-bench/dflash/flashqla/vllm/python bench|harness|dflash/codex/hermes"
+  },
+  "kills": []
+}
+  [2026-05-28 19:30] driver: review APPROVED. Verified T27 handoff: SPARK1_RECOVERED, tailscaled enabled+active, normal SSH+Tailscale restored, GPU idle, no dflash-al3 leftovers. Closing recovery task; spark-1 lease available for T26.
+
+Events (7):
+  [2026-05-28 19:13] created {'assignee': 'atlaspatch2', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-28 19:13] [run 276] claimed {'lock': 'macmini.local:41860', 'expires': 1780021680, 'run_id': 276}
+  [2026-05-28 19:13] [run 276] spawned {'pid': 41861}
+  [2026-05-28 19:17] commented {'author': 'atlaspatch2', 'len': 1164}
+  [2026-05-28 19:17] [run 276] blocked {'reason': 'review-required: SPARK1_RECOVERED — normal SSH and Tailscale reachability restored; tailscaled started+enabled; GPU idle and no dflash-al3 leftovers found.'}
+  [2026-05-28 19:30] commented {'author': 'driver', 'len': 205}
+  [2026-05-28 19:30] [run 367] completed {'result_len': 0, 'summary': 'SPARK1_RECOVERED: atlaspatch2 restored tailscaled on spark-1 without Kasa cycle; verified SSH/Tailscale, GPU idle, no dflash-al3 leftovers. Driver approved and released spark-1 lease.'}
+
+Runs (2):
+  #276 blocked      @atlaspatch2  261s  2026-05-28 19:13
+        → review-required: SPARK1_RECOVERED — normal SSH and Tailscale reachability restored; tailscaled started+enabled; GPU idle and no dflash-al3 leftovers found.
+  #367 completed    @atlaspatch2  0s  2026-05-28 19:30
+        → SPARK1_RECOVERED: atlaspatch2 restored tailscaled on spark-1 without Kasa cycle; verified SSH/Tailscale, GPU idle, no dflash-al3 leftovers. Driver approved and

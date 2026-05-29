@@ -1,0 +1,57 @@
+Task t_a8b300c6: T63: FAST post-T62 next-lever synthesis for measured MiniMax AL>=3
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a8b300c6
+  max-retries: 2 (default)
+  created:   2026-05-29 03:18 by user
+  started:   2026-05-29 03:18
+  completed: 2026-05-29 03:20
+
+Body:
+# T63: FAST post-T62 non-conversion lever selection — what to try next to break AL 3
+
+## Mission
+We have valid harness and valid corrected MiniMax conversion path, but measured raw runtime AL remains far below target:
+- T48 step4000 AL=1.334 (old/invalid-ish path)
+- T50 v15 step22000 AL=1.644
+- T53 step500 AL=1.651 with bad absolute-d2t scatter
+- T62 corrected d2t-OFFSET rebake smoke AL=1.680 (valid path, still <3)
+- T58 says target-layer metadata already matches [2,16,30,45,59]
+- T55 says conversion row coverage/scatter artifact is unlikely
+
+Your job is NOT to train. Produce the next ONE or TWO bounded, <1h experimental tasks that are most likely to move measured MiniMax AL upward, based on actual artifacts/logs/reports. Prefer actionable checks over guesses.
+
+## Inputs to read
+- `/home/dnola/v18_fix/T62_OFFSET_REBAKE_AL.md`
+- `/home/dnola/v18_fix/T53_STEP500_MINIMAX_AL.md`
+- `/home/dnola/v18_fix/T50_V15_MINIMAX_AL.md`
+- `/home/dnola/v18_fix/T48_MINIMAX_RECONVERT_AL.md`
+- `/home/dnola/v18_fix/t58/T58_TARGET_LAYER_SWEEP.md`
+- board summaries/comments for T55/T57/T58/T62
+
+## Required output
+Write `T63_NEXT_FAST_LEVER.md` in the task workspace with:
+1. Axis-labeled metric table (raw measured runtime AL only; no extrapolated tau).
+2. What has been ruled out (harness, target-layer GGUF metadata, simple scatter/coverage, d2t offset after T62).
+3. The next 1-2 experiments to file, each <1h and with exact host, assignee class, success/fail metric, and why it is not a locked-knob violation.
+4. If you identify an immediately fileable experiment, include the exact kanban body text the driver can paste.
+
+## Hard rules
+- Do not SSH-mutate hosts; read reports/logs only.
+- Do not propose forbidden locked-knob changes: max_anchors 3072, block_size 8, hidden 3072, intermediate 4096, layers 6, seq_len 8192, no FSDP/multi-host training.
+- Do not say AL>=3 is achieved unless measured raw runtime AL >=3.
+- Use worst-case measured AL only; no ×1.3 multipliers.
+- Finish in <30 minutes.
+
+Latest summary:
+Completed T63 synthesis and wrote `T63_NEXT_FAST_LEVER.md` in the task workspace. Recommendation: first file a spark-2 corrected-offset 3x512 baseline using the existing T62 GGUF, then file a BOS/tokenization A/B only if that comparable valid run remains near ~1.7.
+
+Events (4):
+  [2026-05-29 03:18] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 03:18] [run 565] claimed {'lock': 'macmini.local:69351', 'expires': 1780050804, 'run_id': 565}
+  [2026-05-29 03:18] [run 565] spawned {'pid': 69353}
+  [2026-05-29 03:20] [run 565] completed {'result_len': 0, 'summary': 'Completed T63 synthesis and wrote `T63_NEXT_FAST_LEVER.md` in the task workspace. Recommendation: first file a spark-2 corrected-offset 3x512 baseline using the existing T62 GGUF, then file a BOS/tokenization A/B only if that comparable valid run remains near ~1.7.'}
+
+Runs (1):
+  #565 completed    @atlaspatch5  138s  2026-05-29 03:18
+        → Completed T63 synthesis and wrote `T63_NEXT_FAST_LEVER.md` in the task workspace. Recommendation: first file a spark-2 corrected-offset 3x512 baseline using the

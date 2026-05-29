@@ -1,0 +1,44 @@
+Task t_a1148a7f: T87: FAST sustained 10-prompt confirmation of T84/T81 AL>=3 on MiniMax
+  status:    running
+  assignee:  atlas6dflash1
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1148a7f
+  max-retries: 2 (default)
+  created:   2026-05-29 08:34 by user
+  started:   2026-05-29 08:34
+
+Body:
+# T87: FAST sustained confirmation of T84/T81 AL>=3 MiniMax operating point on spark-1
+
+## Mission
+T81 found and T84 reproduced OUR MiniMax adapter raw runtime AL>=3 using the local MiniMax draft GGUF `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf` at draft_max=17/top_k=1. Convert this from a 5-prompt hit into a stronger sustained/reproducible check without long waits. Campaign goal: CUSTOM DFlash adapter on OUR MiniMax target, measured AL >= 3 in actual practice.
+
+## Current evidence to read first
+- T81: spark-1 dmax17/top_k1 fresh-repeat mean raw AL=3.367865 over 3 prompts.
+- T84: fresh 5-prompt native subset mean raw AL=3.147852, verdict GOAL_REPRODUCED.
+- Use raw measured AL only; no multipliers/extrapolation.
+
+## Host scope
+spark-1 ONLY. Inference only. No training. No Kasa. Do not touch spark-2/spark-3/spark-work/spark-4. One actor per host: if spark-1 has a live owned GPU process/llama/vLLM/train.py from another dflash-al3 task, block `SPARK1_BUSY` with exact evidence; do not kill live owned work.
+
+## Fast experiment (<1h)
+1. Preflight one-actor lease on spark-1: no train.py/trainer tmux/foreign llama/vLLM/GPU compute app; enough free RAM/disk for inference.
+2. Reuse existing target + draft GGUF from T81/T84; do NOT reconvert unless missing.
+3. Run the exact T84 winning operating point: MiniMax target, draft `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf`, draft_max=17, top_k=1, temp=0, <=512 output.
+4. Use 10 fresh MiniMax-native prompts (not the exact T84 5). If the first 5 prompts mean <2.8, stop early and report regression; otherwise finish all 10.
+5. If 10-prompt mean >=3.0, immediately run a small same-setting rerun on 3 of those prompts with a different seed/order to check repeatability.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T87_T84_SUSTAINED_AL3_CONFIRM.md` and comment a concise table: exact command/args, target GGUF, draft GGUF, prompt count, per-prompt raw ALs, mean raw AL, rerun ALs if performed, accepted/drafted if available, verdict `SUSTAINED_GOAL_REPRODUCED` / `GOAL_FRAGILE` / `REGRESSION`.
+
+## Hard rules
+FAST <=1h. Raw measured runtime AL only. Preserve locked knobs. No spark-4. Inference only. One actor per host.
+
+Events (5):
+  [2026-05-29 08:34] created {'assignee': 'atlas6dflash1', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 08:34] [run 606] claimed {'lock': 'macmini.local:50154', 'expires': 1780069744, 'run_id': 606}
+  [2026-05-29 08:34] [run 606] spawned {'pid': 50158}
+  [2026-05-29 08:37] [run 606] heartbeat {'note': 'Preflight clean on spark-1; launching T87 sustained 10-prompt MiniMax dmax17/top_k1 runtime AL run.'}
+  [2026-05-29 08:52] [run 606] claim_extended {'reason': 'pid_alive', 'worker_pid': 50158, 'claim_lock': 'macmini.local:50154', 'claim_expires_was': 1780069933, 'claim_expires_now': 1780070846, 'last_heartbeat_at': 1780069033}
+
+Runs (1):
+  #606 running      @atlas6dflash1  active  2026-05-29 08:34

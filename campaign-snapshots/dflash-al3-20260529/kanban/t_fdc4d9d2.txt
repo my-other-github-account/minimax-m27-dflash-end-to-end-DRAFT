@@ -1,0 +1,282 @@
+Task t_fdc4d9d2: T32: Eliminate NasFS as DataLoader I/O bottleneck — pre-warm cache, then launch training
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_fdc4d9d2
+  skills:    ugreen-nas-fuse-mount-bypass, dflash-c15-fp8-hybrid-winning-config-and-health-rules, spark-cluster-operations, kasa-power-strips
+  max-retries: 2 (default)
+  created:   2026-05-28 21:06 by user
+  started:   2026-05-28 21:06
+  completed: 2026-05-28 22:11
+
+Body:
+# T32: Eliminate NasFS as DataLoader I/O bottleneck — pre-warm cache, then launch training
+
+## Context (USER 2026-05-28 21:00 PDT)
+"A 1B param drafter model will absolutely fit on a 128GB unified memory spark. If it doesn't, you've done something very very wrong."
+
+This is correct. The drafter is 626M params × 2 bytes (BF16) = 1.25 GB. Optimizer state (AdamW m+v fp32) = 5 GB. Activations at locked shape = small single-digit GB. Total working set should be well under 30 GB on a 128 GB unified-memory box. **There is NO legitimate memory-pressure path to a host wedge here.**
+
+Prior root-cause hypotheses both wrong:
+- ❌ "GB10 unified-memory wedge from flex_attention scores materialization" (T24 BLOCK_FOR_HARDWARE) — shape doesn't fill 128 GB.
+- ❌ "TE 2.16 nightly bug" (this chat session's mid-turn diagnosis) — spark-3 with TE 2.14.1 also hit a NasFS Errno 5 at step 38.
+
+The **actual common factor** across all failure modes (spark-2 host wedge during T24 + T31; spark-3 Errno 5 during T3-on-spark-3):
+- DataLoader uses random shuffled access to ~200K `.safetensors` hidden-state files stored on the NAS at `/volume1/dnola/traces/by_hash` (2.6 TB total).
+- Files are accessed via NasFS = FUSE filesystem backed by `ssh nas 'cat <path> | zstd -1 -c'` per fetch.
+- NasFS cache is local (`/home/dnola/nasfs-cache` on `/dev/nvme0n1p2`, sized 800 GB).
+- Under random training access, NasFS cache misses pin dataloader threads in D-state waiting on SSH-to-NAS reads. SSH tunnel saturates, NAS chokes, FUSE buffers accumulate, journald flushes caches, eventually kernel watchdog trips → host wedge OR userspace gets Errno 5.
+
+**The fix: eliminate NasFS from the training I/O hot path.** Two paths, in order of preference:
+
+## Phase 1 (preferred) — pre-warm the NasFS cache to cover one full epoch
+
+NasFS has a cache. If the cache is WARM (every file the dataloader will touch has already been pulled and is locally on NVMe), there are no FUSE-to-SSH fetches during training, and the failure mode disappears.
+
+1. Confirm NasFS mount and cache dir on spark-2:
+   ```bash
+   ssh spark-2 'mount | grep NasFS; df -h /home/dnola/nasfs-cache; ls /home/dnola/nasfs-cache/ | wc -l'
+   ```
+2. Enumerate the files the dataloader will touch one epoch:
+   ```bash
+   ssh spark-2 'find /home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_nas -type l 2>/dev/null | wc -l'
+   # Expect ~198486
+   ```
+3. Sequential read every file to force NasFS to pull and cache it. Use `xargs -P 8` to parallelize across 8 SSH workers (NasFS limits per-channel, but multiple workers each open their own SSH multiplex):
+   ```bash
+   ssh spark-2 'find /home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_nas -type l | shuf | xargs -P 8 -I {} dd if={} of=/dev/null bs=1M 2>/dev/null'
+   ```
+4. After warming, verify cache hit count and size:
+   ```bash
+   ssh spark-2 'du -sh /home/dnola/nasfs-cache; ls /home/dnola/nasfs-cache | wc -l'
+   ```
+5. If cache size > 800 GB allocation: NasFS will evict during epoch. Two responses:
+   - (a) Bump cache-bytes to e.g. 3 TB (spark-2 has 1.2 TB available — check first, this may need spark-2 disk reclamation per the macos-host-disk-reclamation pattern but for Linux).
+   - (b) Repeat the warm every N steps as a background loop in a separate tmux session.
+6. Once warm, launch T31's training. If failures stop occurring, this is the fix.
+
+## Phase 2 (fallback) — full local copy to NVMe
+
+If Phase 1 cache warm doesn't fit OR training still fails:
+
+1. Stage actual files (not FUSE symlinks) to local NVMe:
+   ```bash
+   ssh spark-2 'mkdir -p /home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_LOCAL'
+   ssh spark-2 'find /home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_nas -type l -name "*.safetensors" | xargs -P 16 -I {} sh -c "cp -L {} /home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_LOCAL/$(basename {})"'
+   ```
+2. Measure total size; if > NVMe available, fall back to Phase 3.
+3. Edit launcher's `HS_PATH` env to point at `hidden_states_LOCAL` instead of `hidden_states_nas`.
+4. Launch.
+
+## Phase 3 (deeper fix) — convert to sharded sequential format
+
+If the random-access dataset shape is fundamentally too big for local NVMe, use webdataset / `.tar` shards that the dataloader streams sequentially. This is bigger surgery; only pursue if Phase 1 + 2 fail.
+
+## Hard rules
+- Host scope: spark-2 (training); read-only access to spark-3 is OK to verify what's already cached there.
+- Locked shape inviolable: max_anchors=3072, block_size=8, hidden=3072, intermediate=4096, num_layers=6, total_seq_len=8192, draft_vocab_size=32768.
+- TE-stable venv (`/home/dnola/venvs/te`, TE 2.14.1) on spark-2 — sync from spark-3 if missing (`rsync -a -e ssh dnola@192.168.200.3:/home/dnola/venvs/te/ /home/dnola/venvs/te/`).
+- T28-viable launcher: `/home/dnola/iq4_full_run/launch_c15_v18b_NAS_T28viable.sh`.
+- Kasa cycle authority: spark-2 plug 2 ONLY during your work window.
+- 4-hour time-box. If Phase 1 cache warm completes and training still fails within 30 minutes, immediately try Phase 2.
+
+## Acceptance criteria
+- One full epoch of training survives without host wedge / Errno 5 / NasFS choke.
+- At least 500 logged training steps with healthy loss progression (loss 10.x → 9.x → 8.x trajectory).
+- First checkpoint exists at step ≥ 500 on disk.
+- Verdict in `/home/dnola/v18_fix/T32_NASFS_BYPASS_VERDICT.md`:
+  - **NASFS_WARM_SUFFICIENT**: Phase 1 worked, training stable.
+  - **LOCAL_COPY_REQUIRED**: Phase 1 insufficient, Phase 2 worked.
+  - **DEEPER_FIX_REQUIRED**: Both failed; recommend webdataset conversion.
+
+## Reference
+- T24 / T28 / T31 evidence summary in T31 task body and comments.
+- NasFS source: `/home/dnola/nasfs.py` (verify with `head -50 /home/dnola/nasfs.py` to confirm cache eviction policy — LRU? FIFO? Size-only?).
+- NasFS skill: `ugreen-nas-fuse-mount-bypass` for FUSE-mount troubleshooting.
+- spark-2 NVMe state: 3.7 TB total, was 1.2 TB free pre-T31 (Linux `df -h /home/dnola`).
+- NAS source dataset: `/volume1/dnola/traces/by_hash` = 2.6 TB.
+- Dataset file count: 198,486 .safetensors hidden-state files.
+
+Latest summary:
+T32 produced a negative verdict: NasFS bypass did not stabilize spark-2. Exact sampler-order cache warm and a 93GB local-copy proof both still hard-wedged spark-2 before step 20, so `/home/dnola/v18_fix/T32_NASFS_BYPASS_VERDICT.md` is `DEEPER_FIX_REQUIRED` with evidence and artifacts.
+
+Comments (1):
+  [2026-05-28 22:11] atlasdflash4: T32 handoff / verdict written:
+
+- Verdict file: `/home/dnola/v18_fix/T32_NASFS_BYPASS_VERDICT.md`
+- Verdict: `DEEPER_FIX_REQUIRED`
+- Phase 1 full-epoch cache warm is infeasible as-is: measured ~122.9 MB/s; sampled/extrapolated epoch is ~2.7 TB / ~6.1h, while spark-2 has ~1.0–1.2 TB free.
+- Targeted Phase 1 proof: exact first 700 sampler batches (7,325 unique files, 99.3 GB) prewarmed successfully; training run `c15_iq4v18b_T32_naswarm_20260529T043818Z` still wedged spark-2 around global_step 19/20.
+- Targeted Phase 2 proof: copied the exact same 7,325 files locally (93 GB) to `/home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_LOCAL_T32_first700`; launcher `/home/dnola/v18_fix/launch_c15_v18b_T32_LOCAL_first700.sh`; training run `c15_iq4v18b_T32_LOCAL_first700_20260529T045832Z` still wedged spark-2 around global_step 13.
+- spark-2 was Kasa-cycled for recovery after each wedge and is currently up; no t32/train tmux sessions remain. NasFS is not mounted after final reboot; persistent cache/local proof artifacts remain on disk.
+
+Conclusion: NasFS/random NAS reads are not sufficient to explain the current hard wedge. The local-copy run removed FUSE/NasFS from the train hot path and still wedged at the same early-step scale. Next step should be hardware/driver/TE/flex/FP8/compile-path A/B (ideally move the exact LOCAL_first700 proof to spark-3/another Spark), not only webdataset conversion.
+
+Events (298):
+  [2026-05-28 21:14] [run 484] crashed {'pid': 75280, 'claimer': 'macmini.local:17125'}
+  [2026-05-28 21:14] gave_up {'failures': 2, 'effective_limit': 2, 'limit_source': 'dispatcher', 'error': 'pid 75280 not alive', 'trigger_outcome': 'crashed', 'pid': 75280, 'claimer': 'macmini.local:17125'}
+  [2026-05-28 21:14] promoted
+  [2026-05-28 21:14] [run 485] claimed {'lock': 'macmini.local:49412', 'expires': 1780028983, 'run_id': 485}
+  [2026-05-28 21:14] [run 485] spawned {'pid': 75352}
+  [2026-05-28 21:15] [run 485] crashed {'pid': 75352, 'claimer': 'macmini.local:49412'}
+  [2026-05-28 21:15] [run 486] claimed {'lock': 'macmini.local:17068', 'expires': 1780029001, 'run_id': 486}
+  [2026-05-28 21:15] [run 486] spawned {'pid': 75440}
+  [2026-05-28 21:15] [run 486] reclaimed {'manual': True, 'reason': 'fixed crash-loop: propagated missing ugreen-nas-fuse-mount-bypass skill into atlasdflash4', 'prev_lock': 'macmini.local:17068', 'prev_pid': 75440, 'host_local': True, 'termination_attempted': True, 'terminated': True, 'sigkill': False}
+  [2026-05-28 21:15] [run 487] claimed {'lock': 'macmini.local:17125', 'expires': 1780029040, 'run_id': 487}
+  [2026-05-28 21:15] [run 487] spawned {'pid': 75723}
+  [2026-05-28 21:17] [run 487] heartbeat {'note': 'Started spark-2 NasFS recovery + Phase 1 cache prewarm: NasFS remounted on /home/dnola/nas_traces with /home/dnola/nasfs-cache (1TB cap); t32_warm tmux is reading 198,486 hidden-state symlinks with 8 workers.'}
+  [2026-05-28 21:23] [run 487] heartbeat {'note': 'Refined Phase 1: full-epoch prewarm is estimated ~2.7TB and >6h, so stopped random warmer and started exact sampler-order prewarm for first 700 train batches (7,325 unique files) to make the first ≥500 steps cache-hit before launch.'}
+  [2026-05-28 21:38] [run 487] claim_extended {'reason': 'pid_alive', 'worker_pid': 75723, 'claim_lock': 'macmini.local:17125', 'claim_expires_was': 1780029480, 'claim_expires_now': 1780030391, 'last_heartbeat_at': 1780028580}
+  [2026-05-28 21:38] [run 487] heartbeat {'note': 'Launched bounded T32 training proof on spark-2 in tmux t32_train: RUN_LABEL=c15_iq4v18b_T32_naswarm_20260529T043818Z, MAX_TRAIN_STEPS=600, checkpoint/val trigger at 500 with capped val batches=10.'}
+  [2026-05-28 21:44] [run 487] heartbeat {'note': 'spark-2 became unreachable during the bounded proof run (Tailscale spark-2 offline last seen ~3m; ssh timeout). Using task-granted Kasa authority for spark-2 plug 2 recovery.'}
+  [2026-05-28 21:46] [run 487] heartbeat {'note': 'Bounded NasFS-warm proof wedged spark-2 at ~global_step 20 despite prewarming first 700 sampler batches. Recovered via Kasa; switching to Phase 2 partial-local proof for first 700 batches to fully remove FUSE from the training read path.'}
+  [2026-05-28 21:58] [run 487] heartbeat {'note': 'Phase 2 partial-local proof launched: staged 7,325 exact first-700-batch safetensors locally (93G) and launched T32_LOCAL_first700 with HS path set to hidden_states_LOCAL_T32_first700, MAX_TRAIN_STEPS=600.'}
+  [2026-05-28 22:11] commented {'author': 'atlasdflash4', 'len': 1417}
+  [2026-05-28 22:11] [run 487] completed {'result_len': 0, 'summary': 'T32 produced a negative verdict: NasFS bypass did not stabilize spark-2. Exact sampler-order cache warm and a 93GB local-copy proof both still hard-wedged spark-2 before step 20, so `/home/dnola/v18_fix/T32_NASFS_BYPASS_VERDICT.md` is `DEEPER_FIX_REQUIRED` with evidence and artifacts.', 'artifacts': ['/home/dnola/v18_fix/t32_order_warm.py', '/home/dnola/v18_fix/t32_first_700_steps_indices.txt', '/home/dnola/v18_fix/t32_first_700_steps_meta.json', '/home/dnola/v18_fix/t32_first_700_steps_warm_progress.json', '/home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_LOCAL_T32_first700', '/home/dnola/v18_fix/launch_c15_v18b_T32_LOCAL_first700.sh', '/home/dnola/iq4_full_run/logs/c15_iq4v18b_T32_naswarm_20260529T043818Z/train.log', '/home/dnola/iq4_full_run/logs/c15_iq4v18b_T32_LOCAL_first700_20260529T045832Z/train.log']}
+
+Runs (73):
+  #414 crashed      @atlasdflash4  5s  2026-05-28 21:06
+        ! pid 72728 not alive
+  #415 crashed      @atlasdflash4  5s  2026-05-28 21:06
+        ! pid 72746 not alive
+  #416 crashed      @atlasdflash4  3s  2026-05-28 21:06
+        ! pid 72765 not alive
+  #417 crashed      @atlasdflash4  4s  2026-05-28 21:06
+        ! pid 72784 not alive
+  #418 crashed      @atlasdflash4  3s  2026-05-28 21:06
+        ! pid 72807 not alive
+  #419 crashed      @atlasdflash4  3s  2026-05-28 21:06
+        ! pid 72825 not alive
+  #420 crashed      @atlasdflash4  17s  2026-05-28 21:06
+        ! pid 72840 not alive
+  #421 crashed      @atlasdflash4  21s  2026-05-28 21:06
+        ! pid 72890 not alive
+  #422 crashed      @atlasdflash4  4s  2026-05-28 21:07
+        ! pid 72974 not alive
+  #423 crashed      @atlasdflash4  5s  2026-05-28 21:07
+        ! pid 72986 not alive
+  #424 crashed      @atlasdflash4  4s  2026-05-28 21:07
+        ! pid 73013 not alive
+  #425 crashed      @atlasdflash4  3s  2026-05-28 21:07
+        ! pid 73039 not alive
+  #426 crashed      @atlasdflash4  3s  2026-05-28 21:07
+        ! pid 73061 not alive
+  #427 crashed      @atlasdflash4  3s  2026-05-28 21:07
+        ! pid 73068 not alive
+  #428 crashed      @atlasdflash4  17s  2026-05-28 21:07
+        ! pid 73082 not alive
+  #429 crashed      @atlasdflash4  21s  2026-05-28 21:07
+        ! pid 73127 not alive
+  #430 crashed      @atlasdflash4  4s  2026-05-28 21:08
+        ! pid 73194 not alive
+  #431 crashed      @atlasdflash4  6s  2026-05-28 21:08
+        ! pid 73208 not alive
+  #432 crashed      @atlasdflash4  3s  2026-05-28 21:08
+        ! pid 73227 not alive
+  #433 crashed      @atlasdflash4  3s  2026-05-28 21:08
+        ! pid 73243 not alive
+  #434 crashed      @atlasdflash4  3s  2026-05-28 21:08
+        ! pid 73247 not alive
+  #435 crashed      @atlasdflash4  3s  2026-05-28 21:08
+        ! pid 73265 not alive
+  #436 crashed      @atlasdflash4  17s  2026-05-28 21:08
+        ! pid 73270 not alive
+  #437 crashed      @atlasdflash4  22s  2026-05-28 21:08
+        ! pid 73375 not alive
+  #438 crashed      @atlasdflash4  4s  2026-05-28 21:09
+        ! pid 73460 not alive
+  #439 crashed      @atlasdflash4  5s  2026-05-28 21:09
+        ! pid 73501 not alive
+  #440 crashed      @atlasdflash4  3s  2026-05-28 21:09
+        ! pid 73583 not alive
+  #441 crashed      @atlasdflash4  3s  2026-05-28 21:09
+        ! pid 73593 not alive
+  #442 crashed      @atlasdflash4  3s  2026-05-28 21:09
+        ! pid 73612 not alive
+  #443 crashed      @atlasdflash4  3s  2026-05-28 21:09
+        ! pid 73694 not alive
+  #444 crashed      @atlasdflash4  18s  2026-05-28 21:09
+        ! pid 73711 not alive
+  #445 crashed      @atlasdflash4  21s  2026-05-28 21:10
+        ! pid 73867 not alive
+  #446 crashed      @atlasdflash4  4s  2026-05-28 21:10
+        ! pid 74020 not alive
+  #447 crashed      @atlasdflash4  5s  2026-05-28 21:10
+        ! pid 74038 not alive
+  #448 crashed      @atlasdflash4  3s  2026-05-28 21:10
+        ! pid 74059 not alive
+  #449 crashed      @atlasdflash4  4s  2026-05-28 21:10
+        ! pid 74064 not alive
+  #450 crashed      @atlasdflash4  2s  2026-05-28 21:10
+        ! pid 74081 not alive
+  #451 crashed      @atlasdflash4  3s  2026-05-28 21:10
+        ! pid 74088 not alive
+  #452 crashed      @atlasdflash4  18s  2026-05-28 21:10
+        ! pid 74113 not alive
+  #453 crashed      @atlasdflash4  21s  2026-05-28 21:11
+        ! pid 74188 not alive
+  #454 crashed      @atlasdflash4  4s  2026-05-28 21:11
+        ! pid 74287 not alive
+  #455 crashed      @atlasdflash4  5s  2026-05-28 21:11
+        ! pid 74310 not alive
+  #456 crashed      @atlasdflash4  3s  2026-05-28 21:11
+        ! pid 74340 not alive
+  #457 crashed      @atlasdflash4  4s  2026-05-28 21:11
+        ! pid 74373 not alive
+  #458 crashed      @atlasdflash4  3s  2026-05-28 21:11
+        ! pid 74410 not alive
+  #459 crashed      @atlasdflash4  3s  2026-05-28 21:11
+        ! pid 74419 not alive
+  #460 crashed      @atlasdflash4  17s  2026-05-28 21:11
+        ! pid 74432 not alive
+  #461 crashed      @atlasdflash4  22s  2026-05-28 21:12
+        ! pid 74518 not alive
+  #462 crashed      @atlasdflash4  3s  2026-05-28 21:12
+        ! pid 74596 not alive
+  #463 crashed      @atlasdflash4  5s  2026-05-28 21:12
+        ! pid 74609 not alive
+  #464 crashed      @atlasdflash4  4s  2026-05-28 21:12
+        ! pid 74631 not alive
+  #466 crashed      @atlasdflash4  3s  2026-05-28 21:12
+        ! pid 74667 not alive
+  #467 crashed      @atlasdflash4  3s  2026-05-28 21:12
+        ! pid 74672 not alive
+  #468 crashed      @atlasdflash4  3s  2026-05-28 21:12
+        ! pid 74691 not alive
+  #469 crashed      @atlasdflash4  18s  2026-05-28 21:12
+        ! pid 74700 not alive
+  #470 crashed      @atlasdflash4  21s  2026-05-28 21:13
+        ! pid 74771 not alive
+  #471 crashed      @atlasdflash4  3s  2026-05-28 21:13
+        ! pid 74880 not alive
+  #472 crashed      @atlasdflash4  5s  2026-05-28 21:13
+        ! pid 74901 not alive
+  #473 crashed      @atlasdflash4  3s  2026-05-28 21:13
+        ! pid 74927 not alive
+  #474 crashed      @atlasdflash4  3s  2026-05-28 21:13
+        ! pid 74936 not alive
+  #475 crashed      @atlasdflash4  3s  2026-05-28 21:13
+        ! pid 74950 not alive
+  #476 crashed      @atlasdflash4  3s  2026-05-28 21:13
+        ! pid 74978 not alive
+  #477 crashed      @atlasdflash4  18s  2026-05-28 21:13
+        ! pid 74990 not alive
+  #478 crashed      @atlasdflash4  21s  2026-05-28 21:14
+        ! pid 75109 not alive
+  #479 crashed      @atlasdflash4  4s  2026-05-28 21:14
+        ! pid 75184 not alive
+  #480 crashed      @atlasdflash4  5s  2026-05-28 21:14
+        ! pid 75207 not alive
+  #481 crashed      @atlasdflash4  3s  2026-05-28 21:14
+        ! pid 75226 not alive
+  #482 crashed      @atlasdflash4  3s  2026-05-28 21:14
+        ! pid 75254 not alive
+  #483 crashed      @atlasdflash4  3s  2026-05-28 21:14
+        ! pid 75271 not alive
+  #484 crashed      @atlasdflash4  3s  2026-05-28 21:14
+        ! pid 75280 not alive
+  #485 crashed      @atlasdflash4  18s  2026-05-28 21:14
+        ! pid 75352 not alive
+  #486 reclaimed    @atlasdflash4  39s  2026-05-28 21:15
+        ! manual_reclaim: fixed crash-loop: propagated missing ugreen-nas-fuse-mount-bypass skill into atlasdflash4
+  #487 completed    @atlasdflash4  3373s  2026-05-28 21:15
+        → T32 produced a negative verdict: NasFS bypass did not stabilize spark-2. Exact sampler-order cache warm and a 93GB local-copy proof both still hard-wedged spark

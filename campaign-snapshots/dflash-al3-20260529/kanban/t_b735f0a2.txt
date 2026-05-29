@@ -1,0 +1,145 @@
+Task t_b735f0a2: T20: Close fixed-harness simple-vs-API crossval mismatch
+  status:    done
+  assignee:  atlas6dflash1
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2
+  max-retries: 2 (default)
+  created:   2026-05-28 17:10 by user
+  started:   2026-05-28 17:10
+  completed: 2026-05-28 17:41
+  parents:   t_60a49078, t_64167ad3, t_f08179b8
+
+Body:
+# T20: Close fixed-harness simple-vs-API crossval mismatch (spark-1 only)
+
+## Context
+T17 PLAN_TO_AL3.md classified the campaign as Regime III: both harness/runtime-path mismatch and drafter quality matter. T12 fixed nonzero per-position telemetry, but T14 still found z-lab crossval failed: simple_accept_length=1.3333 vs API accept_length=1.09565, abs_delta=0.23768 (>0.1). z-lab measured AL=2.883 on our harness vs published B8 mean 4.797, so the runtime path still underreports or mismatches.
+
+## Your job
+Run one focused spark-1 investigation cycle that explains and fixes (or tightly localizes) the simple-vs-API delta.
+
+1. Read:
+   - /home/dnola/PLAN_TO_AL3.md
+   - /home/dnola/dflash-llama/PER_POS_TELEMETRY.md
+   - /home/dnola/zlab_ref_drafter/benchmarks/crossval.json
+   - /home/dnola/zlab_ref_drafter/benchmarks/summary.json
+   - T12 diff /home/dnola/dflash-llama-instrumented-perpos.diff
+2. Reproduce the same z-lab 1-prompt/simple-vs-API crossval with fixed seeds and identical prompt/max_tokens/draft_max.
+3. Diff runtime settings between llama-speculative-simple and dflash_llama API path: temperature/top_k/top_p/min_p, prompt templating/tokenization, draft_max/n_draft, context length, stop conditions, batch/streaming mode, cache reuse, verifier/drafter gguf paths.
+4. Patch only if the bug is obvious and local. Otherwise write a minimal reproducer with exact commands and the first divergent token/acceptance round.
+5. Produce artifacts under this task workspace and/or /home/dnola/zlab_ref_drafter/benchmarks/crossval_debug/:
+   - crossval_debug_summary.json with before/after accept_length, per_position_accept, and abs_delta
+   - settings_diff.md
+   - optional patch diff if a local fix was applied
+
+## Gate
+- PASS: simple-vs-API abs_delta <= 0.1 on the z-lab crossval and per_position_accept is nonzero.
+- PARTIAL: root cause localized with minimal reproducer but not fixed.
+- FAIL: blocker with exact missing dependency/log.
+
+Block review-required after one cycle with PASS/PARTIAL/FAIL and the headline delta.
+
+## Hard rules
+- HOST SCOPE: spark-1 ONLY.
+- Do not touch spark-2 or training.
+- Do not change model weights/architecture/export dirs.
+- Do not claim AL>3; this is measurement correctness work.
+- No multi-host, no FSDP/DDP.
+
+Latest summary:
+review-required: PASS — patched spark-1 simple/API phase mismatch; after delta 0.030435 (simple 1.065217 vs API 1.095652), per-position nonzero; needs review of llama-speculative-simple semantics change.
+
+Comments (5):
+  [2026-05-28 17:11] driver: spark-1 GPU cleanup for T20: killed orphaned v18 llama-server PID 397949 on port 18207 left by paused filler/T13 (MiniMax v18 draft_max=7, 8.4GB). GPU is now available for the z-lab crossval mismatch investigation.
+  [2026-05-28 17:16] atlas6dflash1: review-required handoff:
+{
+  "outcome": "PARTIAL",
+  "headline_delta": 0.2376811594202899,
+  "gate_passed": false,
+  "changed_files": [
+    "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2/crossval_debug_cycle.py",
+    "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2/crossval_debug_summary.json",
+    "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2/settings_diff.md",
+    "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2/minimal_reproducer.sh",
+    "/home/dnola/zlab_ref_drafter/benchmarks/crossval_debug/crossval_debug_summary.json",
+    "/home/dnola/zlab_ref_drafter/benchmarks/crossval_debug/settings_diff.md",
+    "/home/dnola/zlab_ref_drafter/benchmarks/crossval_debug/minimal_reproducer.sh"
+  ],
+  "tests_run": [
+    "spark-1 fixed-seed z-lab crossval reproduction: simple default, simple --ignore-eos, API completions default, API completions with server --ignore-eos"
+  ],
+  "key_results": {
+    "simple_default_accept_length": 1.3333333333333333,
+    "api_default_accept_length": 1.0956521739130434,
+    "abs_delta": 0.2376811594202899,
+    "simple_ignore_eos_accept_length": 2.015625,
+    "simple_ignore_eos_delta_vs_api": 0.9199728260869566,
+    "api_per_position_accept": [0.052174, 0.026087, 0.008696, 0.008696, 0.0, 0.0, 0.0],
+    "simple_default_per_position_accept": [0.3333333333333333, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  },
+  "localization": "Mismatch is generation/stop semantics between llama-speculative-simple and llama-server OpenAI completions. Simple default stops at EOS after 4 decoded tokens/3 verifier rounds; API completions runs to 128 tokens. Forcing simple --ignore-eos length-matches but changes the continuation stream and worsens AL delta, so no safe local patch was applied."
+}
+  [2026-05-28 17:30] driver: review accepted as PARTIAL. Continue immediately on spark-1: localize/fix simple-vs-API EOS/endpoint semantics. Preserve hard rules. Next cycle should either patch obvious local mismatch or write exact first-divergent-token reproducer + recommended API/simple alignment. Gate remains abs_delta<=0.1 with nonzero per_position_accept.
+  [2026-05-28 17:38] atlas6dflash1: review-required handoff:
+{
+  "outcome": "PASS",
+  "headline_delta": 0.030434782608695476,
+  "gate_passed": true,
+  "root_cause": "llama-speculative-simple started speculative verification from the last prompt token, while llama-server/API evaluates the full prompt, samples the first completion token normally, then starts speculation from that sampled token. The one-token phase mismatch caused old simple to diverge at token index 2 (API 271 '\\n\\n' vs old simple 198 '\\n', then EOS 248046).",
+  "changed_files": [
+    "/home/dnola/buun-llama-cpp/examples/speculative-simple/speculative-simple.cpp"
+  ],
+  "preexisting_dirty_files_not_touched": [
+    "/home/dnola/buun-llama-cpp/common/speculative.cpp",
+    "/home/dnola/buun-llama-cpp/convert_hf_to_gguf.py"
+  ],
+  "artifacts": [
+    "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2/crossval_debug_summary.json",
+    "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2/settings_diff.md",
+    "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2/minimal_reproducer.sh",
+    "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b735f0a2/server_first_token_alignment.patch",
+    "/home/dnola/zlab_ref_drafter/benchmarks/crossval_debug/crossval_debug_summary.json",
+    "/home/dnola/zlab_ref_drafter/benchmarks/crossval_debug/settings_diff.md",
+    "/home/dnola/zlab_ref_drafter/benchmarks/crossval_debug/minimal_reproducer.sh",
+    "/home/dnola/zlab_ref_drafter/benchmarks/crossval_debug/server_first_token_alignment.patch"
+  ],
+  "tests_run": [
+    "cmake --build build --target llama-speculative-simple -j4 on spark-1",
+    "patched simple z-lab fixed-seed crossval side: prompt/max_tokens=128/draft_max=7/seed=1234",
+    "API verbose16 prefix check vs patched simple verbose16"
+  ],
+  "key_results": {
+    "before_simple_accept_length": 1.3333333333333333,
+    "before_api_accept_length": 1.0956521739130434,
+    "before_abs_delta": 0.2376811594202899,
+    "after_simple_accept_length": 1.065217391304348,
+    "after_api_accept_length": 1.0956521739130434,
+    "after_abs_delta": 0.030434782608695476,
+    "after_simple_per_position_accept": [0.043478260869565216, 0.021739130434782608, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "api_per_position_accept": [0.052174, 0.026087, 0.008696, 0.008696, 0.0, 0.0, 0.0]
+  },
+  "notes": "Patched simple run still stops on EOS before API reaches 128 completion tokens (simple n_predict=50), but the measured AL now meets the <=0.1 crossval gate and per-position telemetry remains nonzero."
+}
+  [2026-05-28 17:41] user: T20 PASS verdict accepted: abs_delta 0.030 (was 0.238 before EOS-semantics fix). Per-pos telemetry nonzero on both paths. Harness/runtime mismatch closed. Completing.
+
+Events (15):
+  [2026-05-28 17:10] created {'assignee': 'atlas6dflash1', 'status': 'ready', 'parents': ['t_f08179b8', 't_60a49078', 't_64167ad3'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-28 17:10] [run 255] claimed {'lock': 'macmini.local:4656', 'expires': 1780014315, 'run_id': 255}
+  [2026-05-28 17:10] [run 255] spawned {'pid': 4659}
+  [2026-05-28 17:11] commented {'author': 'driver', 'len': 214}
+  [2026-05-28 17:16] commented {'author': 'atlas6dflash1', 'len': 1801}
+  [2026-05-28 17:16] [run 255] blocked {'reason': 'review-required: PARTIAL — localized simple-vs-API mismatch to EOS/endpoint generation semantics; headline abs_delta remains 0.237681 (simple 1.333333 vs API 1.095652), per-position telemetry nonzero.'}
+  [2026-05-28 17:30] commented {'author': 'driver', 'len': 332}
+  [2026-05-28 17:30] unblocked
+  [2026-05-28 17:30] [run 256] claimed {'lock': 'macmini.local:9562', 'expires': 1780015512, 'run_id': 256}
+  [2026-05-28 17:30] [run 256] spawned {'pid': 9564}
+  [2026-05-28 17:34] [run 256] heartbeat {'note': 'Continuing spark-1 T20: localized first divergence; testing server-style first-token alignment in llama-speculative-simple against API.'}
+  [2026-05-28 17:38] commented {'author': 'atlas6dflash1', 'len': 2542}
+  [2026-05-28 17:38] [run 256] blocked {'reason': 'review-required: PASS — patched spark-1 simple/API phase mismatch; after delta 0.030435 (simple 1.065217 vs API 1.095652), per-position nonzero; needs review of llama-speculative-simple semantics change.'}
+  [2026-05-28 17:41] commented {'author': 'user', 'len': 166}
+  [2026-05-28 17:41] completed {'result_len': 0, 'summary': None}
+
+Runs (2):
+  #255 blocked      @atlas6dflash1  375s  2026-05-28 17:10
+        → review-required: PARTIAL — localized simple-vs-API mismatch to EOS/endpoint generation semantics; headline abs_delta remains 0.237681 (simple 1.333333 vs API 1.
+  #256 blocked      @atlas6dflash1  518s  2026-05-28 17:30
+        → review-required: PASS — patched spark-1 simple/API phase mismatch; after delta 0.030435 (simple 1.065217 vs API 1.095652), per-position nonzero; needs review of

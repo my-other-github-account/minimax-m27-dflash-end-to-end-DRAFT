@@ -1,0 +1,317 @@
+Task t_f08179b8: T12: Per-position-accept telemetry instrumentation in dflash_llama runtime
+  status:    done
+  assignee:  atlas6dflash1
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_f08179b8
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 07:58 by user
+  started:   2026-05-28 12:27
+  completed: 2026-05-28 12:46
+  children:  t_64167ad3, t_b735f0a2
+
+Body:
+# T12: Per-position-accept telemetry instrumentation in dflash_llama runtime
+
+## CONTEXT
+
+T11 may find that the T16 benchmark harness reports `per_position_accept=[0,0,0,0,0,0,0]` because the runtime path doesn't actually expose per-position acceptance — only an aggregate `accept_length`. We can't decompose runtime AL into per-position numbers without this telemetry, which makes ALL future training-vs-runtime gap diagnosis impossible.
+
+This task adds the telemetry properly into `dflash_llama` so every benchmark from here forward (T5, T11, T2 in Phase D) reports per-position-accept alongside accept_length.
+
+## YOUR JOB
+
+1. **Locate the runtime acceptance code path**:
+   - `grep -rn "accept_length\|accept.*step\|per_position\|n_accept" /home/dnola/dflash-llama/src/ 2>/dev/null`
+   - Find where `accept_length` is computed in the LlamaServer / library benchmark() codepath.
+
+2. **Add per-position telemetry**:
+   - Extend the inner draft-and-verify loop to record, for each speculative call, a length-7 vector of {1, 0} per position (1 if the verifier accepted the draft token at position k, 0 otherwise — same indicator the training argmax-match accounts).
+   - Bubble this vector up through the return values alongside `accept_length` and `n_accept`.
+   - The benchmark harness aggregates: `per_position_accept[k] = sum_over_steps(accepted_at_k) / sum_over_steps(reached_position_k)`.
+
+3. **Verify with one prompt**:
+   - Re-run T16's first prompt from `/home/dnola/exports/c15_iq4v18_step2500/benchmarks/dflash.jsonl` with the instrumented build.
+   - Confirm `per_position_accept` is a length-7 vector of plausible decimals (NOT all zeros) and `accept_length = 1 + sum_over_steps(min_consecutive_accept)` matches the prior measurement.
+
+4. **Save a one-prompt instrumented benchmark output** to `/home/dnola/exports/c15_iq4v18_step2500/benchmarks/instrumented_one_prompt.json` showing the new per_position_accept vector.
+
+5. **Bundle the patch**:
+   - Write `/home/dnola/dflash-llama-instrumented-perpos.diff` with the source diff.
+   - Write `/home/dnola/dflash-llama/PER_POS_TELEMETRY.md` describing the change, the math, and how downstream benchmarks can rely on the new field.
+
+6. **Block review-required** with one-line summary: "Per-pos telemetry landed in dflash_llama LlamaServer + library benchmark(); verified on 1 prompt: per_pos=[X.XX,...], accept_length=Y.YY matches prior. Ready for T11 Phase 2 to re-run with real per-pos numbers."
+
+## DEPENDENCY ON T11
+
+T11 should ideally run Phase 1 BEFORE this task to confirm the harness bug. If T11 Phase 1 confirms `per_position_accept=[0,0,0,0,0,0,0]` is the harness output, that's evidence the field is wired into the API but never populated — making this task's job clear (populate it). If T11 finds per_position_accept is fine, this task may be a no-op; comment that finding and block with no-op.
+
+Make this task's first action: `cat /home/dnola/exports/c15_iq4v18_step2500/benchmarks/summary.json | python -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d, indent=2))" | head -100` — sanity check whether per-pos telemetry was actually missing or was just not in the summary aggregation.
+
+## HOST SCOPE
+
+spark-1 ONLY.
+
+## HARD RULES
+
+- Do NOT git commit; leave the diff ready.
+- Do NOT modify model weights or trainer code.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+- Assignee: atlas6dflash1 (idle profile).
+- Parents: none — can run in parallel with T11 but coordinate via comments.
+- Priority: 80.
+
+Latest summary:
+review-required: Per-pos telemetry landed in dflash_llama LlamaServer + library benchmark(); verified on 1 prompt: per_pos=[0.325,0.072,0.024,0,0,0,0], accept_length=1.4216867469879517 matches prior. Ready for T11 Phase 2 to re-run with real per-pos numbers.
+
+Comments (4):
+  [2026-05-28 08:25] atlas6dflash1: handoff:
+```json
+{
+  "status": "code_patched_unverified_runtime",
+  "changed_files": {
+    "/home/dnola/buun-llama-cpp": ["common/speculative.cpp"],
+    "/home/dnola/dflash-llama": [
+      "src/dflash_llama/inference/analyze.py",
+      "src/dflash_llama/inference/api_benchmark.py",
+      "src/dflash_llama/inference/benchmark.py",
+      "src/dflash_llama/inference/server.py",
+      "tests/test_api_benchmark.py",
+      "PER_POS_TELEMETRY.md"
+    ]
+  },
+  "artifacts": {
+    "diff": "/home/dnola/dflash-llama-instrumented-perpos.diff",
+    "doc": "/home/dnola/dflash-llama/PER_POS_TELEMETRY.md"
+  },
+  "implemented": [
+    "buun common_speculative_state now tracks last_n_draft_tokens, per_pos_reached, per_pos_accepted",
+    "common_speculative_accept records reached/accepted positions even for zero-accept rounds",
+    "common_speculative_print_stats emits: per_position_accept dflash: accepted=[...], reached=[...], rate=[...]",
+    "dflash_llama parser consumes the instrumented line and ApiBenchResult carries per_position_accept/per_position_accepted/per_position_reached",
+    "LlamaServer and benchmark() now prefer /home/dnola/buun-llama-cpp/build/bin before the older clean_repro binaries"
+  ],
+  "verification_done": [
+    "cmake --build /home/dnola/buun-llama-cpp/build --target llama-server llama-speculative-simple -j2 succeeded",
+    "python3 -m py_compile on modified dflash_llama files/tests succeeded",
+    "direct parse_speculative_log_slice smoke test on an instrumented sample line succeeded"
+  ],
+  "verification_blocked": {
+    "step": "one-prompt real T16 first prompt run",
+    "reason": "spark-1 CUDA init OOM while T5/T11/T15 llama jobs were already occupying the GPU",
+    "observed_processes": [
+      "T5 /tmp/t5_repro_extend.py llama-server pid 301256",
+      "T11 /tmp/t11_phase12.py phase1 llama-speculative-simple pid 314359",
+      "T15 /home/dnola/t15_sweep1.py llama-server pid 317236"
+    ],
+    "failed_log": "/home/dnola/exports/c15_iq4v18_step2500/benchmarks/instrumented_one_prompt_api/server.log"
+  },
+  "tests_not_run": [
+    "pytest tests/test_api_benchmark.py could not collect because the available python env lacks datasets required by dflash_llama.__init__"
+  ],
+  "notes": [
+    "Did not kill other spark-1 jobs; user profile says not to interfere unless exact resource ownership is confirmed.",
+    "Unrelated pre-existing buun status: convert_hf_to_gguf.py was already modified and is not included in the patch bundle."
+  ]
+}
+```
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 12:40] atlas6dflash1: review-required handoff:
+```json
+{
+  "status": "verified_runtime",
+  "changed_files": {
+    "/home/dnola/buun-llama-cpp": ["common/speculative.cpp"],
+    "/home/dnola/dflash-llama": [
+      "src/dflash_llama/inference/analyze.py",
+      "src/dflash_llama/inference/api_benchmark.py",
+      "src/dflash_llama/inference/benchmark.py",
+      "src/dflash_llama/inference/server.py",
+      "tests/test_api_benchmark.py",
+      "PER_POS_TELEMETRY.md"
+    ]
+  },
+  "artifacts": {
+    "diff": "/home/dnola/dflash-llama-instrumented-perpos.diff",
+    "doc": "/home/dnola/dflash-llama/PER_POS_TELEMETRY.md",
+    "one_prompt_output": "/home/dnola/exports/c15_iq4v18_step2500/benchmarks/instrumented_one_prompt.json",
+    "server_log": "/home/dnola/exports/c15_iq4v18_step2500/benchmarks/instrumented_one_prompt_api/server.log"
+  },
+  "verification": {
+    "summary_json_sanity": "original summary has aggregate accept_length/n_accept/n_draft but no real per-position telemetry; original dflash.jsonl prompt 0 had all-zero per_position_accept despite n_accept=35/n_draft=83",
+    "build": "cmake --build /home/dnola/buun-llama-cpp/build --target llama-server llama-speculative-simple -j2 passed",
+    "py_compile": "python3 -m py_compile modified dflash_llama files and tests passed",
+    "parser_smoke": "direct importlib parse_speculative_log_slice smoke test on instrumented line passed; full package import/pytest still blocked by missing datasets dependency in this env",
+    "one_prompt_runtime": {
+      "prompt_source": "/home/dnola/exports/c15_iq4v18_step2500/benchmarks/dflash.jsonl row 0",
+      "per_position_accept": [0.325301, 0.072289, 0.024096, 0.0, 0.0, 0.0, 0.0],
+      "per_position_accepted": [27, 6, 2, 0, 0, 0, 0],
+      "per_position_reached": [83, 83, 83, 83, 83, 83, 83],
+      "n_accept": 35,
+      "n_draft": 83,
+      "accept_length": 1.4216867469879517,
+      "prior_accept_length": 1.4216867469879517,
+      "matches_prior_accept_length": true
+    }
+  },
+  "notes": [
+    "No git commit made.",
+    "LlamaServer and benchmark() now prefer /home/dnola/buun-llama-cpp/build/bin before clean_repro so spark-1 uses the instrumented runtime by default.",
+    "Diff bundle contains both repo sections; apply carefully because it spans /home/dnola/buun-llama-cpp and /home/dnola/dflash-llama."
+  ]
+}
+```
+  [2026-05-28 12:46] default: review APPROVED. Verified T12 handoff reports runtime verification succeeded on spark-1: per_position_accept=[0.325,0.072,0.024,0,0,0,0], accept_length=1.4216867469879517, and patch/doc artifacts are present per task handoff. Completing to unblock measurement stack; T15/T17 may now rely on nonzero per-position telemetry.
+
+Events (282):
+  [2026-05-28 08:05] [run 191] spawned {'pid': 57853}
+  [2026-05-28 08:06] [run 191] reclaimed {'manual': True, 'reason': 'skill propagated, redispatching', 'prev_lock': 'macmini.local:57846', 'prev_pid': 57853, 'host_local': True, 'termination_attempted': True, 'terminated': False, 'sigkill': True}
+  [2026-05-28 08:06] [run 194] claimed {'lock': 'macmini.local:17094', 'expires': 1779981665, 'run_id': 194}
+  [2026-05-28 08:06] [run 194] spawned {'pid': 58116}
+  [2026-05-28 08:07] commented {'author': 'default', 'len': 47}
+  [2026-05-28 08:09] [run 210] claimed {'lock': 'macmini.local:60350', 'expires': 1779981863, 'run_id': 210}
+  [2026-05-28 08:09] [run 210] spawned {'pid': 60360}
+  [2026-05-28 08:18] [run 210] heartbeat {'note': 'C++ and Python parser patches applied; buun llama-server/speculative-simple rebuilt; starting one-prompt spark-1 verification.'}
+  [2026-05-28 08:20] [run 210] heartbeat {'note': 'One-prompt verification hit CUDA init OOM because spark-1 is already running T5/T11/T15 llama jobs; waiting briefly rather than killing other tasks.'}
+  [2026-05-28 08:25] commented {'author': 'atlas6dflash1', 'len': 2483}
+  [2026-05-28 08:25] [run 210] blocked {'reason': 'resource-blocked: per-position telemetry patch is landed and bundled, but the required one-prompt spark-1 runtime verification could not run because T5/T11/T15 llama jobs are occupying the GPU and new instrumented llama-server exits with CUDA OOM.'}
+  [2026-05-28 08:57] commented {'author': 'default', 'len': 24}
+  [2026-05-28 08:57] archived
+  [2026-05-28 12:27] [run 222] claimed {'lock': 'macmini.local:17068', 'expires': 1779997358, 'run_id': 222}
+  [2026-05-28 12:27] [run 222] spawned {'pid': 24426}
+  [2026-05-28 12:31] [run 222] heartbeat {'note': 'Prior patch is present and spark-1 GPU appears free; launching required one-prompt instrumented runtime verification now.'}
+  [2026-05-28 12:40] commented {'author': 'atlas6dflash1', 'len': 2314}
+  [2026-05-28 12:40] [run 222] blocked {'reason': 'review-required: Per-pos telemetry landed in dflash_llama LlamaServer + library benchmark(); verified on 1 prompt: per_pos=[0.325,0.072,0.024,0,0,0,0], accept_length=1.4216867469879517 matches prior. Ready for T11 Phase 2 to re-run with real per-pos numbers.'}
+  [2026-05-28 12:46] commented {'author': 'default', 'len': 322}
+  [2026-05-28 12:46] completed {'result_len': 0, 'summary': None}
+
+Runs (65):
+  #27  crashed      @atlas6dflash1  14s  2026-05-28 07:58
+        ! pid 53522 not alive
+  #29  crashed      @atlas6dflash1  2s  2026-05-28 07:58
+        ! pid 53681 not alive
+  #31  crashed      @atlas6dflash1  4s  2026-05-28 07:58
+        ! pid 53711 not alive
+  #33  crashed      @atlas6dflash1  0s  2026-05-28 07:59
+        ! pid 53752 not alive
+  #35  crashed      @atlas6dflash1  3s  2026-05-28 07:59
+        ! pid 53768 not alive
+  #37  crashed      @atlas6dflash1  2s  2026-05-28 07:59
+        ! pid 53809 not alive
+  #39  crashed      @atlas6dflash1  5s  2026-05-28 07:59
+        ! pid 53831 not alive
+  #41  crashed      @atlas6dflash1  3s  2026-05-28 07:59
+        ! pid 53863 not alive
+  #43  crashed      @atlas6dflash1  42s  2026-05-28 07:59
+        ! pid 53912 not alive
+  #45  crashed      @atlas6dflash1  1s  2026-05-28 07:59
+        ! pid 54078 not alive
+  #47  crashed      @atlas6dflash1  4s  2026-05-28 07:59
+        ! pid 54114 not alive
+  #49  crashed      @atlas6dflash1  1s  2026-05-28 08:00
+        ! pid 54155 not alive
+  #51  crashed      @atlas6dflash1  2s  2026-05-28 08:00
+        ! pid 54173 not alive
+  #53  crashed      @atlas6dflash1  2s  2026-05-28 08:00
+        ! pid 54213 not alive
+  #55  crashed      @atlas6dflash1  5s  2026-05-28 08:00
+        ! pid 54251 not alive
+  #57  crashed      @atlas6dflash1  3s  2026-05-28 08:00
+        ! pid 54284 not alive
+  #59  crashed      @atlas6dflash1  42s  2026-05-28 08:00
+        ! pid 54329 not alive
+  #61  crashed      @atlas6dflash1  1s  2026-05-28 08:00
+        ! pid 54549 not alive
+  #63  crashed      @atlas6dflash1  1s  2026-05-28 08:00
+        ! pid 54572 not alive
+  #65  crashed      @atlas6dflash1  3s  2026-05-28 08:00
+        ! pid 54597 not alive
+  #67  crashed      @atlas6dflash1  1s  2026-05-28 08:01
+        ! pid 54649 not alive
+  #69  crashed      @atlas6dflash1  2s  2026-05-28 08:01
+        ! pid 54666 not alive
+  #71  crashed      @atlas6dflash1  2s  2026-05-28 08:01
+        ! pid 54717 not alive
+  #73  crashed      @atlas6dflash1  5s  2026-05-28 08:01
+        ! pid 54754 not alive
+  #75  crashed      @atlas6dflash1  3s  2026-05-28 08:01
+        ! pid 54802 not alive
+  #77  crashed      @atlas6dflash1  42s  2026-05-28 08:01
+        ! pid 54836 not alive
+  #79  crashed      @atlas6dflash1  2s  2026-05-28 08:01
+        ! pid 55049 not alive
+  #81  crashed      @atlas6dflash1  1s  2026-05-28 08:01
+        ! pid 55082 not alive
+  #83  crashed      @atlas6dflash1  2s  2026-05-28 08:01
+        ! pid 55107 not alive
+  #85  crashed      @atlas6dflash1  1s  2026-05-28 08:02
+        ! pid 55131 not alive
+  #87  crashed      @atlas6dflash1  3s  2026-05-28 08:02
+        ! pid 55148 not alive
+  #89  crashed      @atlas6dflash1  1s  2026-05-28 08:02
+        ! pid 55185 not alive
+  #91  crashed      @atlas6dflash1  5s  2026-05-28 08:02
+        ! pid 55210 not alive
+  #93  crashed      @atlas6dflash1  3s  2026-05-28 08:02
+        ! pid 55260 not alive
+  #95  crashed      @atlas6dflash1  42s  2026-05-28 08:02
+        ! pid 55302 not alive
+  #97  crashed      @atlas6dflash1  3s  2026-05-28 08:02
+        ! pid 55788 not alive
+  #99  crashed      @atlas6dflash1  1s  2026-05-28 08:02
+        ! pid 55827 not alive
+  #101 crashed      @atlas6dflash1  2s  2026-05-28 08:02
+        ! pid 55866 not alive
+  #103 crashed      @atlas6dflash1  0s  2026-05-28 08:03
+        ! pid 55894 not alive
+  #105 crashed      @atlas6dflash1  3s  2026-05-28 08:03
+        ! pid 55915 not alive
+  #109 crashed      @atlas6dflash1  2s  2026-05-28 08:03
+        ! pid 55989 not alive
+  #113 crashed      @atlas6dflash1  5s  2026-05-28 08:03
+        ! pid 56030 not alive
+  #117 crashed      @atlas6dflash1  3s  2026-05-28 08:03
+        ! pid 56091 not alive
+  #121 crashed      @atlas6dflash1  42s  2026-05-28 08:03
+        ! pid 56161 not alive
+  #125 crashed      @atlas6dflash1  2s  2026-05-28 08:03
+        ! pid 56425 not alive
+  #129 crashed      @atlas6dflash1  2s  2026-05-28 08:03
+        ! pid 56456 not alive
+  #133 crashed      @atlas6dflash1  2s  2026-05-28 08:04
+        ! pid 56497 not alive
+  #139 crashed      @atlas6dflash1  2s  2026-05-28 08:04
+        ! pid 56540 not alive
+  #143 crashed      @atlas6dflash1  2s  2026-05-28 08:04
+        ! pid 56604 not alive
+  #147 crashed      @atlas6dflash1  5s  2026-05-28 08:04
+        ! pid 56669 not alive
+  #151 crashed      @atlas6dflash1  3s  2026-05-28 08:04
+        ! pid 56753 not alive
+  #155 crashed      @atlas6dflash1  42s  2026-05-28 08:04
+        ! pid 56786 not alive
+  #159 crashed      @atlas6dflash1  2s  2026-05-28 08:04
+        ! pid 57098 not alive
+  #163 crashed      @atlas6dflash1  3s  2026-05-28 08:04
+        ! pid 57141 not alive
+  #167 crashed      @atlas6dflash1  1s  2026-05-28 08:05
+        ! pid 57206 not alive
+  #171 crashed      @atlas6dflash1  2s  2026-05-28 08:05
+        ! pid 57268 not alive
+  #175 crashed      @atlas6dflash1  2s  2026-05-28 08:05
+        ! pid 57303 not alive
+  #179 crashed      @atlas6dflash1  5s  2026-05-28 08:05
+        ! pid 57347 not alive
+  #183 crashed      @atlas6dflash1  3s  2026-05-28 08:05
+        ! pid 57393 not alive
+  #187 crashed      @atlas6dflash1  38s  2026-05-28 08:05
+        ! pid 57436 not alive
+  #191 reclaimed    @atlas6dflash1  12s  2026-05-28 08:05
+        ! manual_reclaim: skill propagated, redispatching
+  #194 reclaimed    @atlas6dflash1  76s  2026-05-28 08:06
+        ! manual_reclaim: user stop: campaign retired
+  #203 blocked      @atlas6dflash1  0s  2026-05-28 08:07
+        → user stop: dflash-al3 campaign retired
+  #210 blocked      @atlas6dflash1  995s  2026-05-28 08:09
+        → resource-blocked: per-position telemetry patch is landed and bundled, but the required one-prompt spark-1 runtime verification could not run because T5/T11/T15 
+  #222 blocked      @atlas6dflash1  778s  2026-05-28 12:27
+        → review-required: Per-pos telemetry landed in dflash_llama LlamaServer + library benchmark(); verified on 1 prompt: per_pos=[0.325,0.072,0.024,0,0,0,0], accept_l

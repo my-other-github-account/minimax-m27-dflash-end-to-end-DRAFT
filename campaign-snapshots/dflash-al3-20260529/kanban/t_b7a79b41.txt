@@ -1,0 +1,114 @@
+Task t_b7a79b41: T23: Z-lab calibration on FIXED harness — confirm harness fix before trusting v18b trajectory
+  status:    done
+  assignee:  atlas6dflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b7a79b41
+  max-retries: 2 (default)
+  created:   2026-05-28 17:42 by user
+  started:   2026-05-28 17:42
+  completed: 2026-05-28 18:56
+
+Body:
+# T23: Z-lab calibration on FIXED harness — confirm harness is actually fixed before trusting v18b trajectory
+
+## CONTEXT
+
+T14 measured z-lab Qwen3.6-35B-A3B-DFlash at AL=2.883 on our BROKEN harness vs published mean 4.797. That was Outcome B / Regime III evidence.
+
+T20 closed the simple-vs-API harness mismatch to delta=0.030. T12 patched per-position-accept telemetry. So the harness should now be substantially fixed.
+
+If the harness is REALLY fixed, re-measuring z-lab on the new harness should land somewhere CLOSER to the published 4.797 number. If it's still at 2.883, there's a deeper harness issue.
+
+This task gates trust in T22's trajectory measurements — if T23 shows the new harness still underreports z-lab, then T22's "proof" is suspect.
+
+## YOUR JOB
+
+1. Re-run the same 25-prompt benchmark from T14 against the same z-lab drafter at /home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/, but using the FIXED harness (T20 EOS-semantics patch + T12 per-pos telemetry).
+2. Output to /home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/summary.json.
+3. Compute the delta from T14's broken-harness result: 
+   - if new measurement is ≥ 4.0 → harness FULLY FIXED, trust T22.
+   - if new measurement is 3.0-4.0 → harness PARTIALLY FIXED, T22 trajectory needs an offset correction.
+   - if new measurement still < 3.0 → harness STILL UNDERREPORTING, deeper investigation needed.
+4. Write a one-paragraph verdict to /home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/CALIBRATION_VERDICT.md.
+5. Block review-required with verdict.
+
+## HOST SCOPE
+
+spark-1 ONLY.
+
+## HARD RULES
+
+- DO NOT modify the harness; use T12+T20 patched versions.
+- DO NOT modify zlab ckpt.
+- Required skill: dflash-c15-fp8-hybrid-winning-config-and-health-rules.
+- Assignee: atlas6dflash4.
+- Priority: 95.
+
+Latest summary:
+T23 verdict STILL UNDERREPORTING: fixed-harness z-lab AL=2.796 (<3.0), delta vs T14 broken=-0.087, only 58.3% of published B8 mean 4.797. Harness simple-vs-API mismatch is fixed, but deeper underreporting remains.
+
+Comments (4):
+  [2026-05-28 18:03] atlas6dflash4: Blocked before measurement: spark-1 GPU was occupied by unrelated MiniMax llama-server benchmark `/home/dnola/t5_draftmax_sweep.py` (PID 412270/412271). I staged the fixed-harness T23 runner at `/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/t23_fixed_harness_run_eval.py` by copying the T14 25-prompt runner and changing only the output directory from `/home/dnola/zlab_ref_drafter/benchmarks` to `/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness`. The current `/home/dnola/dflash-llama` inference harness has uncommitted T12/T20-looking patches in `src/dflash_llama/inference/analyze.py`, `server.py`, `api_benchmark.py`, and `benchmark.py`; I did not modify harness or checkpoint. I launched the benchmark with `T14_WAIT_TIMEOUT_SEC=21600`, observed it waiting for GPU clear, then killed the waiting T23 process so it would not start later out-of-band while this card is blocked. No `summary.json` or verdict was produced yet.
+  [2026-05-28 18:22] driver: DRIVER 18:22: spark-1 was unreachable/offline; power-cycled Kasa Strip 9067 plug 1 and verified SSH is back. GPU appears clear (no compute apps/tmux). Resume T23 fixed-harness z-lab calibration now; write CALIBRATION_VERDICT.md and block review-required with FULL/PARTIAL/STILL-BROKEN verdict.
+  [2026-05-28 18:48] atlas6dflash4: review-required handoff:
+{
+  "verdict": "STILL UNDERREPORTING",
+  "threshold_basis": "fixed-harness aggregate measured real AL 2.7957457094512934 < 3.0",
+  "artifacts": {
+    "summary_json": "/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/summary.json",
+    "verdict_md": "/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/CALIBRATION_VERDICT.md",
+    "rows_dir": "/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/rows",
+    "report_md": "/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/report.md"
+  },
+  "key_numbers": {
+    "fixed_harness_AL": 2.7957457094512934,
+    "t14_broken_harness_AL": 2.8828428258875007,
+    "delta_vs_t14_broken": -0.08709711643620728,
+    "published_B8_mean": 4.796666666666667,
+    "delta_vs_published_B8_mean": -2.0009209572153734,
+    "ratio_vs_published_B8_mean": 0.5828517809835914,
+    "n_pairs": 25,
+    "n_accept": 14858,
+    "n_draft": 8274,
+    "paired_speedup_mean": 1.4710955061803062,
+    "crossval_simple_AL": 1.065217391304348,
+    "crossval_api_AL": 1.0956521739130434,
+    "crossval_delta": 0.030434782608695476,
+    "crossval_passed": true
+  },
+  "run_notes": [
+    "Used staged fixed-harness runner /home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/t23_fixed_harness_run_eval.py against /home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/zlab_qwen36_35b_a3b_dflash_buun.gguf on spark-1.",
+    "Did not modify harness or checkpoint; only wrote benchmark outputs and CALIBRATION_VERDICT.md.",
+    "llama-server hit transient `Invalid token` crashes on dflash prompts 3, 21, and 22; each failed row was deleted and the resumable runner continued. Final summary has 25 AR + 25 DFlash rows and no row errors.",
+    "One unrelated llama-server on port 18322 remained on spark-1; no T23 runner/server processes were left running after completion."
+  ]
+}
+  [2026-05-28 18:56] driver: driver review APPROVED: T23 fixed-harness z-lab calibration completed and is still underreporting: measured real AL=2.796 (<3.0), ratio 0.583 vs published B8 mean 4.797, simple/API delta remains 0.030. Treat T22 trajectory as relative-only until deeper harness underreporting is fixed.
+
+Events (19):
+  [2026-05-28 17:42] created {'assignee': 'atlas6dflash4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-28 17:42] [run 264] claimed {'lock': 'macmini.local:15147', 'expires': 1780016250, 'run_id': 264}
+  [2026-05-28 17:42] [run 264] spawned {'pid': 15152}
+  [2026-05-28 17:44] [run 264] heartbeat {'note': 'spark-1 has two unrelated MiniMax llama-server jobs occupying GPU; launching fixed-harness benchmark with built-in GPU-clear wait rather than interfering.'}
+  [2026-05-28 17:50] [run 264] heartbeat {'note': 'still queued on spark-1 GPU; fixed-harness benchmark process is waiting for unrelated llama-server jobs to release CUDA before starting.'}
+  [2026-05-28 17:56] [run 264] heartbeat {'note': 'spark-1 contention improving: one unrelated CUDA job remains; benchmark still waiting clean GPU before running z-lab fixed-harness calibration.'}
+  [2026-05-28 18:03] commented {'author': 'atlas6dflash4', 'len': 941}
+  [2026-05-28 18:03] [run 264] blocked {'reason': 'spark-1 GPU is occupied by another benchmark; T23 fixed-harness runner is staged but no calibration verdict can be produced until spark-1 is free.'}
+  [2026-05-28 18:22] commented {'author': 'driver', 'len': 293}
+  [2026-05-28 18:22] unblocked
+  [2026-05-28 18:22] [run 271] claimed {'lock': 'macmini.local:28892', 'expires': 1780018668, 'run_id': 271}
+  [2026-05-28 18:22] [run 271] spawned {'pid': 28899}
+  [2026-05-28 18:23] [run 271] heartbeat {'note': 'Launched fixed-harness T23 z-lab calibration on spark-1 using staged runner; waiting for benchmark to complete and then will write verdict.'}
+  [2026-05-28 18:30] [run 271] heartbeat {'note': 'T23 fixed-harness benchmark is running on spark-1; crossval passed with simple/API delta 0.030, AR baseline is in progress (13/25 rows done).'}
+  [2026-05-28 18:38] [run 271] heartbeat {'note': 'First run completed AR and then llama-server crashed on dflash prompt 3 with `Invalid token`; removed only the failed row and resumed with existing completed rows preserved (no harness/checkpoint changes).'}
+  [2026-05-28 18:48] commented {'author': 'atlas6dflash4', 'len': 1820}
+  [2026-05-28 18:48] [run 271] blocked {'reason': 'review-required: STILL UNDERREPORTING — fixed-harness z-lab AL=2.796 (<3.0), delta vs T14 broken=-0.087; summary.json and CALIBRATION_VERDICT.md written.'}
+  [2026-05-28 18:56] commented {'author': 'driver', 'len': 285}
+  [2026-05-28 18:56] [run 273] completed {'result_len': 0, 'summary': 'T23 verdict STILL UNDERREPORTING: fixed-harness z-lab AL=2.796 (<3.0), delta vs T14 broken=-0.087, only 58.3% of published B8 mean 4.797. Harness simple-vs-API mismatch is fixed, but deeper underreporting remains.'}
+
+Runs (3):
+  #264 blocked      @atlas6dflash4  1279s  2026-05-28 17:42
+        → spark-1 GPU is occupied by another benchmark; T23 fixed-harness runner is staged but no calibration verdict can be produced until spark-1 is free.
+  #271 blocked      @atlas6dflash4  1543s  2026-05-28 18:22
+        → review-required: STILL UNDERREPORTING — fixed-harness z-lab AL=2.796 (<3.0), delta vs T14 broken=-0.087; summary.json and CALIBRATION_VERDICT.md written.
+  #273 completed    @atlas6dflash4  0s  2026-05-28 18:56
+        → T23 verdict STILL UNDERREPORTING: fixed-harness z-lab AL=2.796 (<3.0), delta vs T14 broken=-0.087, only 58.3% of published B8 mean 4.797. Harness simple-vs-API

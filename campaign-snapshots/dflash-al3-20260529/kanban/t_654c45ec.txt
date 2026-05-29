@@ -1,0 +1,302 @@
+Task t_654c45ec: T29: Upstream llama.cpp PR #22105 DFlash workstream on spark-work
+  status:    done
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_654c45ec
+  skills:    spark-cluster-operations, github-pat-local-storage-and-clone-bake-pitfall, llama-cpp
+  max-retries: 2 (default)
+  created:   2026-05-28 19:19 by user
+  started:   2026-05-28 19:19
+  completed: 2026-05-28 20:47
+
+Body:
+# T29: Upstream llama.cpp PR #22105 DFlash workstream (parallel inference track on spark-work)
+
+## Context
+T23 verdict (2026-05-28 18:48): known-good z-lab reference drafter measures AL=2.796 on our fixed harness vs published 4.797. 58% recovery. Crossval simple/API delta 0.030 PASS (the simple-vs-API harness gap is closed). The remaining 42% gap is on the OUR inference side — `dflash-llama` fork has a deeper bug (verifier loop / KV reuse / accept-reject / tree expansion / EOS / tokenizer) that even the T20/T12 fixes haven't fully closed. T26 was filed to chase it but is unbounded.
+
+Upstream llama.cpp has an open production-shaped DFlash PR:
+
+- **PR ggml-org/llama.cpp#22105** "[Speculative decoding] feat: add DFlash support"
+  - Author: ruixiang63, branch ruixiang63:dflash
+  - Open, NOT merged, mergeable=False (needs rebase), 22 commits, +1900/-52 across 28 files
+  - Last updated 2026-05-20 (8 days ago, actively maintained)
+  - Stacked on PR #18039 (EAGLE3)
+  - Claims **8× speedup on Qwen3-8B and full numerical equivalence to z-lab original** (https://github.com/z-lab/dflash/blob/main/dflash/model.py)
+  - Implements: src/models/dflash.cpp (161 lines), common/speculative.cpp (+331/-23), examples/speculative-simple/speculative-simple.cpp (+77/-20), convert_hf_to_gguf.py (+187/-1), tools/server/server-context.cpp (+21)
+
+If their harness gives AL ≈ 4.8 on the same z-lab gguf where ours gives 2.8, the 42% gap is empirically attributed to our fork's implementation and we have a path to fix it.
+
+## Your job (spark-work ONLY)
+Bring up the upstream PR #22105 build on spark-work and re-run the T23 calibration benchmark. This is a parallel track to T26 — if it works fast, it RESOLVES T26; if it doesn't, T26 still runs as the in-fork-fix path.
+
+### Phase 1 — environment prep on spark-work
+1. SSH to spark-work. Confirm GB10 GPU idle (`nvidia-smi`). Spark-work is currently 5% util, no compute apps.
+2. NasFS is already mounted on spark-work (`tmux ls` shows session `nasfs`); verify `/home/dnola/nas_traces/by_hash` is accessible and the existing z-lab gguf at `/home/dnola/zlab_ref_drafter/...` is reachable from spark-work (rsync from spark-1 over fabric A if not present).
+3. Standard build dependencies: clang/gcc, cmake, CUDA toolkit. spark-work runs the same DGX-Spark image as the other sparks; assume parity unless `nvcc --version` fails.
+
+### Phase 2 — pull and build PR #22105
+1. Clone tip-of-tree: `git clone https://github.com/ggml-org/llama.cpp ~/llama.cpp.upstream` (use the macmini github_token if push is needed, but this is read-only).
+2. Add the PR remote: `cd ~/llama.cpp.upstream && git remote add ruixiang https://github.com/ruixiang63/llama.cpp && git fetch ruixiang dflash`
+3. Check out the branch: `git checkout -b dflash-pr22105 ruixiang/dflash`
+4. **The branch is currently mergeable=False against master.** Try to merge master in: `git merge origin/master`. If conflicts, log them and try one rebase pass: `git rebase origin/master`. If rebase still conflicts, build on the PR's HEAD as-is (it may be slightly behind master but that's fine for an isolated benchmark).
+5. Build with CUDA: `cmake -B build -DLLAMA_CUDA=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build -j` (or `-DGGML_CUDA=ON` per current cmake convention). Use `-j$(nproc)` to parallelize.
+6. Confirm binaries exist: `ls build/bin/llama-{cli,server,speculative-simple}`. The PR adds `--draft-max` and DFlash arch awareness — verify with `build/bin/llama-cli --help 2>&1 | grep -iE "dflash|draft"`.
+
+### Phase 3 — re-run T23 calibration on upstream binary
+Goal: measure AL on the SAME z-lab gguf that T23 used, with the SAME 25 prompts, but with the PR #22105 inference path.
+
+1. Locate z-lab gguf. Should be the same one T23 used: `/home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/zlab_qwen36_35b_a3b_dflash_buun.gguf` (on spark-1). Rsync to spark-work over 200G fabric A:
+   ```
+   rsync -avzP --bwlimit=0 spark-1:/home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/ /home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/
+   ```
+2. Find the matching target model gguf (verifier — Qwen3 something based on PR body claiming Qwen3-8B). The T23 runner artifacts should name the target. Pull it the same way.
+3. Locate the 25-prompt eval set: `/home/dnola/exports/c15_iq4v18_step2500_eval_prepped/` or the T23 staged runner's prompt list. Same fabric-A rsync.
+4. Run the upstream speculative-simple binary with the same eval. The PR's spec runner has `--draft-max` and per-iteration speedup logging:
+   ```
+   build/bin/llama-speculative-simple \
+     -m <target_gguf> \
+     -md <zlab_drafter_gguf> \
+     --draft-max 16 --temp 0 --top-k 1 --seed 42 \
+     -p "<prompt>" -n 256
+   ```
+   Loop over 25 prompts, parse AR token count + accepted draft count from stderr, compute AL = (accepted_draft + 1) / num_iters per prompt, mean across prompts.
+5. Also re-run AR-baseline with `llama-cli` (no drafter) for paired speedup.
+
+### Phase 4 — verdict
+Write `/home/dnola/v18_fix/T29_UPSTREAM_LLAMACPP_VERDICT.md` with one of:
+
+- **UPSTREAM_FIXES_HARNESS**: upstream PR #22105 measures AL ≥ 4.0 on z-lab drafter on same 25 prompts. → 42% gap is fully attributable to our fork's bugs. Recommend switching the AL>3 campaign's inference harness to PR #22105 as the canonical measurement path. Include the exact AL number, per_pos vector, and paired speedup.
+- **UPSTREAM_SAME_GAP**: upstream PR #22105 also measures AL ≈ 2.8 on z-lab drafter. → the gap is NOT in our fork; it's in the harness setup (prompt format, sampling params, tokenizer mismatch, gguf conversion) or even in the gguf itself. Different investigation path.
+- **UPSTREAM_DIFFERENT_NUMBER**: somewhere between 2.8 and 4.8. Report exact AL + per_pos and let the driver triage.
+
+Also write the upstream binary's per-prompt JSONL into `/home/dnola/v18_fix/T29_upstream_per_prompt.jsonl` for cross-referencing.
+
+### Phase 5 — handoff
+Block review-required with the verdict and the AL number.
+
+## Hard rules
+- **Host scope: spark-work ONLY.** Do NOT touch spark-1 (T22/T26 own it), spark-2 (T25 gate), spark-3 (T28 training smoke), spark-4 (DeepSeek-V4-Flash vLLM server, sero-owned).
+- Read-only rsync from spark-1 over fabric A is fine (one direction, pull-only, doesn't disturb spark-1's CUDA state).
+- Do not modify the upstream PR's source. If a build fails, document the failure; don't patch around it.
+- 4-hour time-box. Build + benchmark should fit comfortably; if you blow past 4 hours, block review-required with what you have.
+- GitHub PAT at `~/.config/hermes/github_token` is read-only sufficient for the clone; do not surface or echo it.
+
+## Acceptance criteria
+- `/home/dnola/v18_fix/T29_UPSTREAM_LLAMACPP_VERDICT.md` exists on spark-work with one of UPSTREAM_FIXES_HARNESS | UPSTREAM_SAME_GAP | UPSTREAM_DIFFERENT_NUMBER.
+- `/home/dnola/v18_fix/T29_upstream_per_prompt.jsonl` exists with raw per-prompt data.
+- If UPSTREAM_FIXES_HARNESS: the next driver tick should propose unblocking T22 to swap to the upstream harness, and T26 closes as superseded.
+
+## Reference
+- Our fork: `/home/dnola/dflash-llama/` (the buggy inference path)
+- z-lab drafter: `/home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/`
+- T23 verdict: `/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/CALIBRATION_VERDICT.md` (AL=2.796)
+- T23 per-prompt artifact: `/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/summary.json`
+- PR body: https://github.com/ggml-org/llama.cpp/pull/22105
+- z-lab original: https://github.com/z-lab/dflash
+
+Comments (2):
+  [2026-05-28 19:30] driver: DRIVER 19:29: T29 was crash-looping on missing skill github-pat-local-storage-and-clone-bake-pitfall. Propagated the skill into atlas6dflash5 profile; reclaiming so upstream llama.cpp workstream can restart cleanly on spark-work.
+  [2026-05-28 20:47] macmini-chat: USER 20:42 PDT: revoked spark-work and spark-3 from campaign scope. dflash-al3 work is constrained to spark-1 + spark-2 only. T29 superseded — no upstream-llama.cpp work permitted on spark-work. Closing this task.
+
+Events (367):
+  [2026-05-28 19:30] [run 364] crashed {'pid': 46544, 'claimer': 'macmini.local:17012'}
+  [2026-05-28 19:30] [run 365] claimed {'lock': 'macmini.local:17094', 'expires': 1780022717, 'run_id': 365}
+  [2026-05-28 19:30] [run 365] spawned {'pid': 46562}
+  [2026-05-28 19:30] [run 365] crashed {'pid': 46562, 'claimer': 'macmini.local:17094'}
+  [2026-05-28 19:30] gave_up {'failures': 2, 'effective_limit': 2, 'limit_source': 'dispatcher', 'error': 'pid 46562 not alive', 'trigger_outcome': 'crashed', 'pid': 46562, 'claimer': 'macmini.local:17094'}
+  [2026-05-28 19:30] promoted
+  [2026-05-28 19:30] [run 366] claimed {'lock': 'macmini.local:17125', 'expires': 1780022720, 'run_id': 366}
+  [2026-05-28 19:30] [run 366] spawned {'pid': 46576}
+  [2026-05-28 19:30] commented {'author': 'driver', 'len': 229}
+  [2026-05-28 19:30] [run 366] reclaimed {'manual': True, 'reason': 'driver fixed missing skill github-pat-local-storage-and-clone-bake-pitfall in atlas6dflash5; restart T29', 'prev_lock': 'macmini.local:17125', 'prev_pid': 46576, 'host_local': True, 'termination_attempted': True, 'terminated': False, 'sigkill': True}
+  [2026-05-28 19:30] [run 369] claimed {'lock': 'macmini.local:46681', 'expires': 1780022744, 'run_id': 369}
+  [2026-05-28 19:30] [run 369] spawned {'pid': 46684}
+  [2026-05-28 19:40] [run 369] heartbeat {'note': 'Built upstream PR #22105 CUDA binaries on spark-work; now rsyncing target/drafter/prompt artifacts read-only from spark-1 fabric IP 192.168.200.1.'}
+  [2026-05-28 19:47] [run 369] heartbeat {'note': 'Upstream PR head built and smoke-runs after GGUF metadata compatibility rewrite (dflash-draft -> dflash). Starting 25-prompt T23-calibration loop with draft_max=7, n=128.'}
+  [2026-05-28 20:02] [run 369] claim_extended {'reason': 'pid_alive', 'worker_pid': 46684, 'claim_lock': 'macmini.local:46681', 'claim_expires_was': 1780023723, 'claim_expires_now': 1780024632, 'last_heartbeat_at': 1780022823}
+  [2026-05-28 20:17] [run 369] claim_extended {'reason': 'pid_alive', 'worker_pid': 46684, 'claim_lock': 'macmini.local:46681', 'claim_expires_was': 1780024632, 'claim_expires_now': 1780025535, 'last_heartbeat_at': 1780022823}
+  [2026-05-28 20:32] [run 369] claim_extended {'reason': 'pid_alive', 'worker_pid': 46684, 'claim_lock': 'macmini.local:46681', 'claim_expires_was': 1780025535, 'claim_expires_now': 1780026438, 'last_heartbeat_at': 1780022823}
+  [2026-05-28 20:47] [run 369] claim_extended {'reason': 'pid_alive', 'worker_pid': 46684, 'claim_lock': 'macmini.local:46681', 'claim_expires_was': 1780026438, 'claim_expires_now': 1780027340, 'last_heartbeat_at': 1780022823}
+  [2026-05-28 20:47] commented {'author': 'macmini-chat', 'len': 213}
+  [2026-05-28 20:47] [run 369] completed {'result_len': 0, 'summary': None}
+
+Runs (90):
+  #278 crashed      @atlas6dflash5  3s  2026-05-28 19:19
+        ! pid 43669 not alive
+  #279 crashed      @atlas6dflash5  1s  2026-05-28 19:19
+        ! pid 43682 not alive
+  #280 crashed      @atlas6dflash5  20s  2026-05-28 19:19
+        ! pid 43689 not alive
+  #281 crashed      @atlas6dflash5  22s  2026-05-28 19:19
+        ! pid 43756 not alive
+  #282 crashed      @atlas6dflash5  4s  2026-05-28 19:20
+        ! pid 43832 not alive
+  #283 crashed      @atlas6dflash5  4s  2026-05-28 19:20
+        ! pid 43864 not alive
+  #284 crashed      @atlas6dflash5  3s  2026-05-28 19:20
+        ! pid 43886 not alive
+  #285 crashed      @atlas6dflash5  3s  2026-05-28 19:20
+        ! pid 43907 not alive
+  #286 crashed      @atlas6dflash5  3s  2026-05-28 19:20
+        ! pid 43916 not alive
+  #287 crashed      @atlas6dflash5  2s  2026-05-28 19:20
+        ! pid 43932 not alive
+  #288 crashed      @atlas6dflash5  19s  2026-05-28 19:20
+        ! pid 43937 not alive
+  #289 crashed      @atlas6dflash5  22s  2026-05-28 19:20
+        ! pid 44016 not alive
+  #290 crashed      @atlas6dflash5  5s  2026-05-28 19:21
+        ! pid 44098 not alive
+  #291 crashed      @atlas6dflash5  3s  2026-05-28 19:21
+        ! pid 44120 not alive
+  #292 crashed      @atlas6dflash5  3s  2026-05-28 19:21
+        ! pid 44136 not alive
+  #293 crashed      @atlas6dflash5  3s  2026-05-28 19:21
+        ! pid 44142 not alive
+  #294 crashed      @atlas6dflash5  3s  2026-05-28 19:21
+        ! pid 44160 not alive
+  #295 crashed      @atlas6dflash5  2s  2026-05-28 19:21
+        ! pid 44178 not alive
+  #296 crashed      @atlas6dflash5  20s  2026-05-28 19:21
+        ! pid 44188 not alive
+  #297 crashed      @atlas6dflash5  21s  2026-05-28 19:21
+        ! pid 44264 not alive
+  #298 crashed      @atlas6dflash5  5s  2026-05-28 19:22
+        ! pid 44343 not alive
+  #299 crashed      @atlas6dflash5  3s  2026-05-28 19:22
+        ! pid 44374 not alive
+  #300 crashed      @atlas6dflash5  3s  2026-05-28 19:22
+        ! pid 44389 not alive
+  #301 crashed      @atlas6dflash5  4s  2026-05-28 19:22
+        ! pid 44401 not alive
+  #302 crashed      @atlas6dflash5  2s  2026-05-28 19:22
+        ! pid 44422 not alive
+  #303 crashed      @atlas6dflash5  2s  2026-05-28 19:22
+        ! pid 44428 not alive
+  #304 crashed      @atlas6dflash5  20s  2026-05-28 19:22
+        ! pid 44443 not alive
+  #305 crashed      @atlas6dflash5  21s  2026-05-28 19:22
+        ! pid 44503 not alive
+  #306 crashed      @atlas6dflash5  5s  2026-05-28 19:23
+        ! pid 44597 not alive
+  #307 crashed      @atlas6dflash5  3s  2026-05-28 19:23
+        ! pid 44634 not alive
+  #308 crashed      @atlas6dflash5  4s  2026-05-28 19:23
+        ! pid 44642 not alive
+  #309 crashed      @atlas6dflash5  3s  2026-05-28 19:23
+        ! pid 44666 not alive
+  #310 crashed      @atlas6dflash5  3s  2026-05-28 19:23
+        ! pid 44675 not alive
+  #311 crashed      @atlas6dflash5  2s  2026-05-28 19:23
+        ! pid 44690 not alive
+  #312 crashed      @atlas6dflash5  19s  2026-05-28 19:23
+        ! pid 44695 not alive
+  #313 crashed      @atlas6dflash5  21s  2026-05-28 19:23
+        ! pid 44760 not alive
+  #314 crashed      @atlas6dflash5  5s  2026-05-28 19:24
+        ! pid 44837 not alive
+  #315 crashed      @atlas6dflash5  4s  2026-05-28 19:24
+        ! pid 44858 not alive
+  #316 crashed      @atlas6dflash5  3s  2026-05-28 19:24
+        ! pid 44877 not alive
+  #317 crashed      @atlas6dflash5  3s  2026-05-28 19:24
+        ! pid 44894 not alive
+  #318 crashed      @atlas6dflash5  3s  2026-05-28 19:24
+        ! pid 44902 not alive
+  #319 crashed      @atlas6dflash5  2s  2026-05-28 19:24
+        ! pid 44917 not alive
+  #320 crashed      @atlas6dflash5  20s  2026-05-28 19:24
+        ! pid 44922 not alive
+  #321 crashed      @atlas6dflash5  21s  2026-05-28 19:24
+        ! pid 45031 not alive
+  #322 crashed      @atlas6dflash5  4s  2026-05-28 19:25
+        ! pid 45232 not alive
+  #323 crashed      @atlas6dflash5  4s  2026-05-28 19:25
+        ! pid 45254 not alive
+  #324 crashed      @atlas6dflash5  3s  2026-05-28 19:25
+        ! pid 45271 not alive
+  #325 crashed      @atlas6dflash5  3s  2026-05-28 19:25
+        ! pid 45276 not alive
+  #326 crashed      @atlas6dflash5  3s  2026-05-28 19:25
+        ! pid 45297 not alive
+  #327 crashed      @atlas6dflash5  2s  2026-05-28 19:25
+        ! pid 45308 not alive
+  #328 crashed      @atlas6dflash5  20s  2026-05-28 19:25
+        ! pid 45324 not alive
+  #329 crashed      @atlas6dflash5  21s  2026-05-28 19:25
+        ! pid 45402 not alive
+  #330 crashed      @atlas6dflash5  5s  2026-05-28 19:26
+        ! pid 45501 not alive
+  #331 crashed      @atlas6dflash5  3s  2026-05-28 19:26
+        ! pid 45523 not alive
+  #332 crashed      @atlas6dflash5  3s  2026-05-28 19:26
+        ! pid 45652 not alive
+  #333 crashed      @atlas6dflash5  3s  2026-05-28 19:26
+        ! pid 45667 not alive
+  #334 crashed      @atlas6dflash5  3s  2026-05-28 19:26
+        ! pid 45687 not alive
+  #335 crashed      @atlas6dflash5  3s  2026-05-28 19:26
+        ! pid 45695 not alive
+  #336 crashed      @atlas6dflash5  19s  2026-05-28 19:26
+        ! pid 45711 not alive
+  #337 crashed      @atlas6dflash5  21s  2026-05-28 19:26
+        ! pid 45756 not alive
+  #338 crashed      @atlas6dflash5  5s  2026-05-28 19:27
+        ! pid 45819 not alive
+  #339 crashed      @atlas6dflash5  3s  2026-05-28 19:27
+        ! pid 45842 not alive
+  #340 crashed      @atlas6dflash5  3s  2026-05-28 19:27
+        ! pid 45857 not alive
+  #341 crashed      @atlas6dflash5  4s  2026-05-28 19:27
+        ! pid 45872 not alive
+  #342 crashed      @atlas6dflash5  2s  2026-05-28 19:27
+        ! pid 45881 not alive
+  #343 crashed      @atlas6dflash5  3s  2026-05-28 19:27
+        ! pid 45897 not alive
+  #344 crashed      @atlas6dflash5  20s  2026-05-28 19:27
+        ! pid 45903 not alive
+  #345 crashed      @atlas6dflash5  20s  2026-05-28 19:27
+        ! pid 45973 not alive
+  #346 crashed      @atlas6dflash5  5s  2026-05-28 19:28
+        ! pid 46028 not alive
+  #347 crashed      @atlas6dflash5  3s  2026-05-28 19:28
+        ! pid 46049 not alive
+  #348 crashed      @atlas6dflash5  4s  2026-05-28 19:28
+        ! pid 46067 not alive
+  #349 crashed      @atlas6dflash5  3s  2026-05-28 19:28
+        ! pid 46072 not alive
+  #350 crashed      @atlas6dflash5  3s  2026-05-28 19:28
+        ! pid 46091 not alive
+  #351 crashed      @atlas6dflash5  2s  2026-05-28 19:28
+        ! pid 46106 not alive
+  #352 crashed      @atlas6dflash5  20s  2026-05-28 19:28
+        ! pid 46116 not alive
+  #353 crashed      @atlas6dflash5  20s  2026-05-28 19:28
+        ! pid 46170 not alive
+  #354 crashed      @atlas6dflash5  5s  2026-05-28 19:29
+        ! pid 46231 not alive
+  #355 crashed      @atlas6dflash5  4s  2026-05-28 19:29
+        ! pid 46252 not alive
+  #356 crashed      @atlas6dflash5  3s  2026-05-28 19:29
+        ! pid 46271 not alive
+  #357 crashed      @atlas6dflash5  3s  2026-05-28 19:29
+        ! pid 46276 not alive
+  #358 crashed      @atlas6dflash5  3s  2026-05-28 19:29
+        ! pid 46294 not alive
+  #359 crashed      @atlas6dflash5  3s  2026-05-28 19:29
+        ! pid 46312 not alive
+  #360 crashed      @atlas6dflash5  19s  2026-05-28 19:29
+        ! pid 46331 not alive
+  #361 crashed      @atlas6dflash5  21s  2026-05-28 19:29
+        ! pid 46417 not alive
+  #362 crashed      @atlas6dflash5  4s  2026-05-28 19:30
+        ! pid 46512 not alive
+  #363 crashed      @atlas6dflash5  4s  2026-05-28 19:30
+        ! pid 46536 not alive
+  #364 crashed      @atlas6dflash5  3s  2026-05-28 19:30
+        ! pid 46544 not alive
+  #365 crashed      @atlas6dflash5  3s  2026-05-28 19:30
+        ! pid 46562 not alive
+  #366 reclaimed    @atlas6dflash5  23s  2026-05-28 19:30
+        ! manual_reclaim: driver fixed missing skill github-pat-local-storage-and-clone-bake-pitfall in atlas6dflash5; restart T29
+  #369 completed    @atlas6dflash5  4607s  2026-05-28 19:30

@@ -1,0 +1,67 @@
+Task t_52a74ba0: T60: FAST root-cause audit for AL stuck near 1.65
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_52a74ba0
+  max-retries: 2 (default)
+  created:   2026-05-29 02:43 by user
+  started:   2026-05-29 02:43
+  completed: 2026-05-29 02:50
+
+Body:
+# T60: FAST root-cause audit for AL stuck at ~1.65 (no new training) (<1h)
+
+## Mission
+T53 measured OUR fresh step500 MiniMax/buun runtime AL=1.651, still far below AL>=3. T55/T57 ruled out the suspected scatter conversion artifact; T58 ruled out target-layer metadata mismatch. Identify the next concrete <1h lever from code/data evidence, not guesses.
+
+## Scope / host rules
+- Prefer macmini/spark-work read-only source/artifact inspection. If remote access is needed, use read-only SSH only.
+- Do not run training. Do not launch long inference. Do not touch spark-4.
+- If you need a GPU smoke, keep it <=2 prompts x <=256 tokens and use spark-2 only if idle.
+
+## Required evidence checks
+1. Compare training-time verifier metadata (`/home/dnola/iq4_full_run/verifier_meta_v11`) against the MiniMax-M2.7 GGUF target actually used by T53: tokenizer_pre, vocab, hidden size, layer count, target_layer_ids, BOS/EOS/mask token ids, RoPE/config fields if present.
+2. Inspect the T53 prepared/rebaked artifact summaries (`/home/dnola/v18_fix/t53/...`) and conversion script path. Verify d2t/t2d semantics from source code: draft-index offset vs absolute id, mask/floor row treatment, lm_head/output row mapping.
+3. Pull the latest available training-side metrics for the measured checkpoint (step500 if available): loss_0, per-position marginal accs, AL_LO/AL_HI if present. If missing, say exactly which file is absent.
+4. Decide whether runtime AL 1.65 is consistent with training metrics. If training-side prediction is much higher, propose a harness/feature mismatch check; if training-side is also low, propose a training/recipe lever.
+5. Produce ONE prioritized next bounded task spec (<=1h) with exact inputs, host, pass/fail metric. No broad hypothesis list.
+
+## Deliverable
+Write `T60_AL165_ROOT_CAUSE_AND_NEXT_LEVER.md` in your workspace and comment the headline:
+- verified facts (file paths + numbers)
+- ruled-out causes
+- next task spec
+- whether T59 should keep measuring later checkpoints or pause for recipe fix
+
+Metric discipline: label runtime measured AL vs training-side AL_LO/AL_HI. No extrapolated multiplier in headline.
+
+Latest summary:
+Completed T60 read-only root-cause audit and wrote `T60_AL165_ROOT_CAUSE_AND_NEXT_LEVER.md` in the workspace. Main finding: T53 prep used `d2t` as absolute token ids even though canonical source defines it as offsets, leaving only 20,681 non-floor output rows instead of 32,768; T59 should pause later-checkpoint measurements until an offset rebake is smoked.
+
+Comments (1):
+  [2026-05-29 02:50] atlaspatch5: T60 headline: wrote `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_52a74ba0/T60_AL165_ROOT_CAUSE_AND_NEXT_LEVER.md`.
+
+Verified facts:
+- T53 GGUF `/home/dnola/v18_fix/t53/step500_minimax_buun_rebaked.gguf` has tokenizer_pre=minimax-m2, vocab=200064, target_layer_ids=[2,16,30,45,59], n_target_features=15360, mask=200054, EOS=200020; tokenizer/GGUF BOS=200034 while verifier `generation_config.bos_token_id=200019`.
+- T53 prep summary/source shows `d2t_unique=20681` and `output_weight_nonfloor_rows_after_scatter=20681`; canonical source says `d2t` is OFFSET (`target_id = draft_id + d2t[draft_id]`), but T53 `prep_t53.py` used `floor[d2t] = x` absolute scatter.
+- Actual maps: absolute `d2t` -> 20,681 unique rows; offset `arange(32768)+d2t` -> 32,768 unique in-range rows, and all 32,768 are true in `t2d`.
+- Step500 train metrics available: train/loss=5.219, full_acc=0.164, pos accs=[0.294,0.214,0.161,0.137,0.119,0.108,0.116]. `loss_0`, `AL_LO`, `AL_HI` absent from step500 train log and `trainer_state.json`.
+
+Ruled out / deprioritized:
+- Target-layer metadata mismatch remains ruled out for T53: taps and n_target_features match.
+- Runtime AL=1.651 is not a valid checkpoint readout until output-head row mapping is fixed; crude training marginal bounds do not prove a harness mismatch.
+
+Next task spec:
+- T61 on spark-2, <=1h: rebake T53 step500 with `target_ids = arange(len(d2t)) + d2t`, assert unique/in-range/t2d-covered 32,768 rows and non-floor rows=32,768, convert with same T53 converter, then run same tiny AL smoke capped <=2 prompts x <=256 tokens. Pass if corrected runtime AL exceeds measured T53 runtime AL=1.651; otherwise pivot to BOS/tokenization harness check.
+
+T59 recommendation: pause later-checkpoint runtime measurements through the existing T53 prep path until the d2t-offset rebake is fixed; otherwise later checkpoints inherit the same invalid output head mapping.
+
+Events (5):
+  [2026-05-29 02:43] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 02:43] [run 559] claimed {'lock': 'macmini.local:60543', 'expires': 1780048684, 'run_id': 559}
+  [2026-05-29 02:43] [run 559] spawned {'pid': 60545}
+  [2026-05-29 02:50] commented {'author': 'atlaspatch5', 'len': 1913}
+  [2026-05-29 02:50] [run 559] completed {'result_len': 0, 'summary': 'Completed T60 read-only root-cause audit and wrote `T60_AL165_ROOT_CAUSE_AND_NEXT_LEVER.md` in the workspace. Main finding: T53 prep used `d2t` as absolute token ids even though canonical source defines it as offsets, leaving only 20,681 non-floor output rows instead of 32,768; T59 should pause later-checkpoint measurements until an offset rebake is smoked.'}
+
+Runs (1):
+  #559 completed    @atlaspatch5  443s  2026-05-29 02:43
+        → Completed T60 read-only root-cause audit and wrote `T60_AL165_ROOT_CAUSE_AND_NEXT_LEVER.md` in the workspace. Main finding: T53 prep used `d2t` as absolute toke

@@ -1,0 +1,214 @@
+Task t_60a49078: T14: Z-lab public DFlash drafter ground-truth — measure a KNOWN-GOOD drafter on our exact harness (single highest-info experiment)
+  status:    done
+  assignee:  atlas6dflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_60a49078
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 08:03 by user
+
+  Diagnostics (1):
+    !! [error] Agent crashed 2x: pid 60358 not alive
+       data: consecutive_crashes=2 | last_error=pid 60358 not alive
+       → Check logs: hermes kanban log t_60a49078
+  started:   2026-05-28 12:27
+  completed: 2026-05-28 13:37
+  children:  t_64167ad3, t_b735f0a2
+
+Body:
+# T14: Z-lab public DFlash drafter ground-truth — measure a KNOWN-GOOD drafter on our exact harness
+
+## WHY THIS MATTERS
+
+The single highest-information experiment on the board. We measure AL=1.363 on our v18 step 2500 drafter. z-lab/Qwen3.6-35B-A3B-DFlash publishes AL 3.94–6.34 on standard benchmarks. There are exactly two possibilities:
+
+1. **z-lab's drafter scores its published AL on OUR harness** → our pipeline is fine, OUR DRAFTER is the problem. The path to AL>3 is training (Track A throughput unlocks more training; T11 resume-fix recovers degraded weights; deeper training; possibly architectural changes after that).
+2. **z-lab's drafter scores far below 3.94 on OUR harness** → our HARNESS / runtime path is systematically underreporting AL. The path to AL>3 is fixing the measurement instrument first (T12 + further harness audit), not training.
+
+These two paths have NOTHING in common. We need to know which one we're on before committing more compute to either Track A or Track B's downstream fixes.
+
+## YOUR JOB
+
+### Phase 1 — Stage the z-lab reference drafter
+
+1. `hf download z-lab/Qwen3.6-35B-A3B-DFlash --local-dir /home/dnola/zlab_ref_drafter`. If that exact id doesn't exist, search HF: `curl -s "https://huggingface.co/api/models?search=z-lab+dflash&limit=20" | jq '.[].id'` — pick the closest sub-100B drafter whose published verifier is closest to MiniMax-M2.7 (or whatever public DFlash drafter targets the most similar verifier vocabulary).
+
+2. The verifier published with z-lab's drafter will NOT be MiniMax-M2.7 — it'll be Qwen3.6-35B-A3B (or whichever z-lab paired). Download the matching verifier GGUF if available, OR fall back to the closest local verifier that's compatible. Document the verifier choice in the report.
+
+3. GGUF-convert z-lab's drafter + tokenizer-merge using the same pipeline used for our v18 step 2500 export. Output to `/home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/`.
+
+### Phase 2 — Cross-validation harness check
+
+Run the SAME T16-style 25-prompt benchmark (5 families × 5 prompts × 128 max_tokens × draft_max=7) on z-lab's drafter + paired verifier through our dflash_llama LlamaServer + library benchmark() with the SAME cross-val gate as T16 (delta ≤ 0.1).
+
+Output: `/home/dnola/zlab_ref_drafter/benchmarks/summary.json` mirroring T16's schema.
+
+### Phase 3 — Compare to published
+
+Read z-lab's model card README:
+`curl -s "https://huggingface.co/$ZLAB_REPO/raw/main/README.md" | grep -A30 -iE "acceptance|tau|τ|block size|AL"`
+
+Compare per-family / per-task AL numbers between (a) our measurement of z-lab on our harness, (b) z-lab's published numbers on their own harness, (c) our v18 step 2500 measurement.
+
+Three possible outcomes, each with a clear next step:
+
+**Outcome A — z-lab on our harness ≈ z-lab published (within ~0.3 AL)**: our harness is fine. The AL=1.363 on v18 step 2500 reflects a real drafter-quality gap. Path to AL>3 = improve training. Comment: "harness verified by zlab reference; v18 drafter quality is the gap; Track A throughput-unlock + T1 resume-fix + deeper training is the path".
+
+**Outcome B — z-lab on our harness >> our v18 but still << z-lab published** (e.g. z-lab measures 2.5 on our harness vs 4.8 published): our harness is partially broken AND our drafter is partially trained. Both Track A and Track B+T12 need to land. Comment with delta.
+
+**Outcome C — z-lab on our harness ≈ our v18 step 2500 (~1.4 AL)**: harness is the dominant problem. T12 + further telemetry / runtime-path audit is the path. Training improvements won't show up until we fix measurement. Comment: "harness systematically underreports; AL>3 unreachable until T12 + audit lands".
+
+### Phase 4 — Roadmap implication
+
+Block `review-required` with a one-paragraph plan-to-AL-3 derived from your outcome. The driver propagates this into T17 (the synthesis task that builds the official roadmap).
+
+## HOST SCOPE
+
+spark-1 ONLY. Disk: z-lab drafters are typically 1-5GB; verifier could be 20-50GB; budget ~80GB on /home/dnola.
+
+## HARD RULES
+
+- DO NOT touch our v18 step 2500 export.
+- DO NOT modify dflash_llama source — T12 owns that.
+- DO NOT propose changing OUR model architecture; this task measures THEIRS.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+- Assignee: atlas6dflash3 (idle profile).
+- Priority: 92 (high — gates the AL>3 roadmap).
+
+Latest summary:
+review-required: T14 z-lab reference benchmark completed on spark-1; Outcome B — measured AL=2.883 vs published B8 mean 4.797 and v18 1.363, with crossval gate failed (delta 0.238), so roadmap needs both harness audit and training/quality work.
+
+Comments (4):
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 13:20] driver: T14 driver recovery: T12 telemetry is now DONE and spark-1 currently has no GPU compute procs, so resume z-lab public-DFlash ground-truth. Progress-checkpoint contract: before each expensive step, read/write ~/.hermes/kanban/boards/dflash-al3/workspaces/t_60a49078/t14_progress.json. Steps: 1=repo/model identifiers + expected published AL captured, 2=paired verifier/drafter staged or clear blocker recorded, 3=one-prompt smoke proves harness emits nonzero per_position_accept, 4=25-prompt benchmark complete, 5=Outcome A/B/C assigned with measured AL and artifacts. Do NOT use spark-2. Do NOT spawn multi-host/FSDP. If model staging is too large or auth-gated, write exact blocker and smallest reproducible alternative, then block review-required.
+  [2026-05-28 13:21] atlas6dflash3: review-required handoff:
+{
+  "status": "benchmark_complete",
+  "host": "spark-1",
+  "repo": "z-lab/Qwen3.6-35B-A3B-DFlash",
+  "verifier_gguf": "/home/dnola/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
+  "drafter_gguf": "/home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/zlab_qwen36_35b_a3b_dflash_buun.gguf",
+  "artifacts_remote": {
+    "summary_json": "/home/dnola/zlab_ref_drafter/benchmarks/summary.json",
+    "report_md": "/home/dnola/zlab_ref_drafter/benchmarks/report.md",
+    "rows_dir": "/home/dnola/zlab_ref_drafter/benchmarks/rows",
+    "crossval_json": "/home/dnola/zlab_ref_drafter/benchmarks/crossval.json"
+  },
+  "artifacts_local_copy": {
+    "summary_json": "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_60a49078/artifacts/summary.json",
+    "report_md": "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_60a49078/artifacts/report.md",
+    "crossval_json": "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_60a49078/artifacts/crossval.json",
+    "progress_json": "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_60a49078/t14_progress.json"
+  },
+  "benchmark": {
+    "n_pairs": 25,
+    "max_tokens": 128,
+    "draft_max": 7,
+    "measured_real_AL": 2.8828428258875007,
+    "published_B8_mean_AL": 4.796666666666667,
+    "delta_vs_published_mean": -1.9138238407791661,
+    "ratio_vs_published_mean": 0.6010096231871093,
+    "v18_step2500_AL": 1.3626416293106491,
+    "delta_vs_v18_step2500": 1.5202011965768516,
+    "ratio_vs_v18_step2500": 2.1156280300535886,
+    "paired_speedup_mean": 1.3546010055766435,
+    "n_accept": 26678,
+    "n_draft": 14169
+  },
+  "family_AL": {
+    "math": 3.324514991181658,
+    "code": 2.9280325014509576,
+    "qa": 2.9158380681818183,
+    "summarization": 2.8823056838722634,
+    "writing": 2.780362389813908
+  },
+  "crossval": {
+    "passed": false,
+    "simple_accept_length": 1.3333333333333333,
+    "api_accept_length": 1.0956521739130434,
+    "abs_delta": 0.2376811594202899,
+    "note": "The driver requested SAME cross-val gate; it failed delta<=0.1, but the prior run continued deliberately to produce the 25-prompt roadmap signal. Telemetry check: 26/26 rows with per_position_accept had nonzero values."
+  },
+  "outcome": "B",
+  "roadmap_implication": "z-lab reference is materially better than v18 on our harness but still far below z-lab published B8 AL. Both harness/runtime audit (crossval failed and published gap remains) and drafter training/quality matter. Plan-to-AL-3: first land/follow through T12 telemetry/runtime-path audit until crossval gate is green and z-lab published gap is explained; in parallel continue Track A throughput unlock + T11 resume-fix/deeper training because z-lab-on-our-harness already proves AL≈2.9 is reachable on this runtime while v18 is only 1.36."
+}
+  [2026-05-28 13:37] driver: driver review APPROVED: T14 produced the public-reference harness classifier. Outcome B: z-lab known-good on our harness measured AL=2.883 vs published B8 mean 4.797 and v18=1.363; crossval gate failed (delta 0.238). This supports BOTH harness underreporting and our drafter quality gap. Completing T14 so T17 can synthesize after T15/T13.
+
+Events (141):
+  [2026-05-28 08:57] commented {'author': 'default', 'len': 24}
+  [2026-05-28 08:57] [run 216] blocked {'reason': 'user stop final'}
+  [2026-05-28 08:57] archived
+  [2026-05-28 12:27] [run 220] claimed {'lock': 'macmini.local:17068', 'expires': 1779997358, 'run_id': 220}
+  [2026-05-28 12:27] [run 220] spawned {'pid': 24424}
+  [2026-05-28 12:31] [run 220] heartbeat {'note': 'Staged z-lab exact drafter and matching Qwen3.6-35B-A3B verifier are present on spark-1; first smoke hit CUDA OOM because spark-1 is currently occupied by other llama-server benchmarks (T15/T5-looking processes). Preparing resumable T14 benchmark runner and will wait for GPU to clear rather than killing peer jobs.'}
+  [2026-05-28 12:35] [run 220] heartbeat {'note': 'T14 runner is live on spark-1 and waiting for CUDA process table to clear; currently three peer llama-server benchmarks using MiniMax/v18 are active, so starting Qwen35+zlab now aborts at cudaSetDevice OOM. I am not killing peer jobs.'}
+  [2026-05-28 12:44] [run 220] heartbeat {'note': 'T14 runner still waiting; two peer servers cleared, one T5 llama-server remains on spark-1. Once CUDA process table is empty the runner will start crossval then AR/DFlash 25-prompt benchmark and write /home/dnola/zlab_ref_drafter/benchmarks/summary.json.'}
+  [2026-05-28 12:57] [run 220] heartbeat {'note': 'Crossval completed but failed gate (simple AL 1.333 vs API AL 1.096, delta 0.238). I verified the corrected buun GGUF loads; continuing the 25-prompt AR/DFlash benchmark anyway so summary.json records the failure and gives the roadmap outcome.'}
+  [2026-05-28 13:01] [run 220] heartbeat {'note': 'Full benchmark is running on spark-1 after crossval failure; AR baseline currently active (4/25 rows written at last check).'}
+  [2026-05-28 13:06] [run 220] heartbeat {'note': 'AR baseline completed 25/25; DFlash pass running on spark-1 (2/25 rows at last check).'}
+  [2026-05-28 13:16] [run 220] blocked {'reason': 'Iteration budget exhausted (90/90) — task could not complete within the allowed iterations'}
+  [2026-05-28 13:20] commented {'author': 'driver', 'len': 749}
+  [2026-05-28 13:20] unblocked
+  [2026-05-28 13:20] [run 232] claimed {'lock': 'macmini.local:44290', 'expires': 1780000520, 'run_id': 232}
+  [2026-05-28 13:20] [run 232] spawned {'pid': 44292}
+  [2026-05-28 13:21] commented {'author': 'atlas6dflash3', 'len': 2827}
+  [2026-05-28 13:21] [run 232] blocked {'reason': 'review-required: T14 z-lab reference benchmark completed on spark-1; Outcome B — measured AL=2.883 vs published B8 mean 4.797 and v18 1.363, with crossval gate failed (delta 0.238), so roadmap needs both harness audit and training/quality work.'}
+  [2026-05-28 13:37] commented {'author': 'driver', 'len': 339}
+  [2026-05-28 13:37] completed {'result_len': 0, 'summary': None}
+
+Runs (28):
+  #107 crashed      @atlas6dflash3  2s  2026-05-28 08:03
+        ! pid 55987 not alive
+  #111 crashed      @atlas6dflash3  5s  2026-05-28 08:03
+        ! pid 56028 not alive
+  #115 crashed      @atlas6dflash3  3s  2026-05-28 08:03
+        ! pid 56089 not alive
+  #119 crashed      @atlas6dflash3  42s  2026-05-28 08:03
+        ! pid 56159 not alive
+  #123 crashed      @atlas6dflash3  2s  2026-05-28 08:03
+        ! pid 56423 not alive
+  #127 crashed      @atlas6dflash3  2s  2026-05-28 08:03
+        ! pid 56454 not alive
+  #131 crashed      @atlas6dflash3  1s  2026-05-28 08:04
+        ! pid 56495 not alive
+  #135 crashed      @atlas6dflash3  1s  2026-05-28 08:04
+        ! pid 56517 not alive
+  #137 crashed      @atlas6dflash3  2s  2026-05-28 08:04
+        ! pid 56538 not alive
+  #141 crashed      @atlas6dflash3  2s  2026-05-28 08:04
+        ! pid 56601 not alive
+  #145 crashed      @atlas6dflash3  5s  2026-05-28 08:04
+        ! pid 56667 not alive
+  #149 crashed      @atlas6dflash3  3s  2026-05-28 08:04
+        ! pid 56751 not alive
+  #153 crashed      @atlas6dflash3  42s  2026-05-28 08:04
+        ! pid 56784 not alive
+  #157 crashed      @atlas6dflash3  2s  2026-05-28 08:04
+        ! pid 57096 not alive
+  #161 crashed      @atlas6dflash3  3s  2026-05-28 08:04
+        ! pid 57139 not alive
+  #165 crashed      @atlas6dflash3  1s  2026-05-28 08:05
+        ! pid 57204 not alive
+  #169 crashed      @atlas6dflash3  2s  2026-05-28 08:05
+        ! pid 57266 not alive
+  #173 crashed      @atlas6dflash3  2s  2026-05-28 08:05
+        ! pid 57301 not alive
+  #177 crashed      @atlas6dflash3  5s  2026-05-28 08:05
+        ! pid 57345 not alive
+  #181 crashed      @atlas6dflash3  3s  2026-05-28 08:05
+        ! pid 57391 not alive
+  #185 crashed      @atlas6dflash3  38s  2026-05-28 08:05
+        ! pid 57434 not alive
+  #189 reclaimed    @atlas6dflash3  17s  2026-05-28 08:05
+        ! manual_reclaim: skill propagated, redispatching
+  #196 crashed      @atlas6dflash3  64s  2026-05-28 08:06
+        ! pid 58218 not alive
+  #200 blocked      @atlas6dflash3  29s  2026-05-28 08:07
+        → user stop: dflash-al3 campaign retired
+  #208 crashed      @atlas6dflash3  2863s  2026-05-28 08:09
+        ! pid 60358 not alive
+  #216 blocked      @atlas6dflash3  30s  2026-05-28 08:57
+        → user stop final
+  #220 blocked      @atlas6dflash3  2902s  2026-05-28 12:27
+        → Iteration budget exhausted (90/90) — task could not complete within the allowed iterations
+  #232 blocked      @atlas6dflash3  98s  2026-05-28 13:20
+        → review-required: T14 z-lab reference benchmark completed on spark-1; Outcome B — measured AL=2.883 vs published B8 mean 4.797 and v18 1.363, with crossval gate

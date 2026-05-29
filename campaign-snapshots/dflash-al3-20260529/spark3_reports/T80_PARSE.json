@@ -1,0 +1,99 @@
+{
+  "anchor_skip_count": 0,
+  "checkpoint_last_inepoch": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/checkpoint_last_inepoch",
+  "checkpoints": [
+    {
+      "files": [
+        "config.json",
+        "config.py",
+        "model.safetensors",
+        "optimizer_state_dict.pt",
+        "scheduler_state_dict.pt",
+        "trainer_state.json"
+      ],
+      "global_step": 650,
+      "is_symlink": true,
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000650",
+      "tag": "step_00000650"
+    },
+    {
+      "files": [
+        "config.json",
+        "config.py",
+        "model.safetensors",
+        "optimizer_state_dict.pt",
+        "scheduler_state_dict.pt",
+        "trainer_state.json"
+      ],
+      "global_step": 700,
+      "is_symlink": false,
+      "path": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700",
+      "tag": "step_00000700"
+    }
+  ],
+  "fresh_checkpoint": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700",
+  "host": "spark-3",
+  "max_train_steps": 750,
+  "post_run_evidence": {
+    "free_g": "total        used        free      shared  buff/cache   available\nMem:             119          21          47          16          68          98\nSwap:             15           0          15",
+    "gpu_compute_apps": "empty",
+    "tmux_ls": "nasfs_t71: 1 windows (created Fri May 29 05:07:47 2026)",
+    "train_processes": "empty"
+  },
+  "post_run_gpu_compute_apps": 0,
+  "post_run_train_processes": 0,
+  "preflight_hidden_state_sample": "978/1000 via 16-way timeout(2s) test -e sample = 97.8% (>=95%), elapsed 29s",
+  "preflight_memory": "free -g available 97 GiB (free column 49 GiB due buff/cache)",
+  "records_parsed": 100,
+  "run_label": "c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z",
+  "save": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z",
+  "source_checkpoint": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000650",
+  "train_end": {
+    "full_acc": 0.203,
+    "global_step": 749,
+    "loss": 4.781
+  },
+  "train_log": "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/train.log",
+  "train_start": {
+    "full_acc": 0.134,
+    "global_step": 650,
+    "loss": 5.0
+  },
+  "val_metrics": [
+    {
+      "AL_HI": 2.043589933589101,
+      "AL_LO": 1.3548295051646537,
+      "full_acc_epoch": 0.14919113852083682,
+      "global_step": 650,
+      "loss_epoch": 5.2609375,
+      "position_accs": [
+        0.29051066264510156,
+        0.19072631895542144,
+        0.14181663915514947,
+        0.11992547363042831,
+        0.1058699294924736,
+        0.0999649479985237,
+        0.09477596171200275
+      ],
+      "step": "step_00000650"
+    },
+    {
+      "AL_HI": 2.2137712012976407,
+      "AL_LO": 1.4461516005700592,
+      "full_acc_epoch": 0.17352997474372386,
+      "global_step": 700,
+      "loss_epoch": 5.1375,
+      "position_accs": [
+        0.34621629044413565,
+        0.24161419793963432,
+        0.16917904391884803,
+        0.13299551159143447,
+        0.11915787048637867,
+        0.1062010195106268,
+        0.09840726740658283
+      ],
+      "step": "step_00000700"
+    }
+  ],
+  "verdict": "CKPT_READY"
+}

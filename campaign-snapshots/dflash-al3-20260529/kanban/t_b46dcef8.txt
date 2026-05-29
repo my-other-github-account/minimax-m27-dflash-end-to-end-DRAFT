@@ -1,0 +1,64 @@
+Task t_b46dcef8: T38: Prove v18 ckpt -> buun conversion + first AL on recovered harness
+  status:    done
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_b46dcef8
+  skills:    spark-cluster-operations, llama-cpp, github-pat-local-storage-and-clone-bake-pitfall
+  max-retries: 2 (default)
+  created:   2026-05-28 22:50 by user
+  started:   2026-05-28 22:50
+  completed: 2026-05-28 23:00
+
+Body:
+# T38: Prove OUR v18 checkpoint -> buun-llama-cpp conversion, then measure on the RECOVERED harness (FIRST real number for our adapter)
+
+## Why this matters
+Harness recovery is PROVEN (T33: z-lab on buun simple harness AL=5.849 > published 5.21 at GSM8K/max_out=4096/thinking/draft_max=7). We have NEVER measured OUR adapter on this trusted harness. This task produces that first number — the diagnostic that decides whether we have a drafter problem or had a measurement problem.
+
+## Host scope
+spark-work (buun fork already built by T35) PREFERRED, else spark-1. Do NOT touch spark-2 (T37 lease) or spark-3 (contended).
+
+## Conversion subject (priority order, DO NOT block on fresh training)
+1. Surgically-vocab-fixed v18 ckpt `step_00004000_FIXED_v32768/` on spark-2 (sliced lm_head 200064->32768). READ-ONLY pull off spark-2 — never execute on spark-2.
+2. Original v18 step 2500 ckpt — last resort just to prove the PIPELINE.
+A LOW number on v18-2500 is still informative (isolates harness vs drafter). The point is the pipeline + first number.
+
+## Steps
+1. Inspect buun conversion code: `conversion/minimax.py`, `convert_hf_to_gguf.py`, `src/models/dflash_draft.cpp`. Document expected fields: vocab, block_size, num_layers, hidden, intermediate, mask_token_id, d2t map.
+2. Map our shape: draft vocab=32768, block_size=8, num_layers=6, hidden=3072, intermediate=4096, mask_token_id=200054. Verifier=Qwen3.6-35B-A3B (vocab 151936) via the existing UD-IQ4_XS gguf. Identify exact conversion invocation.
+3. Convert -> `our_v18_dflash_buun.gguf`.
+4. Run canonical T33 benchmark (GSM8K, max_out=4096, thinking ON, draft_max=7) on >=7 prompts, OUR gguf as drafter vs Qwen3.6-35B-A3B-UD-IQ4_XS verifier. VERIFY the path runs real DFlash (check draft_n_accepted in output; llama-speculative-simple silently falls back on some paths — use llama-cli/server path that T35 confirmed does real DFlash). Record mean AL + per-prompt.
+5. Compare: z-lab same harness=5.849; our v18-2500 old harness=1.36.
+
+## Verdict -> /home/dnola/v18_fix/T38_V18_ON_BUUN_HARNESS.md
+- **AL>=3**: GOAL HIT on this checkpoint — report immediately, loudly.
+- **1.4<AL<3**: harness partly masked; drafter needs more training (feeds T37/T32 trajectory).
+- **AL~=1.4**: harness was fine; pure drafter-quality problem -> recipe/training is the lever, file architectural-sweep follow-up.
+- **CONVERSION_BLOCKED**: converter cannot ingest our shape — enumerate the exact tensor/field incompatibility (highest-value escalation).
+
+## Hard rules
+- Read-only pull of ckpt off spark-2; never execute on spark-2.
+- Do NOT modify buun source. 5-hour time-box.
+- Deliver the FIRST measured AL of our adapter on the recovered harness. That number is the whole point.
+
+## Reference
+- T33 verdict/comparator: /home/dnola/v18_fix/T33_HARNESS_FINAL_VERDICT.md ; /home/dnola/zlab_ref_drafter/benchmarks_t33_published_conditions/summary_gsm8k_4096_thinking.json
+- buun build: spark-work ~/buun-llama-cpp/build/bin/
+- z-lab gguf (buun fmt): /home/dnola/zlab_ref_drafter_dflash_mm_tok_prepped/zlab_qwen36_35b_a3b_dflash_buun.gguf
+- verifier: /home/dnola/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
+- T33 runner to clone: /home/dnola/zlab_ref_drafter/t33_run_published_gsm8k.py
+- our fixed ckpt: spark-2:/home/dnola/.../step_00004000_FIXED_v32768/
+
+
+Latest summary:
+Superseded by T42 (same goal: first AL of our adapter on buun harness, but fast spec: 3 prompts x 512 tok <15min vs 7x4096 ~40min, and names the best ckpt + config-vocab-patch trap). Avoids two workers on spark-work.
+
+Events (5):
+  [2026-05-28 22:50] created {'assignee': 'atlas6dflash5', 'status': 'blocked', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': ['spark-cluster-operations', 'llama-cpp', 'github-pat-local-storage-and-clone-bake-pitfall']}
+  [2026-05-28 22:50] promoted
+  [2026-05-28 22:50] [run 499] claimed {'lock': 'macmini.local:17094', 'expires': 1780034755, 'run_id': 499}
+  [2026-05-28 22:50] [run 499] spawned {'pid': 2081}
+  [2026-05-28 23:00] [run 499] completed {'result_len': 0, 'summary': 'Superseded by T42 (same goal: first AL of our adapter on buun harness, but fast spec: 3 prompts x 512 tok <15min vs 7x4096 ~40min, and names the best ckpt + config-vocab-patch trap). Avoids two workers on spark-work.'}
+
+Runs (1):
+  #499 completed    @atlas6dflash5  595s  2026-05-28 22:50
+        → Superseded by T42 (same goal: first AL of our adapter on buun harness, but fast spec: 3 prompts x 512 tok <15min vs 7x4096 ~40min, and names the best ckpt + con

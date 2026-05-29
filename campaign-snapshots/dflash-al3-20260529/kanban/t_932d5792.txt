@@ -1,0 +1,81 @@
+Task t_932d5792: T21: Throughput gate decision NOW using T19+T8 results — YELLOW/RED verdict + v18b launcher proposal
+  status:    done
+  assignee:  atlasdflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_932d5792
+  max-retries: 2 (default)
+  created:   2026-05-28 17:34 by user
+  started:   2026-05-28 17:34
+  completed: 2026-05-28 17:38
+
+Body:
+# T21: Throughput gate decision — emit verdict NOW based on T19 + T8 partial results
+
+## CONTEXT
+
+T19 vocab-axis fix landed (V=200064 → V=32768): step time dropped from 5974ms baseline to 2798ms mean / 2463ms median. That's a **2.13x speedup just from the vocab fix**, but still over the ≤2000ms gate.
+
+T8 has tried multiple Liger/CE/AdamW variants on top of the vocab fix. Best partial: 2167ms. Still above gate. T8 is still iterating on a custom Triton streaming CE-backward kernel which may take days.
+
+The user explicitly relaxed the gate earlier this campaign: "I'll relax requirements to 1 step per 2 seconds" = ≥0.5 it/s = ≤2000ms.
+
+## YOUR JOB
+
+1. **Read these files on spark-2:**
+   - /home/dnola/v18_fix/T8_RERUN_REVIEW_REQUIRED.md
+   - /home/dnola/v18_fix/t8_reduced_vocab_rerun_result.json
+   - Any /home/dnola/v18_fix/t8_next_*_result.json that exists
+   - /home/dnola/v18_throughput_audit/vocab_axis_fix/proof_v32768.json
+
+2. **Aggregate the best post-vocab-fix throughput numbers**: mean, median, p50, p90 across all T8 attempts.
+
+3. **Emit a verdict** to /home/dnola/v18_fix/gate_verdict.md with one of three classifications:
+   - **GREEN** (≤2000ms): proceed with v18 retraining now
+   - **YELLOW** (2000-2500ms median, loss sanity PASS): proceed with retraining at reduced throughput — user previously accepted YELLOW
+   - **RED** (>2500ms median or loss sanity FAIL): block retraining; continue T8 kernel work
+
+4. **If GREEN or YELLOW: also propose the v18b launcher** — write /home/dnola/iq4_full_run/launch_c15_v18b_NAS.sh with:
+   - the v19 launcher as a base (vocab fix applied)
+   - --num-workers 2 --prefetch-factor 2 (the workers=6 row regressed)
+   - any Liger flags that didn't OOM (probably NONE based on T8 results)
+   - --max-anchors 3072 (locked, never change)
+   - all other knobs unchanged
+
+5. **Comment on T21** with the verdict + ETA to retraining + clear path forward.
+
+6. **DO NOT** wait for T8 to finish its custom kernel work. Use whatever T8 has produced so far.
+
+## HARD RULES
+
+- Single-spark only. spark-2 reads only. No model-capacity changes.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+- Assignee: atlasdflash5 (currently idle).
+- Priority: 100 (gates the whole campaign).
+
+Latest summary:
+Emitted T21 YELLOW gate verdict from T19+T8 partials and wrote the v18b NAS launcher proposal on spark-2. Best post-vocab-fix row is t8_next_4 at median/p50 2147.698ms, mean 2167.667ms, p90 2256.976ms with loss sanity PASS; retraining can start immediately at reduced throughput while T8 kernel work continues in parallel.
+
+Comments (1):
+  [2026-05-28 17:37] atlasdflash5: T21 gate verdict emitted.
+
+Verdict: YELLOW — proceed with v18 retraining at reduced throughput now; do not wait for T8 custom streaming CE-backward kernel work.
+
+Best post-vocab-fix T8 row: t8_next_4_skip_grad_clip_active_only_save_logits_fused_adamw, n=29 steady rows, mean=2167.667ms, median/p50=2147.698ms, p90=2256.976ms, loss sanity PASS. This misses GREEN (<=2000ms) but satisfies YELLOW (2000-2500ms median + sane loss).
+
+Artifacts written on spark-2:
+- /home/dnola/v18_fix/gate_verdict.md
+- /home/dnola/iq4_full_run/launch_c15_v18b_NAS.sh
+
+Launcher proposal: v18b keeps max_anchors=3072 and draft_vocab_size=32768, changes train workers/prefetch defaults to 2/2, and enables no Liger flags because T8 Liger CE was slower/loss-unsafe. bash -n passes.
+
+ETA/path: retraining can start immediately with the v18b launcher; continue T8 streaming CE-backward in parallel and only promote it after correctness + locked-shape throughput proof.
+
+Events (5):
+  [2026-05-28 17:34] created {'assignee': 'atlasdflash5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-28 17:34] [run 260] claimed {'lock': 'macmini.local:10948', 'expires': 1780015767, 'run_id': 260}
+  [2026-05-28 17:34] [run 260] spawned {'pid': 10958}
+  [2026-05-28 17:37] commented {'author': 'atlasdflash5', 'len': 942}
+  [2026-05-28 17:38] [run 260] completed {'result_len': 0, 'summary': 'Emitted T21 YELLOW gate verdict from T19+T8 partials and wrote the v18b NAS launcher proposal on spark-2. Best post-vocab-fix row is t8_next_4 at median/p50 2147.698ms, mean 2167.667ms, p90 2256.976ms with loss sanity PASS; retraining can start immediately at reduced throughput while T8 kernel work continues in parallel.', 'artifacts': ['/home/dnola/v18_fix/gate_verdict.md', '/home/dnola/iq4_full_run/launch_c15_v18b_NAS.sh']}
+
+Runs (1):
+  #260 completed    @atlasdflash5  219s  2026-05-28 17:34
+        → Emitted T21 YELLOW gate verdict from T19+T8 partials and wrote the v18b NAS launcher proposal on spark-2. Best post-vocab-fix row is t8_next_4 at median/p50 214

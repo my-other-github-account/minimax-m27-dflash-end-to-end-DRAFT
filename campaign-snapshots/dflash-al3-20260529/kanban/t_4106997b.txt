@@ -1,0 +1,81 @@
+Task t_4106997b: T80: FAST spark-3 bounded continuation from T78 step650 to next checkpoint
+  status:    done
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_4106997b
+  max-retries: 2 (default)
+  created:   2026-05-29 07:24 by user
+  started:   2026-05-29 07:24
+  completed: 2026-05-29 07:40
+  parents:   t_a088a79d
+  children:  t_040f6b3d, t_9af63f88
+
+Body:
+# T80: FAST spark-3 bounded continuation from T78 step650 toward next checkpoint (<1h)
+
+## Mission
+Keep spark-3 productive while T79 measures T78 on spark-2. Produce the next fresh candidate checkpoint quickly; do NOT run a full training job. Current target remains measured runtime AL >=3.0.
+
+## Inputs
+- Resume from T78 checkpoint: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000650`
+- T78 report: `/home/dnola/v18_fix/T78_SPARK3_BOUNDED_CONTINUATION.md`
+- T71 optimizer-resume patch remains the known-good scoped patch: AdamW foreach/fused disabled on resume.
+
+## Host scope
+spark-3 ONLY. Do not touch spark-1/spark-2/spark-work/spark-4. No Kasa. You hold the spark-3 lease while running.
+
+## Fast experiment
+1. Preflight one-actor lease: no existing `scripts/train.py`, no trainer tmux, no GPU compute apps; `free -g` >=90GB. If another live actor owns spark-3, block SPARK3_BUSY with exact evidence; do not kill live owned work.
+2. Verify hidden-state visibility with a 1000-entry Path.exists sample over hidden_states_nas; require >=95% before training.
+3. Resume from T78 step650 for at most +100 optimizer steps (target around global_step 750). Set checkpoint frequency / val every 50 so at least one fresh checkpoint is saved before stop.
+4. Export `TORCHINDUCTOR_COMPILE_THREADS=4` and `OMP_NUM_THREADS=8`. One train.py only. Preserve locked knobs: max_anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, seq_len=8192, draft_vocab_size=32768, no FSDP/multihost.
+5. Stop after bounded run; do not leave a long trainer running.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T80_SPARK3_BOUNDED_CONTINUATION.md` and comment CKPT_READY with checkpoint path(s), global_step reached, train/val loss+full_acc start/end, AL_LO/AL_HI if logged, and post-run no-trainer/GPU evidence. If blocked, use PATCH_FAIL/DATA_UNAVAILABLE/SPARK3_BUSY with exact evidence.
+
+## Hard rules
+FAST <=1h, one actor per host, contention-safe training, no spark-4, no full convergence wait.
+
+Latest summary:
+CKPT_READY: spark-3 bounded continuation resumed from T78 step650, stopped cleanly at max_train_steps=750, and wrote `/home/dnola/v18_fix/T80_SPARK3_BOUNDED_CONTINUATION.md`. Fresh candidate checkpoint is `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700`; no trainer/GPU compute apps left running.
+
+Comments (1):
+  [2026-05-29 07:39] atlasdflash3: CKPT_READY: spark-3 bounded continuation completed from T78 step650 and stopped cleanly at max_train_steps=750.
+
+```json
+{
+  "verdict": "CKPT_READY",
+  "host": "spark-3",
+  "report": "/home/dnola/v18_fix/T80_SPARK3_BOUNDED_CONTINUATION.md",
+  "parse_json": "/home/dnola/v18_fix/T80_PARSE.json",
+  "run_label": "c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z",
+  "save": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z",
+  "fresh_checkpoint": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700",
+  "checkpoint_last_inepoch": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/checkpoint_last_inepoch -> step_00000700",
+  "global_step_reached": 750,
+  "records_parsed": 100,
+  "train_start": {"global_step": 650, "loss": 5.0, "full_acc": 0.134},
+  "train_end": {"global_step": 749, "loss": 4.781, "full_acc": 0.203},
+  "val_metrics": [
+    {"step": "step_00000650", "loss_epoch": 5.2609375, "full_acc_epoch": 0.14919113852083682, "AL_LO": 1.3548295051646537, "AL_HI": 2.043589933589101},
+    {"step": "step_00000700", "loss_epoch": 5.1375, "full_acc_epoch": 0.17352997474372386, "AL_LO": 1.4461516005700592, "AL_HI": 2.2137712012976407}
+  ],
+  "anchor_skip_count": 0,
+  "hidden_state_sample": "978/1000 = 97.8% (>=95%)",
+  "post_run_train_processes": 0,
+  "post_run_gpu_compute_apps": 0,
+  "train_log": "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/train.log"
+}
+```
+
+Events (6):
+  [2026-05-29 07:24] created {'assignee': 'atlasdflash3', 'status': 'ready', 'parents': ['t_a088a79d'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 07:24] [run 597] claimed {'lock': 'macmini.local:97595', 'expires': 1780065581, 'run_id': 597}
+  [2026-05-29 07:24] [run 597] spawned {'pid': 29917}
+  [2026-05-29 07:39] [run 597] claim_extended {'reason': 'pid_alive', 'worker_pid': 29917, 'claim_lock': 'macmini.local:97595', 'claim_expires_was': 1780065581, 'claim_expires_now': 1780066485, 'last_heartbeat_at': None}
+  [2026-05-29 07:39] commented {'author': 'atlasdflash3', 'len': 1614}
+  [2026-05-29 07:40] [run 597] completed {'result_len': 0, 'summary': 'CKPT_READY: spark-3 bounded continuation resumed from T78 step650, stopped cleanly at max_train_steps=750, and wrote `/home/dnola/v18_fix/T80_SPARK3_BOUNDED_CONTINUATION.md`. Fresh candidate checkpoint is `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700`; no trainer/GPU compute apps left running.', 'artifacts': ['/home/dnola/v18_fix/T80_PARSE.json', '/home/dnola/v18_fix/T80_RUN_LABEL.txt', '/home/dnola/iq4_full_run/launch_T80_spark3_bounded.sh', '/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/train.log']}
+
+Runs (1):
+  #597 completed    @atlasdflash3  923s  2026-05-29 07:24
+        → CKPT_READY: spark-3 bounded continuation resumed from T78 step650, stopped cleanly at max_train_steps=750, and wrote `/home/dnola/v18_fix/T80_SPARK3_BOUNDED_CON

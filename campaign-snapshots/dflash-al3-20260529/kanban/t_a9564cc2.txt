@@ -1,0 +1,252 @@
+Task t_a9564cc2: T15: Inference-time AL headroom — structural ceiling of v18 step 2500 drafter (draftmax/oracle/perpos decomposition)
+  status:    done
+  assignee:  atlas6dflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a9564cc2
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 08:03 by user
+  started:   2026-05-28 12:27
+  completed: 2026-05-28 16:52
+  children:  t_64167ad3
+
+Body:
+# T15: Inference-time AL headroom — what's the absolute ceiling of our v18 step 2500 drafter?
+
+## CONTEXT
+
+T11 tests whether OUR drafter scores its training-side per-pos at runtime. T14 tests whether the HARNESS scores a known-good drafter at its published AL. T15 answers a third independent question: **even assuming perfect measurement and perfect prompts, what's the structural AL ceiling of the v18 step 2500 drafter at inference?**
+
+If the ceiling is well below 3, no amount of harness fixes or distribution matching reaches AL>3 on this checkpoint — we need a better drafter (more training, architectural change). If the ceiling is well above 3, then T11+T12 fixes are sufficient.
+
+## YOUR JOB
+
+### Sweep 1 — draft_max ∈ {3, 5, 7, 9, 11, 13, 15}
+
+Run the T16 25-prompt benchmark, varying ONLY draft_max. All other knobs unchanged.
+
+Expected shape per skill `dflash-c15-fp8-hybrid-winning-config-and-health-rules` Rule 6: AL is monotone non-decreasing in draft_max up to a plateau. Plateau height ≈ structural AL ceiling for this drafter on this prompt mix.
+
+Output: `<workspace>/sweep1_draftmax.json` with per-draftmax mean_real_AL + CI.
+
+### Sweep 2 — Greedy AR ceiling for verifier
+
+For each of the 25 prompts, compute:
+- Greedy AR token sequence (temperature=0, the verifier-only path).
+- "Oracle" speculative AL: at each AR step, simulate offering the AR next token as if the drafter had proposed it; count how many consecutive future tokens the drafter would have to predict-correctly for the verifier to keep accepting under min(1, p_target/p_draft) softmax-ratio acceptance.
+
+This isolates the verifier-acceptance pattern from the drafter prediction quality. The "oracle" speedup is the ceiling IF the drafter were perfect at this prompt.
+
+Output: `<workspace>/sweep2_oracle.json` with per-prompt oracle AL.
+
+### Sweep 3 — Per-position drafter quality vs verifier acceptance
+
+For each prompt, log:
+- drafter argmax matches verifier argmax at position k (per-position drafter-quality)
+- verifier softmax-ratio acceptance at position k (per-position acceptance even when drafter argmax wrong)
+- gap = (1 - drafter argmax) × (verifier softmax-ratio acceptance) — the "drafter is wrong but verifier accepts anyway" path
+
+Theory: at large vocab=200064, softmax-ratio acceptance can save us a lot of positions where argmax doesn't match. Quantify this slack.
+
+Output: `<workspace>/sweep3_perpos_decomposition.json` with per-prompt, per-position triples.
+
+### Synthesis
+
+Block review-required with these specific numbers:
+- AL plateau height from sweep 1 (the empirical ceiling at large draft_max)
+- Oracle AL from sweep 2 (ceiling assuming perfect drafter quality)
+- Per-position softmax-ratio slack from sweep 3 (how much room above argmax-match we have)
+
+Plain English question to answer in the comment: **"Can the v18 step 2500 drafter, with PERFECT measurement and IDEAL prompts, ever reach AL>3 at any reasonable draft_max?"** Answer yes/no with the data.
+
+## HOST SCOPE
+
+spark-1 ONLY.
+
+## HARD RULES
+
+- DO NOT modify our v18 step 2500 export.
+- DO NOT modify dflash_llama source.
+- DO NOT propose changing model architecture.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+- Assignee: atlas6dflash4 (idle profile).
+- Priority: 85.
+
+Latest summary:
+review-required: T15 sweep1 is complete and answers no (plateau AL≈1.37, max single prompt≈1.56); sweep2/sweep3 are explicitly marked not-supported without forbidden source instrumentation.
+
+Comments (10):
+  [2026-05-28 08:26] atlas6dflash4: review/blocker handoff:
+
+- Oriented on task and verified current workspace `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a9564cc2`.
+- Found T15 had earlier been stopped/archived with comment `user stop: dflash-al3 campaign retired`, then re-claimed as running.
+- Built a resumable sweep1 runner at local workspace `t15_sweep1.py` and copied it to spark-1 `/home/dnola/t15_sweep1.py`; remote output root would be `/home/dnola/t15_t_a9564cc2`.
+- Attempted to start sweep1 on spark-1. It loaded the 230B MiniMax verifier and v18 step2500 drafter but produced 0 rows before I stopped it.
+- I stopped my T15 llama-server/processes because spark-1 was already occupied by another DFlash/T5 run on the same verifier/drafter (`llama-server` port 19192, PID 301256 at 99% CPU for >2h) plus other active conversion work. Continuing T15 concurrently would interfere with the same spark-1 GPU/resource.
+- Also verified current `/home/dnola/dflash-llama` source only exposes aggregate `accept_length` and histogram-derived `per_position_accept`; it does not yet expose the T12 inner-loop telemetry required for sweep2/sweep3 (`drafter argmax matches verifier argmax`, softmax-ratio slack, oracle decomposition). T12 is still running/not reviewed, so the required decomposition cannot be produced honestly from the current harness without modifying source (forbidden for T15).
+
+No valid sweep JSON artifacts were produced. `/home/dnola/t15_t_a9564cc2/sweep1_rows` has 0 rows and no `sweep1_draftmax.json`.
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 12:41] atlas6dflash4: review/blocker handoff (current run):
+
+- Verified spark-1 was initially free (`nvidia-smi` 0%, no llama/python jobs), then started `/home/dnola/t15_sweep1.py` with T12-instrumented `dflash_llama` parser.
+- During the run, another spark-1 job started on the same verifier/drafter/GPU (`/tmp/t5_finish_extended_writing.py`, llama-server port 19192). I stopped only T15-owned processes (`/home/dnola/t15_sweep1.py` and llama-server port 18103) and left the T5 job untouched.
+- Copied partial remote artifacts into the workspace under `remote_t15_t_a9564cc2/` and wrote status to `t15_attempt_status.json`.
+
+Partial diagnostic only (NOT a valid T15 plateau): sweep1 completed 4/175 rows, all at draft_max=3. Partial dmax=3 mean_real_AL=1.2363, bootstrap CI95=[1.1846, 1.2528], per_position_accept_aggregate=[0.2144, 0.0186, 0.0033]. No draft_max plateau can be inferred.
+
+Still blocked for an honest T15 completion:
+1. Full sweep1 is a multi-hour spark-1 exclusive run and currently collides with an active same-GPU T5 llama-server.
+2. T12’s current patch exposes per-position accepted/reached, but not drafter-argmax-vs-verifier-argmax or softmax-ratio slack/oracle internals required for sweep2/sweep3. Producing those would require additional runtime instrumentation/source modification, which T15 forbids.
+
+No T15-owned processes remain on spark-1.
+  [2026-05-28 12:46] default: T12 is now reviewed/complete: nonzero runtime per_position_accept telemetry is verified. Resume T15 from existing partial state; use the new telemetry where sufficient, and if sweep2/sweep3 still require additional forbidden source modifications, clearly separate completed sweep1 plateau work from the remaining instrumentation gap. spark-1 currently has T5/T14 active, so avoid killing their jobs; run when GPU slot is available.
+  [2026-05-28 12:53] atlas6dflash4: review/blocker handoff (run 229):
+
+What I did:
+- Re-checked task context and prior partial state.
+- Checked spark-1: T5 had finished (50 rows) and T14 initially appeared crashed/no GPU use, so I started the existing resumable sweep1 runner `/home/dnola/t15_sweep1.py`.
+- During startup, T14 restarted on spark-1 (`t14_zlab_run_eval.py` plus `llama-speculative-simple`). To obey the host-scope/no-interference rule, I stopped only T15-owned processes (`/home/dnola/t15_sweep1.py` and the T15 llama-server on port 18103) and left T14 untouched.
+- Verified no T15-owned process remains on spark-1.
+- Copied the latest remote partial state into the workspace under `remote_t15_t_a9564cc2/` and updated `t15_attempt_status.json`.
+- Re-checked `/home/dnola/dflash-llama/src/dflash_llama/inference`: T12 telemetry currently exposes `n_accept`, `n_draft`, `per_position_accepted`, `per_position_reached`, and `per_position_accept` in `analyze.py`; grep found no exposed drafter-vs-verifier argmax, softmax-ratio slack, or oracle path telemetry in the inference package.
+
+Current artifacts:
+- `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a9564cc2/remote_t15_t_a9564cc2/sweep1_draftmax.json`
+- `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a9564cc2/t15_attempt_status.json`
+
+Current data (partial diagnostic only, not a valid plateau):
+- sweep1 completed rows: 4/175.
+- draft_max=3 only: mean_real_AL=1.236323851203501, bootstrap CI95=[1.18456678700361, 1.252843152140905].
+- dmax=3 per_position_accept_aggregate=[0.21444210612691467, 0.01859981400437637, 0.0032822888402625826].
+- draft_max={5,7,9,11,13,15}: no rows yet.
+
+Separation of completed vs blocked:
+- Completed/usable: partial sweep1 dmax=3 diagnostic copied locally.
+- Not completed: sweep1 plateau. It still needs an exclusive spark-1 window because the full 7×25 prompt sweep loads the same GB10/verifier resource T14 is using.
+- Not honestly computable under T15 constraints yet: sweep2 oracle AL and sweep3 argmax/softmax-ratio slack. Current reviewed T12 telemetry is enough for runtime per-position accept/reached rates, but not the drafter-quality vs verifier-acceptance decomposition requested here. Producing those fields appears to require additional instrumentation/source changes, which T15 explicitly forbids.
+
+Plain-English answer from current evidence only: cannot answer the AL>3 ceiling question yet. The only real T15 data is 4 prompts at draft_max=3 (AL≈1.236), which is far below 3 but not a plateau or structural ceiling.
+  [2026-05-28 13:37] driver: driver unblock: T12 telemetry is done and T14 public-reference job is complete, so spark-1 GPU is available for T15 structural ceiling. Resume from partial dmax=3 if useful; use fixed telemetry; spark-1 only.
+  [2026-05-28 15:38] driver: UNBLOCK/RESUME after iteration budget: preserve partial sweep1 instead of restarting. Existing spark-1 artifact /home/dnola/t15_t_a9564cc2/sweep1_draftmax.json has completed dmax 3/5/7/9/11 with ALs 1.180/1.277/1.363/1.365/1.371; dmax 13/15 are n=0. Existing llama-server PID 380926 is draft_max=13 on port 18113. Worker MUST read the artifact first, resume from dmax=13/15 (or reuse/kill stale PID 380926 if needed), then write progress JSON after each step. Step contract: 1=sweep1_draftmax_complete, 2=sweep2_oracle_complete_or_not_supported_with_reason, 3=sweep3_perpos_decomp_complete_or_not_supported_with_reason, 4=plain-English answer whether v18 step2500 can ever reach AL>3. Do NOT redo dmax 3/5/7/9/11. Do NOT touch spark-2 or modify dflash_llama source/export dirs.
+  [2026-05-28 16:38] atlas6dflash4: review-required handoff:
+
+Artifacts in workspace `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a9564cc2`:
+- `sweep1_draftmax.json` — complete 7×25 draft_max sweep, copied from spark-1.
+- `remote_t15_t_a9564cc2/` — full remote copy including per-prompt rows/logs.
+- `sweep2_oracle.json` — not-supported-with-reason under T15 no-source-modification constraint.
+- `sweep3_perpos_decomposition.json` — not-supported-with-reason under T15 no-source-modification constraint, includes available per_position_accept proxy.
+- `t15_synthesis.json` — machine-readable step contract + synthesis.
+
+Sweep1 completed: 175/175 rows on spark-1 only. Weighted real AL by draft_max:
+- dmax=3: 1.179595
+- dmax=5: 1.276929
+- dmax=7: 1.362642
+- dmax=9: 1.364616
+- dmax=11: 1.371047
+- dmax=13: 1.370465
+- dmax=15: 1.372407
+
+Prompt-mean AL and bootstrap CI95:
+- dmax=3: mean 1.194509, CI [1.179475, 1.216856]
+- dmax=5: mean 1.300385, CI [1.282204, 1.320675]
+- dmax=7: mean 1.391362, CI [1.369292, 1.415560]
+- dmax=9: mean 1.393317, CI [1.370997, 1.417743]
+- dmax=11: mean 1.401974, CI [1.378517, 1.427497]
+- dmax=13: mean 1.398543, CI [1.376813, 1.423431]
+- dmax=15: mean 1.402132, CI [1.379470, 1.426772]
+
+Plateau: dmax 9–15 weighted mean ≈1.3696; max weighted AL is dmax=15 at 1.3724. Best single-prompt AL observed anywhere in the sweep was only 1.5578 (dmax=11, math prompt idx 4). dmax=15 aggregate per_position_accept = [0.302640, 0.054653, 0.012793, 0.002320, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0].
+
+Sweep2 oracle AL: not honestly computable from current reviewed T12 telemetry without forbidden instrumentation. The inference package exposes aggregate accept_length and per_position_accepted/reached/accept only; it does not expose greedy verifier AR token sequences, drafter proposal tokens/logprobs, verifier target/proposal probabilities, or softmax-ratio values needed to simulate oracle acceptance.
+
+Sweep3 per-position drafter-quality vs verifier-acceptance decomposition: not honestly computable from current reviewed T12 telemetry without forbidden instrumentation. Available telemetry is per-position acceptance only, not drafter-argmax-vs-verifier-argmax or “wrong argmax but verifier accepts via softmax ratio” slack.
+
+Plain-English answer: No. On the actual T16 25-prompt sweep, increasing draft_max from 9 through 15 plateaus at weighted real AL ≈1.37 (prompt-mean ≈1.40), with the best single prompt only ≈1.56. Positions >=5 have zero aggregate acceptance even at draft_max=15. This v18 step2500 checkpoint is nowhere near AL>3 at reasonable draft_max under perfect measurement; harness fixes alone are not enough for AL>3 on this checkpoint.
+
+Verification:
+- Re-read spark-1 `/home/dnola/t15_t_a9564cc2/sweep1_draftmax.json`: completed_rows=175, total_rows=175, dmax15 weighted AL=1.3724072052401746.
+- Verified no T15 llama-server / t15_sweep1 process remains on spark-1.
+  [2026-05-28 16:52] driver: review APPROVED. Verified from task summary/comments: T15 completed supported Sweep1 draft_max ceiling; AL plateaus around 1.37 on 25-prompt mix and max single prompt around 1.56; Sweep2/Sweep3 require forbidden source instrumentation and are explicitly not supported under T15 hard rules. Completing T15 so T17 can synthesize PLAN_TO_AL3 with T11 HARNESS_BUG, T12 telemetry fix, T14 Outcome B, T13 filler findings, and this structural-ceiling evidence.
+  [2026-05-28 17:33] user: T15 structural ceiling result accepted: plateau AL=1.37, max-prompt 1.56 on AS-EXPORTED v18 step 2500. Ceiling reflects the BROKEN drafter (vocab=200064 silent regression per T19). Re-measure after T19 vocab fix lands + retraining resumes. Completing.
+
+Events (162):
+  [2026-05-28 14:44] [run 234] heartbeat {'note': 'T15 sweep1 progress: 87/175 rows. dmax=9 is 12/25 provisional AL=1.431; completed lower dmax values remain below 1.37.'}
+  [2026-05-28 14:54] [run 234] heartbeat {'note': 'T15 sweep1 progress: 99/175 rows. dmax=9 is 24/25 with provisional AL=1.3675; moving to dmax=11 next.'}
+  [2026-05-28 15:03] [run 234] heartbeat {'note': 'T15 sweep1 progress: 110/175 rows. Full ALs: d3=1.1796, d5=1.2769, d7=1.3626, d9=1.3646; d11 is 10/25 provisional AL=1.4596.'}
+  [2026-05-28 15:13] [run 234] heartbeat {'note': 'T15 sweep1 progress: 122/175 rows. dmax=11 is 22/25 provisional AL=1.3807; dmax=13 and 15 remain.'}
+  [2026-05-28 15:26] [run 234] blocked {'reason': 'Iteration budget exhausted (90/90) — task could not complete within the allowed iterations'}
+  [2026-05-28 15:38] commented {'author': 'driver', 'len': 777}
+  [2026-05-28 15:38] unblocked
+  [2026-05-28 15:38] [run 246] claimed {'lock': 'macmini.local:80040', 'expires': 1780008800, 'run_id': 246}
+  [2026-05-28 15:38] [run 246] spawned {'pid': 80042}
+  [2026-05-28 15:38] [run 246] heartbeat {'note': 'Re-oriented after unblock; reading existing spark-1 sweep1 artifact before resuming dmax=13/15 as required, preserving completed dmax 3/5/7/9/11.'}
+  [2026-05-28 15:46] [run 246] heartbeat {'note': 'Sweep1 resumed from existing artifact as required. dmax=13 first prompt completed after ~1850s with AL=1.432; this confirms dmax=13 is much slower but still running. Monitoring for subsequent-row rate before deciding whether to let it continue or block on runtime infeasibility.'}
+  [2026-05-28 15:55] [run 246] heartbeat {'note': 'Sweep1 is progressing normally after dmax=13 warmup: 137/175 rows; dmax=13 has 12/25 prompts, AL=1.435 CI~[1.422,1.473]. Continuing to complete dmax=13 then dmax=15.'}
+  [2026-05-28 16:10] [run 246] claim_extended {'reason': 'pid_alive', 'worker_pid': 80042, 'claim_lock': 'macmini.local:80040', 'claim_expires_was': 1780009842, 'claim_expires_now': 1780010744, 'last_heartbeat_at': 1780008942}
+  [2026-05-28 16:15] [run 246] heartbeat {'note': 'Sweep1 progress: dmax=13 complete (25/25, weighted AL=1.3705); dmax=15 in progress (10/25, provisional AL=1.4579). Continuing; no non-T15 spark-1 jobs observed.'}
+  [2026-05-28 16:30] [run 246] claim_extended {'reason': 'pid_alive', 'worker_pid': 80042, 'claim_lock': 'macmini.local:80040', 'claim_expires_was': 1780011011, 'claim_expires_now': 1780011925, 'last_heartbeat_at': 1780010111}
+  [2026-05-28 16:38] commented {'author': 'atlas6dflash4', 'len': 2883}
+  [2026-05-28 16:38] [run 246] blocked {'reason': 'review-required: T15 sweep1 is complete and answers no (plateau AL≈1.37, max single prompt≈1.56); sweep2/sweep3 are explicitly marked not-supported without forbidden source instrumentation.'}
+  [2026-05-28 16:52] commented {'author': 'driver', 'len': 453}
+  [2026-05-28 16:52] completed {'result_len': 0, 'summary': None}
+  [2026-05-28 17:33] commented {'author': 'user', 'len': 251}
+
+Runs (29):
+  #108 crashed      @atlas6dflash4  2s  2026-05-28 08:03
+        ! pid 55988 not alive
+  #112 crashed      @atlas6dflash4  5s  2026-05-28 08:03
+        ! pid 56029 not alive
+  #116 crashed      @atlas6dflash4  3s  2026-05-28 08:03
+        ! pid 56090 not alive
+  #120 crashed      @atlas6dflash4  42s  2026-05-28 08:03
+        ! pid 56160 not alive
+  #124 crashed      @atlas6dflash4  2s  2026-05-28 08:03
+        ! pid 56424 not alive
+  #128 crashed      @atlas6dflash4  2s  2026-05-28 08:03
+        ! pid 56455 not alive
+  #132 crashed      @atlas6dflash4  1s  2026-05-28 08:04
+        ! pid 56496 not alive
+  #136 crashed      @atlas6dflash4  1s  2026-05-28 08:04
+        ! pid 56518 not alive
+  #138 crashed      @atlas6dflash4  2s  2026-05-28 08:04
+        ! pid 56539 not alive
+  #142 crashed      @atlas6dflash4  2s  2026-05-28 08:04
+        ! pid 56603 not alive
+  #146 crashed      @atlas6dflash4  5s  2026-05-28 08:04
+        ! pid 56668 not alive
+  #150 crashed      @atlas6dflash4  3s  2026-05-28 08:04
+        ! pid 56752 not alive
+  #154 crashed      @atlas6dflash4  42s  2026-05-28 08:04
+        ! pid 56785 not alive
+  #158 crashed      @atlas6dflash4  2s  2026-05-28 08:04
+        ! pid 57097 not alive
+  #162 crashed      @atlas6dflash4  3s  2026-05-28 08:04
+        ! pid 57140 not alive
+  #166 crashed      @atlas6dflash4  1s  2026-05-28 08:05
+        ! pid 57205 not alive
+  #170 crashed      @atlas6dflash4  2s  2026-05-28 08:05
+        ! pid 57267 not alive
+  #174 crashed      @atlas6dflash4  2s  2026-05-28 08:05
+        ! pid 57302 not alive
+  #178 crashed      @atlas6dflash4  5s  2026-05-28 08:05
+        ! pid 57346 not alive
+  #182 crashed      @atlas6dflash4  3s  2026-05-28 08:05
+        ! pid 57392 not alive
+  #186 crashed      @atlas6dflash4  38s  2026-05-28 08:05
+        ! pid 57435 not alive
+  #190 reclaimed    @atlas6dflash4  19s  2026-05-28 08:05
+        ! manual_reclaim: skill propagated, redispatching
+  #197 reclaimed    @atlas6dflash4  67s  2026-05-28 08:06
+        ! manual_reclaim: user stop: campaign retired
+  #205 blocked      @atlas6dflash4  0s  2026-05-28 08:07
+        → user stop: dflash-al3 campaign retired
+  #209 blocked      @atlas6dflash4  1032s  2026-05-28 08:09
+        → review-required/blocker: T15 cannot run now without interfering with an active spark-1 DFlash job, and sweep2/sweep3 require T12 per-position/softmax telemetry 
+  #221 blocked      @atlas6dflash4  819s  2026-05-28 12:27
+        → review-required/blocker: T15 has only partial dmax=3 diagnostic data (4/175 rows) because spark-1 is occupied by another same-GPU T5 run, and sweep2/sweep3 stil
+  #229 blocked      @atlas6dflash4  418s  2026-05-28 12:46
+        → review-required/blocker: T15 stopped to avoid colliding with active spark-1 T14; only partial dmax=3 data exists, and sweep2/sweep3 still need argmax/oracle/sof
+  #234 blocked      @atlas6dflash4  6550s  2026-05-28 13:37
+        → Iteration budget exhausted (90/90) — task could not complete within the allowed iterations
+  #246 blocked      @atlas6dflash4  3617s  2026-05-28 15:38
+        → review-required: T15 sweep1 is complete and answers no (plateau AL≈1.37, max single prompt≈1.56); sweep2/sweep3 are explicitly marked not-supported without forb

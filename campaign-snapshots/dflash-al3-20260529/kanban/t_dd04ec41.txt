@@ -1,0 +1,77 @@
+Task t_dd04ec41: T10: Permanence — commit C15-defaults regression-prevention package (test + audit script + postmortem + skill update)
+  status:    todo
+  assignee:  atlasdflash5
+  workspace: scratch
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 07:54 by user
+  parents:   t_e15f4d73
+
+Body:
+# T10: Permanence — commit C15-defaults regression-prevention package
+
+## CONTEXT
+
+User burned by silent throughput regression: trainer source had all the C15 optimization plumbing (liger_fused_linear_ce / liger_rope / liger_rms_norm) but launchers v15→v18 never opted in. v15 ran at 1 it/s; v18 at 0.139 it/s with the user not noticing because the FP8 / TE / split_accumulator log line still showed the "winning" recipe — Liger was the invisible missing knob.
+
+T8 flips trainer defaults so kernels are on automatically. T10 makes it permanent + documented + warning-guarded.
+
+## YOUR JOB
+
+1. **Read T8's deliverables first**:
+   - `/home/dnola/v18_fix/launcher_diff.md`
+   - `/home/dnola/v18_fix/trainer_defaults_diff.md`
+   - `/home/dnola/v18_fix/C15_DEFAULTS.md`
+   - confirm T8 actually flipped the defaults and the bare-launcher sanity audit showed the C15 stack auto-engaging.
+
+2. **Add a `c15-defaults-on-by-default` regression test** to `/home/dnola/speculators-c15-api/tests/` (or wherever the trainer tests live — `find /home/dnola/speculators-c15-api -name "test_*.py" -path "*train*"`). The test builds a TrainerConfig with bare defaults (no liger flags passed) and asserts:
+   - `config.liger_fused_linear_ce is True`
+   - `config.liger_rope is True`
+   - `config.liger_rms_norm is True`
+   - the `[FP8]` startup log line includes `liger_fused_linear_ce=True liger_rope=True liger_rms_norm=True LIGER_VERSION=<not None>`
+   Test path: `/home/dnola/speculators-c15-api/tests/test_c15_defaults.py`. Add a `__main__` block so it can be run standalone: `cd /home/dnola/speculators-c15-api && python tests/test_c15_defaults.py`.
+
+3. **Add a launcher health-check script** at `/home/dnola/iq4_full_run/audit_launcher.sh` that takes a launcher path argv and:
+   - greps the launcher for `--max-anchors`, `--num-workers`, `--prefetch-factor`, `--te-use-fused`, `--fp8-recipe-kind`, and the three `--liger-*` flags
+   - if any are missing AND the trainer defaults aren't on, prints `LAUNCHER_REGRESSION: missing <flag>, please add or rely on trainer default`
+   - exits 0 if all-good, exits 1 if any regression detected
+   Mark executable. Run it once against `/home/dnola/iq4_full_run/launch_c15_v18_NAS.sh` (the unfixed one) — should exit 1. Run it against `/home/dnola/iq4_full_run/launch_c15_v18b_NAS.sh` (T8's fixed one) — should exit 0.
+
+4. **Write a postmortem** at `/home/dnola/v18_fix/REGRESSION_POSTMORTEM.md` covering:
+   - what went wrong (Liger never enabled in any launcher v15→v18)
+   - why we didn't catch it (the [FP8] log line listed te_use_fused + split_accumulator as ON, masking the Liger=OFF state to anyone skimming)
+   - the measurements (v15 1 it/s vs v18 0.139 it/s; T7 sweep delta-per-row)
+   - the fix (T8 trainer defaults + T10 regression test + T10 launcher health check)
+   - process change recommendation: every new launcher must run `audit_launcher.sh` before first dispatch; trainer startup log must lead with throughput-relevant booleans not buried in a 30-key dict
+
+5. **Update the `dflash-c15-fp8-hybrid-winning-config-and-health-rules` skill** to add a "Rule 9: Liger kernel fusion is part of the C15 stack; the launcher MUST pass `--liger-fused-linear-ce --liger-rms-norm --liger-rope` OR rely on trainer defaults being on; verify with `audit_launcher.sh <launcher>` before dispatching ANY new training run". Use `skill_manage action=patch` to insert this rule near the existing "TL;DR" section.
+
+## DELIVERABLES
+
+- `/home/dnola/speculators-c15-api/tests/test_c15_defaults.py` (passes when run)
+- `/home/dnola/iq4_full_run/audit_launcher.sh` (executable, exit-coded)
+- `/home/dnola/v18_fix/REGRESSION_POSTMORTEM.md`
+- Updated `dflash-c15-fp8-hybrid-winning-config-and-health-rules` skill with Rule 9 added
+
+## HOST SCOPE
+
+spark-2 ONLY for the trainer test + launcher audit. The skill update is via skill_manage on the macmini orchestrator side — DO NOT skill_manage from inside the worker, comment a request on this task asking the orchestrator (driver cron) to apply the skill patch.
+
+## HARD RULES
+
+- DO NOT git commit. Leave diffs ready for user review.
+- DO NOT change any model architecture knob, anchor count, block size, hidden size, intermediate size, num layers, total seq len. Same hard constraint as T7/T8.
+- Parent: T8 (must complete first so the defaults exist).
+- Assignee: atlasdflash5.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+
+Comments (1):
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+
+Events (6):
+  [2026-05-28 07:54] created {'assignee': 'atlasdflash5', 'status': 'todo', 'parents': ['t_e15f4d73'], 'tenant': None, 'branch_name': None, 'skills': ['dflash-c15-fp8-hybrid-winning-config-and-health-rules']}
+  [2026-05-28 08:07] commented {'author': 'default', 'len': 47}
+  [2026-05-28 08:07] promoted
+  [2026-05-28 08:57] commented {'author': 'default', 'len': 24}
+  [2026-05-28 08:57] promoted
+  [2026-05-28 08:57] archived

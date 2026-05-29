@@ -1,0 +1,89 @@
+Task t_01856c50: T77: FAST T73 higher draft_max goal attempt (15/17) after T74
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_01856c50
+  max-retries: 2 (default)
+  created:   2026-05-29 06:31 by user
+  started:   2026-05-29 06:37
+  completed: 2026-05-29 08:13
+  parents:   t_fe09fcd8
+
+Body:
+
+# T77: FAST draft_max=15/17 attempt on T73 fresh checkpoint after T74
+
+## Mission
+T74 measures the T73 step550 checkpoint at draft_max=13. T72 already showed a near-goal optional draft_max=15 window (3-prompt mean AL=2.921564, one prompt >3), so if T74 does NOT hit AL>=3 at draft_max=13, immediately run a tiny higher-draft_max follow-up on the SAME T73 checkpoint to test whether this checkpoint can cross measured runtime AL>=3 in actual practice.
+
+## Parent
+Start only after T74 is done. Read T74's comment/report first.
+- If T74 already reports GOAL_HIT / mean AL>=3.0, complete immediately with `NOOP_GOAL_ALREADY_HIT`.
+- Otherwise continue below.
+
+## Host scope
+spark-2 ONLY. Inference/eval only. No training. Do not touch spark-1/spark-3/spark-work/spark-4. No Kasa. One actor per host: if spark-2 has a live dflash-al3 task, llama-server, vLLM, trainer, or GPU compute process not owned by you, block `SPARK2_BUSY` with evidence.
+
+## Steps (fast, <=45 min)
+1. Reuse T74's converted GGUF if valid: `/home/dnola/v18_fix/t74_t73_step550/t73_step550_minimax_buun_offset_rebaked.gguf`; otherwise read T74 report for the actual GGUF path. Do NOT reconvert unless the file is missing.
+2. Use the same MiniMax native-chat prompt formatting and runner args as T72/T74, target MiniMax-M2.7 GGUF, temp=0/top_k=1, output cap <=512.
+3. Run draft_max=15 on 5 prompts if it fits; if 5 prompts would exceed time, run 3 prompts and stop. If mean AL is 2.9-3.05 or mixed, add draft_max=17 on 3 prompts.
+4. Record raw measured runtime AL only (`tokens_predicted / (draft_n / draft_max)` or the established buun output field). No multiplier/extrapolation.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T77_T73_DRAFTMAX15_17_GOAL_ATTEMPT.md` and comment a concise table:
+- draft_max, n prompts, per-prompt AL list, mean AL, draft_n_decoded/accepted if available.
+- `GOAL_HIT` if mean AL>=3.0 on any tested setting; `NEAR_MISS` if best mean 2.7-2.999; `NO_IMPROVEMENT` if best mean <2.7.
+
+## Hard rules
+FAST signal only. Raw measured AL only. Preserve locked training knobs. spark-2 only, one actor per host, no Kasa.
+
+
+Latest summary:
+Completed T77 on spark-2 using the T74 T73 step550 GGUF. draft_max=15 over 5 prompts produced mean raw runtime AL=2.792024 (NEAR_MISS); draft_max=17 was skipped because the draft_max=15 mean/range did not meet the 2.9–3.05 or mixed trigger. Report written to /home/dnola/v18_fix/T77_T73_DRAFTMAX15_17_GOAL_ATTEMPT.md.
+
+Comments (4):
+  [2026-05-29 06:48] driver: LEASE COLLISION: T77 and T76 both claimed spark-2 simultaneously under atlasdflash4. Keeping T76 (newer T75 checkpoint AL, higher campaign priority) as the sole spark-2 actor; pausing T77 to avoid duplicate llama-server/GPU contention. Resume only after T76 completes or blocks.
+  [2026-05-29 06:48] default: BLOCKED: SPARK2_BUSY: paused by driver due to lease collision with T76; resume after T76 releases spark-2
+  [2026-05-29 07:58] dflash-al3-driver: Driver 07:59 PDT: spark-2 is now free (T76/T79 done; no active spark-2 priority claim on board). Resuming T77 as the spark-2 lease-holder for one FAST inference-only draft_max=15/17 attempt on T73/T74 GGUF. Preserve one-actor rule; if spark-2 is busy at preflight, block with evidence.
+  [2026-05-29 08:13] atlasdflash4: T77 result (spark-2, reused T74 GGUF):
+
+| draft_max | n prompts | per-prompt raw runtime AL | mean AL | draft_n_decoded | draft_n_accepted | verdict |
+|---:|---:|---|---:|---|---|---|
+| 15 | 5 | [2.806499, 2.831737, 2.741433, 2.743363, 2.837089] | 2.792024 | [2031, 2193, 1926, 2373, 2707] | [90, 102, 77, 94, 123] | NEAR_MISS |
+
+`draft_max=17` skipped per spec trigger: draft_max=15 mean=2.792024, range=[2.741433, 2.837089], not in 2.9–3.05/mixed band. Raw measured AL only; no multiplier/extrapolation.
+
+Artifacts:
+- Report: `/home/dnola/v18_fix/T77_T73_DRAFTMAX15_17_GOAL_ATTEMPT.md`
+- Summary JSON: `/home/dnola/v18_fix/t77_t73_draftmax15_17/al_smoke/summary_t77_t73_draftmax15_17.json`
+- JSONL: `/home/dnola/v18_fix/t77_t73_draftmax15_17/al_smoke/al_runs_t77_t73_draftmax15_17.jsonl`
+- Server log: `/home/dnola/v18_fix/t77_t73_draftmax15_17/al_smoke/server_draftmax15_18094.log`
+
+Postflight: no llama-server/vLLM/trainer/GPU compute process remained on spark-2.
+
+Events (17):
+  [2026-05-29 06:31] created {'assignee': 'atlasdflash4', 'status': 'todo', 'parents': ['t_fe09fcd8'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 06:37] promoted
+  [2026-05-29 06:37] [run 590] claimed {'lock': 'macmini.local:16952', 'expires': 1780062740, 'run_id': 590}
+  [2026-05-29 06:37] [run 590] spawned {'pid': 18789}
+  [2026-05-29 06:39] [run 590] heartbeat {'note': 'Started T77 spark-2 draft_max=15/17 eval using T74 GGUF; waiting for llama-server load/first prompts.'}
+  [2026-05-29 06:42] [run 590] heartbeat {'note': 'T77 running on spark-2: llama-server draft_max=15 loaded/in progress, no prompt results yet.'}
+  [2026-05-29 06:48] commented {'author': 'driver', 'len': 278}
+  [2026-05-29 06:48] [run 590] reclaimed {'manual': True, 'reason': 'spark-2 lease collision with higher-priority T76', 'prev_lock': 'macmini.local:16952', 'prev_pid': 18789, 'host_local': True, 'termination_attempted': True, 'terminated': True, 'sigkill': False}
+  [2026-05-29 06:48] commented {'author': 'default', 'len': 105}
+  [2026-05-29 06:48] [run 592] blocked {'reason': 'SPARK2_BUSY: paused by driver due to lease collision with T76; resume after T76 releases spark-2'}
+  [2026-05-29 07:58] commented {'author': 'dflash-al3-driver', 'len': 285}
+  [2026-05-29 07:58] unblocked
+  [2026-05-29 07:58] [run 601] claimed {'lock': 'macmini.local:39370', 'expires': 1780067627, 'run_id': 601}
+  [2026-05-29 07:58] [run 601] spawned {'pid': 39374}
+  [2026-05-29 08:01] [run 601] heartbeat {'note': 'Preflight passed on spark-2 (no llama-server/vLLM/trainer/GPU process found); T77 script staged and starting draft_max=15 eval using T74 GGUF.'}
+  [2026-05-29 08:13] commented {'author': 'atlasdflash4', 'len': 967}
+  [2026-05-29 08:13] [run 601] completed {'result_len': 0, 'summary': 'Completed T77 on spark-2 using the T74 T73 step550 GGUF. draft_max=15 over 5 prompts produced mean raw runtime AL=2.792024 (NEAR_MISS); draft_max=17 was skipped because the draft_max=15 mean/range did not meet the 2.9–3.05 or mixed trigger. Report written to /home/dnola/v18_fix/T77_T73_DRAFTMAX15_17_GOAL_ATTEMPT.md.'}
+
+Runs (3):
+  #590 reclaimed    @atlasdflash4  662s  2026-05-29 06:37
+        ! manual_reclaim: spark-2 lease collision with higher-priority T76
+  #592 blocked      @atlasdflash4  0s  2026-05-29 06:48
+        → SPARK2_BUSY: paused by driver due to lease collision with T76; resume after T76 releases spark-2
+  #601 completed    @atlasdflash4  882s  2026-05-29 07:58
+        → Completed T77 on spark-2 using the T74 T73 step550 GGUF. draft_max=15 over 5 prompts produced mean raw runtime AL=2.792024 (NEAR_MISS); draft_max=17 was skipped

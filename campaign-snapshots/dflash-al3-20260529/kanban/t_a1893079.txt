@@ -1,0 +1,173 @@
+Task t_a1893079: T6: Background trainer-side experiments on spark-2 — AL harvest, throughput audit, resume-probe sanity (NEVER completes)
+  status:    blocked
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 07:33 by user
+  started:   2026-05-28 12:27
+
+Body:
+# T6: Background trainer-improvement experiments (long-running, never completes) — keeps spark-2 busy on training-side gains
+
+## PURPOSE
+
+This task NEVER completes on its own. Whenever T3's long-running v18 trainer is alive and just-monitored (no real driver-work to do), spawn one short experiment on spark-2's CPU/idle GPU cycles that could lift DFlash quality. The driver unblocks + redispatches this whenever T1/T3 are healthy-but-quiet.
+
+## YOUR JOB (one cycle per dispatch)
+
+Each dispatch, do ONE of the following on spark-2 WITHOUT disrupting the long-running v18 trainer in `tmux:c15_train_NAS_v18_s2`. Then block with `review-required` and a one-line summary. Driver unblocks next tick.
+
+### Menu
+
+1. **In-flight position-k accuracy harvest**: cat `~/speculators/runs/<active_run>/val_metrics.json`, parse the latest val cycle's per_pos accs, compute AL_LO (1+Σ∏p) and AL_HI (1+Σp), write to `<workspace>/al_inflight_<step>.json`. Append to `<workspace>/al_inflight_trajectory.jsonl`.
+
+2. **Throughput audit**: tail train.log for the last 200 steps, compute mean it/s, GPU SM utilization (via nvidia-smi dmon snapshot), DataLoader queue depth if logged. Compare to T1's pre-fix throughput (650s/100 steps = 0.154 it/s baseline). Write to `<workspace>/throughput_<step>.json`.
+
+3. **Resume-probe sanity check**: pick a recent ckpt (NOT the active one), stage to a throwaway dir, run the t2_resume_probe.py from /home/dnola/v18_resume_bug/ against it to verify the patched loader is still working. Write to `<workspace>/resume_probe_<step>.json`. (Catches regression if the trainer's checkpoint format drifts.)
+
+4. **Dataset coverage spot-check**: pick 100 random batches from the active dataloader, verify anchor coverage matches the 95%+ gate documented in the training launcher. Catch any silent FUSE/NAS dropouts.
+
+5. **Eval-prompt cache warmup**: pre-stage GGUF-converted versions of expected next-export checkpoints (step 4000, 5000, etc.) to spark-1's eval directory so T2/T5 can benchmark immediately when they appear. Use existing tooling at /home/dnola/ai_envs/, no new code.
+
+### After ONE menu item
+
+- Write the result file.
+- Comment on this task one line summary.
+- Block with `review-required` reason like "cycle N <action> done: <one-line numeric finding>".
+- Driver dispatches next cycle later.
+
+### If nothing useful to do
+
+- Comment "spark-2 idle-cycles: nothing actionable, trainer healthy at step <S>, loss_0=<L>".
+- Block with `review-required` reason `IDLE-cycle-N-trainer-step-<S>`.
+- Driver deprioritizes for several ticks.
+
+## HARD RULES
+
+- **Host scope: spark-2 ONLY.**
+- **Do not touch the active v18 trainer tmux session.** Read-only access to its logs and run dir. No `tmux kill`, no `kill -<sig>` against its PID.
+- **Do not write into the active trainer's checkpoint directory.** Throwaway dirs only.
+- **Never claim AL>3 from training-side numbers alone.** Training-side is at best an upper bracket; only measured runtime AL (from T5 / T2 on spark-1) counts toward the campaign goal.
+- Assignee: atlasdflash4. Same profile as T3; this task runs whenever T3 is in its "monitoring, nothing to do" pose.
+- Required skills: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+
+Latest summary:
+paused: T37 owns spark-2 lease for root-cause diagnosis
+
+Comments (27):
+  [2026-05-28 07:36] driver: RECOVERY: T6 was crash-looping with Unknown skill(s): dflash-c15-fp8-hybrid-winning-config-and-health-rules. Installed dflash-c15-fp8-hybrid-winning-config-and-health-rules and dflash-training into atlasdflash4; reclaimed for fresh dispatch. Resume one T6 cycle only, then block review-required as designed.
+  [2026-05-28 07:37] driver: RECOVERY UPDATE: confirmed install script path absent; manually copied dflash-c15-fp8-hybrid-winning-config-and-health-rules and dflash-training from ~/.hermes/skills/mlops-training into ~/.hermes/profiles/atlasdflash4/skills/mlops-training. Reclaimed again; next run should start normally.
+  [2026-05-28 07:42] atlasdflash4: cycle 1 AL harvest done: spark-2 v18 step 2500 training-side AL_LO=1.772, AL_HI=2.845 from marginal teacher-forced pos accs [0.512,0.375,0.282,0.216,0.176,0.151,0.133]; wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/al_inflight_00002500.json and appended trajectory. Note: tmux probe found c15_train_NAS_v18_s2 not alive (`/tmp/tmux-1000/default` missing); state.json last_step=3870 last_rc=1.
+  [2026-05-28 07:57] atlasdflash4: cycle 2 throughput audit done: spark-2 v18 launcher/tmux is not alive (`tmux ls` no server), no tqdm/it-s samples, GPU dmon 0% SM/0% mem at ~4W, state.json last_rc=1 last_step=0 duration=70s; coverage gate still passes at 97.286%. Wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000.json. Baseline compare unavailable because training never reached a measured step (T1 pre-fix baseline = 0.154 it/s).
+  [2026-05-28 08:05] driver: driver review: T6 cycle 2 accepted (throughput audit found production v18 tmux dead; T7/T1 are now the active throughput/resume work on spark-2). Filler is unblocked for one more non-disruptive cycle; do NOT touch active T7 train_snapshot PID 362898 or any model-capacity knobs.
+  [2026-05-28 08:09] driver: RECOVERY: board was accidentally archived by external/default worker; restored filler to ready. Continue spark-2 only and do not touch active T7 sweep.
+  [2026-05-28 08:10] atlasdflash4: cycle 3 throughput audit done: spark-2 has no tmux server, watched T7 PID 362898 is absent, no candidate run logs/it-s samples found, GPU dmon is idle (0% SM/0% mem, ~4W); wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle3.json. Read-only audit only; did not touch tmux/processes/checkpoints.
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 12:29] atlasdflash4: cycle 4 throughput audit done: spark-2 reachable via tailnet, no tmux server, no c15/v18/T7/train_snapshot/torchrun trainer processes, GPU idle (0% SM/0% mem, ~4.48W), no candidate run dirs under ~/speculators/runs or ~/runs; wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle4.json. Read-only audit only; did not touch processes/tmux/checkpoints.
+  [2026-05-28 12:34] atlasdflash4: cycle 5 throughput audit done: spark-2 reachable, no tmux server / no c15-v18 or train_snapshot trainer process, no run logs or val_metrics/state files found under expected dirs, GPU idle (0% SM/0% mem, ~4.45W); wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle5.json. Read-only audit only; cleaned up one orphaned python3 collector from this run after verifying it was not a trainer.
+  [2026-05-28 12:48] atlasdflash4: cycle 6 throughput audit done: spark-2 reachable, no tmux server / no c15-v18/T7/train_snapshot/torchrun trainer processes, no train.log/val_metrics/state files under expected roots, GPU idle (0% SM/0% mem, ~4.55W); wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle6.json. Read-only audit only; did not touch tmux/processes/checkpoints.
+  [2026-05-28 13:37] driver: driver unblocking filler to preserve spark-2 never-idle only if priority T18 is not claimed immediately; do one read-only trainer-side cycle, do not touch production tmux or capacity knobs.
+  [2026-05-28 13:41] atlasdflash4: cycle 7 throughput audit done: spark-2 reachable, no tmux server / no c15-v18/train_snapshot/torchrun trainer processes, no train.log/val_metrics/state files under expected roots, GPU mostly idle (query 0% SM/0% mem at 4.53W) with one transient 50% dmon sample from short-lived `/home/dnola/v18_throughput_audit/operator_deepdive/profile_ce_backward.py` that was gone on follow-up; wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle7.json. Read-only audit only; did not touch tmux/processes/checkpoints.
+  [2026-05-28 14:11] default: BLOCKED: paused filler: spark-2 priority T8 is running steady V=32768 throughput/defaults work; avoid same-GPU interference. Reopen filler only if spark-2 would otherwise be idle.
+  [2026-05-28 16:14] driver: DRIVER 2026-05-28 16:14: spark-2 would otherwise be idle between throughput iterations. If claimed, perform one lightweight trainer-side audit cycle that does NOT interfere with T8: inspect logs/artifacts only, no GPU-heavy training unless no priority T8/T9 worker is active. Block review-required after one cycle.
+  [2026-05-28 16:18] atlasdflash4: cycle 8 lightweight throughput/artifact audit done: spark-2 has only `nasfs_v18` tmux alive (NAS FUSE), no trainer/T8/T9/torchrun/perf_sweep processes, GPU idle across 3 dmon samples (0% SM/0% mem, ~4W); observed latest T7 artifacts including `proof_v32768` (lm_head_shape=[32768,3072], one-step total=16.23s) and followup best `h2_compile_reduce_no_liger_w2` mean step=11.12s, still slower than task baseline 5.97s. Wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle8.json. Read-only audit only; did not touch tmux/processes/checkpoints.
+  [2026-05-28 17:35] atlasdflash4: cycle 9 lightweight throughput/artifact audit done: spark-2 has no tmux server, no trainer/T8/T9/torchrun/perf_sweep processes after filtering grep self-match, GPU idle across query+dmon (0% SM/0% mem, ~4W); latest artifacts unchanged under `/home/dnola/v18_throughput_audit` with baseline mean step=5.974s (0.167 it/s) and best followup `h2_compile_reduce_no_liger_w2` mean step=11.125s (1.86x slower than baseline). Wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle9.json. Read-only audit only; did not touch tmux/processes/checkpoints.
+  [2026-05-28 17:36] driver: driver tick 17:35: accepted T6 cycle 9 lightweight audit. Unblocking filler for one more read-only trainer-side cycle only; priority T8/T21 are active on spark-2, so do not launch GPU-heavy work or touch capacity/training knobs.
+  [2026-05-28 17:37] atlasdflash4: cycle 10 lightweight throughput/artifact audit done: spark-2 has no tmux server and no trainer/T8/T9/T21/torchrun/perf_sweep candidate processes; GPU idle across query+dmon (0% SM/0% mem, ~4W). Latest artifacts unchanged under `/home/dnola/v18_throughput_audit`: V=32768 proof one-step total=16.23s, best followup `h2_compile_reduce_no_liger_w2` mean step=11.125s vs 5.974s baseline (1.86x slower). Wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle10.json. Read-only audit only; did not touch tmux/processes/checkpoints/training knobs.
+  [2026-05-28 17:46] driver: driver accepted cycle 10. NASFS restored and T3 is being relaunched; if dispatched, do one read-only trainer-side cycle only and avoid interfering with c15_train_NAS_v18b_s2.
+  [2026-05-28 17:47] atlasdflash4: cycle 11 lightweight trainer-side audit done: spark-2 has only `nasfs_v18` tmux alive (NAS FUSE mount), no c15_train_NAS_v18b_s2/c15/v18 trainer/T8/T9/T21/torchrun/perf_sweep candidate processes, GPU idle across dmon (0% SM/0% mem, ~4W); latest relevant files are stale resume/throughput artifacts, no active train.log/val_metrics. Wrote /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_a1893079/throughput_00000000_cycle11.json. Read-only audit only; did not touch tmux/processes/checkpoints/training knobs.
+  [2026-05-28 18:22] driver: DRIVER 18:22: T3 is blocked by reproducible spark-2 host-lock; T24 has been filed to diagnose/fix. Keep T6 paused unless spark-2 would otherwise be idle; do only read-only/lightweight checks and do not interfere with T24 or any bounded smoke.
+  [2026-05-28 22:50] dflash-al3-driver: Driver 22:50 PDT: accepting latest filler cycle result. T32 is done with DEEPER_FIX_REQUIRED; run ONE spark-2-only lightweight/read-only postmortem cycle: inspect T32 logs/artifacts and classify next bounded follow-up, but do not launch training and do not Kasa-cycle. Block review-required after one cycle.
+  [2026-05-28 22:51] dflash-al3-driver: Driver correction 22:52 PDT: T37 is now the spark-2 lease-holder for root-cause diagnosis. Pausing T6 filler to avoid stepping on T37; do not touch spark-2 until T37 blocks/done.
+  [2026-05-28 22:51] default: BLOCKED: paused: T37 owns spark-2 lease for root-cause diagnosis
+  [2026-05-28 22:51] default: BLOCKED: T37 holds exclusive spark-2 lease for wedge root-cause diagnosis. No second actor on spark-2 during instrumented capture. Unblock after T37 verdict.
+  [2026-05-28 22:51] default: BLOCKED: T37 holds exclusive spark-2 lease for wedge root-cause diagnosis. No second actor on spark-2. Unblock after T37 verdict.
+
+Events (150):
+  [2026-05-28 17:36] [run 261] claimed {'lock': 'macmini.local:11987', 'expires': 1780015878, 'run_id': 261}
+  [2026-05-28 17:36] [run 261] spawned {'pid': 11994}
+  [2026-05-28 17:37] commented {'author': 'atlasdflash4', 'len': 587}
+  [2026-05-28 17:37] [run 261] blocked {'reason': 'review-required: cycle 10 lightweight audit done — spark-2 no tmux/trainer/T8/T9/T21 processes, GPU idle 0% SM/0% mem; artifacts unchanged, best followup 11.125s mean step vs 5.974s baseline (1.86x slower)'}
+  [2026-05-28 17:46] commented {'author': 'driver', 'len': 174}
+  [2026-05-28 17:46] unblocked
+  [2026-05-28 17:46] [run 267] claimed {'lock': 'macmini.local:16253', 'expires': 1780016482, 'run_id': 267}
+  [2026-05-28 17:46] [run 267] spawned {'pid': 16260}
+  [2026-05-28 17:47] commented {'author': 'atlasdflash4', 'len': 520}
+  [2026-05-28 17:48] [run 267] blocked {'reason': 'review-required: cycle 11 lightweight audit done — spark-2 only nasfs_v18 tmux, no active trainer/T8/T9/T21/torchrun processes, GPU idle 0% SM/0% mem; wrote throughput_00000000_cycle11.json'}
+  [2026-05-28 18:22] commented {'author': 'driver', 'len': 242}
+  [2026-05-28 22:50] commented {'author': 'dflash-al3-driver', 'len': 307}
+  [2026-05-28 22:50] unblocked
+  [2026-05-28 22:50] [run 498] claimed {'lock': 'macmini.local:97595', 'expires': 1780034740, 'run_id': 498}
+  [2026-05-28 22:50] [run 498] spawned {'pid': 1974}
+  [2026-05-28 22:51] commented {'author': 'dflash-al3-driver', 'len': 178}
+  [2026-05-28 22:51] commented {'author': 'default', 'len': 64}
+  [2026-05-28 22:51] [run 498] blocked {'reason': 'paused: T37 owns spark-2 lease for root-cause diagnosis'}
+  [2026-05-28 22:51] commented {'author': 'default', 'len': 157}
+  [2026-05-28 22:51] commented {'author': 'default', 'len': 129}
+
+Runs (32):
+  #3   crashed      @atlasdflash4  7s  2026-05-28 07:35
+        ! pid 45942 not alive
+  #4   crashed      @atlasdflash4  1s  2026-05-28 07:35
+        ! pid 45991 not alive
+  #5   crashed      @atlasdflash4  2s  2026-05-28 07:35
+        ! pid 46017 not alive
+  #6   crashed      @atlasdflash4  5s  2026-05-28 07:35
+        ! pid 46035 not alive
+  #7   crashed      @atlasdflash4  1s  2026-05-28 07:35
+        ! pid 46062 not alive
+  #8   crashed      @atlasdflash4  2s  2026-05-28 07:35
+        ! pid 46079 not alive
+  #9   crashed      @atlasdflash4  2s  2026-05-28 07:35
+        ! pid 46090 not alive
+  #10  crashed      @atlasdflash4  5s  2026-05-28 07:36
+        ! pid 46097 not alive
+  #11  crashed      @atlasdflash4  3s  2026-05-28 07:36
+        ! pid 46161 not alive
+  #12  reclaimed    @atlasdflash4  23s  2026-05-28 07:36
+        ! manual_reclaim: fixing skill-missing crash loop after installing dflash-c15/dflash-training into atlasdflash4
+  #13  crashed      @atlasdflash4  15s  2026-05-28 07:36
+        ! pid 46352 not alive
+  #14  crashed      @atlasdflash4  1s  2026-05-28 07:36
+        ! pid 46480 not alive
+  #15  crashed      @atlasdflash4  2s  2026-05-28 07:36
+        ! pid 46490 not alive
+  #16  crashed      @atlasdflash4  5s  2026-05-28 07:36
+        ! pid 46503 not alive
+  #17  crashed      @atlasdflash4  1s  2026-05-28 07:36
+        ! pid 46534 not alive
+  #18  crashed      @atlasdflash4  2s  2026-05-28 07:36
+        ! pid 46543 not alive
+  #19  reclaimed    @atlasdflash4  2s  2026-05-28 07:36
+        ! manual_reclaim: installed missing skills into atlasdflash4 after Unknown skill crash loop
+  #20  blocked      @atlasdflash4  327s  2026-05-28 07:37
+        → review-required: cycle 1 AL harvest done — step 2500 AL_LO=1.772, AL_HI=2.845; tmux probe currently not alive (state last_step=3870 rc=1)
+  #24  blocked      @atlasdflash4  295s  2026-05-28 07:53
+        → review-required: cycle 2 throughput audit done — spark-2 v18 tmux dead, 0 measured it/s samples, GPU idle, coverage 97.286%, state last_rc=1 last_step=0
+  #193 reclaimed    @atlasdflash4  98s  2026-05-28 08:05
+        ! manual_reclaim: user stop: campaign retired
+  #202 blocked      @atlasdflash4  0s  2026-05-28 08:07
+        → user stop: dflash-al3 campaign retired
+  #213 blocked      @atlasdflash4  99s  2026-05-28 08:09
+        → review-required: cycle 3 throughput audit done — spark-2 no tmux/run logs, PID 362898 absent, GPU idle 0% SM/0% mem; no measured it/s samples
+  #225 blocked      @atlasdflash4  118s  2026-05-28 12:27
+        → review-required: cycle 4 throughput audit done — spark-2 no tmux/trainer processes, GPU idle 0% SM/0% mem, no run dirs/log samples; wrote throughput_00000000_cy
+  #226 blocked      @atlasdflash4  251s  2026-05-28 12:30
+        → review-required: cycle 5 throughput audit done — spark-2 no tmux/trainer processes or run logs, GPU idle 0% SM/0% mem at ~4.45W; wrote throughput_00000000_cycle
+  #231 blocked      @atlasdflash4  98s  2026-05-28 12:46
+        → review-required: cycle 6 throughput audit done — spark-2 no tmux/trainer processes or run logs, GPU idle 0% SM/0% mem at ~4.55W; wrote throughput_00000000_cycle
+  #236 blocked      @atlasdflash4  226s  2026-05-28 13:37
+        → review-required: cycle 7 throughput audit done — spark-2 no tmux/trainer logs/processes; GPU returned idle 0% SM/0% mem at 4.53W after one short-lived profile_c
+  #240 blocked      @atlasdflash4  13s  2026-05-28 14:11
+        → paused filler: spark-2 priority T8 is running steady V=32768 throughput/defaults work; avoid same-GPU interference. Reopen filler only if spark-2 would otherwis
+  #249 blocked      @atlasdflash4  237s  2026-05-28 16:14
+        → review-required: cycle 8 lightweight audit done — spark-2 no trainer/T8/T9 processes, GPU idle 0% SM/0% mem; latest artifacts show V=32768 proof one-step 16.23s
+  #259 blocked      @atlasdflash4  128s  2026-05-28 17:33
+        → review-required: cycle 9 lightweight audit done — spark-2 no tmux/trainer/T8/T9 processes, GPU idle 0% SM/0% mem; artifacts still show best followup 11.125s mea
+  #261 blocked      @atlasdflash4  100s  2026-05-28 17:36
+        → review-required: cycle 10 lightweight audit done — spark-2 no tmux/trainer/T8/T9/T21 processes, GPU idle 0% SM/0% mem; artifacts unchanged, best followup 11.125
+  #267 blocked      @atlasdflash4  98s  2026-05-28 17:46
+        → review-required: cycle 11 lightweight audit done — spark-2 only nasfs_v18 tmux, no active trainer/T8/T9/T21/torchrun processes, GPU idle 0% SM/0% mem; wrote thr
+  #498 blocked      @atlasdflash4  20s  2026-05-28 22:50
+        → paused: T37 owns spark-2 lease for root-cause diagnosis

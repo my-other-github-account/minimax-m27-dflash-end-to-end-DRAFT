@@ -1,0 +1,88 @@
+Task t_fbe81fc2: T71: FAST restore spark-3 hidden-state access + one-step proof
+  status:    done
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_fbe81fc2
+  max-retries: 2 (default)
+  created:   2026-05-29 05:03 by user
+  started:   2026-05-29 05:03
+  completed: 2026-05-29 05:39
+  parents:   t_ee017e27
+  children:  t_630f7ab8
+
+Body:
+# T71: FAST restore spark-3 hidden-state access + one-step checkpoint proof
+
+## Why
+T70 found the spark-3 continuation blocker: 198486/198486 `iq4_v17_consolidated/hidden_states_nas` symlinks point into absent `/home/dnola/nas_traces/by_hash`, so `--on-missing skip` creates empty batches and `[ANCHOR-SKIP] No valid anchors`. We need the fastest fix/proof so spark-3 can produce a fresh AL candidate again.
+
+## Host scope
+spark-3 ONLY. Do not touch spark-1/spark-2/spark-work/spark-4. No Kasa. You hold the spark-3 lease while running.
+
+## Inputs
+- T70 report: `/home/dnola/v18_fix/T70_ANCHOR_SKIP_ROOT_CAUSE.md`
+- Source ckpt: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500`
+- Dataset links: `/home/dnola/iq4_full_run/iq4_v17_consolidated/hidden_states_nas`
+- Expected real target root: `/home/dnola/nas_traces/by_hash`
+- Prompt mappings: `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/{d2t.npy,t2d.npy}`
+
+## Fast experiment (<1h, target <20min)
+1. Preflight contention: `pgrep -af scripts/train.py`, trainer tmux, and GPU compute apps. If another live training/inference actor owns spark-3, block `SPARK3_BUSY` with exact evidence.
+2. Restore hidden-state visibility using the cheapest reversible path: remount/restart the existing NasFS mount if present, or repoint/symlink to an already-local valid copy. Do NOT do a multi-hour full dataset copy. If the real data is unavailable, block with exact missing path + command evidence.
+3. Run a symlink-target coverage gate: sample at least 1000 entries from `hidden_states_nas`; require >=95% `Path.exists()` true before launching any trainer.
+4. Run a TINY bounded proof from the step500 ckpt that produces at least one real optimizer step (`train/loss` or equivalent; no `[ANCHOR-SKIP]` empty batches). Keep `TORCHINDUCTOR_COMPILE_THREADS=4 OMP_NUM_THREADS=8`; enforce one `scripts/train.py` per host and free>=90GB.
+5. If one step works and time remains, run at most +20 optimizer steps and save/checkpoint if cheap. Do NOT launch long training.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T71_SPARK3_HS_RESTORE_ONE_STEP.md` and comment one verdict:
+- `HS_RESTORED_ONE_STEP_OK`: coverage %, exact mount/repoint action, proof log path, loss lines, any checkpoint path.
+- `HS_RESTORED_NO_TRAIN`: coverage fixed but one-step proof failed; include traceback/log.
+- `DATA_UNAVAILABLE`: exact missing mount/copy evidence and next one-line action.
+- `SPARK3_BUSY`: exact process evidence.
+
+## Hard rules
+- FAST-ITERATION: numeric/log proof within <=1h; shrink to one optimizer step rather than waiting.
+- Contention-safe: one `scripts/train.py` per host, compile threads capped, free>=90GB, no duplicate worker/trainer.
+- Preserve locked knobs: no max_anchors/block_size/hidden/intermediate/layers/seq_len/FSDP/multihost changes.
+- Do not claim AL; this task only restores the path to producing the next candidate checkpoint for AL measurement.
+
+Latest summary:
+HS_RESTORED_ONE_STEP_OK approved: spark-3 NasFS hidden-state access restored, coverage 1000/1000, one real optimizer step completed at global_step=501 after scoped AdamW foreach/fused resume patch. Follow-up bounded continuation filed.
+
+Comments (2):
+  [2026-05-29 05:24] atlasdflash3: verdict: HS_RESTORED_ONE_STEP_OK
+
+review-required handoff:
+```json
+{
+  "verdict": "HS_RESTORED_ONE_STEP_OK",
+  "artifact": "/home/dnola/v18_fix/T71_SPARK3_HS_RESTORE_ONE_STEP.md",
+  "host": "spark-3",
+  "restore_action": "Started NasFS in tmux nasfs_t71: nas:/volume1/dnola/traces -> /home/dnola/nas_traces, cache /dev/shm/nasfs-cache-t71, 32GiB cache cap; no dataset copy.",
+  "coverage_gate": {"method": "Path.exists() over hidden_states_nas symlinks", "sample": 1000, "exists": 1000, "coverage_pct": 100.0},
+  "proof_log": "/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T71_spark3_onestep_optpatch_20260529T122119Z/train.log",
+  "source_checkpoint": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500",
+  "proof_result": "one real optimizer step completed: train/loss=6.781, train/full_acc=0.078, stopped at global_step=501; no ANCHOR-SKIP in successful log",
+  "code_patch_live": "/home/dnola/speculators-c15-api/src/speculators/train/trainer.py forces AdamW foreach=False and resets resumed optimizer param_groups foreach/fused false",
+  "code_patch_backup": "/home/dnola/v18_fix/trainer.py.pre_t71_foreach_patch",
+  "why_patch": "After HS restore, unpatched resume reached optimizer step but failed in PyTorch Adam foreach grouping on mixed dtype/device TE optimizer state. Patch was needed for the proof step and is still live on spark-3.",
+  "final_state": {"train_py_live": false, "gpu_compute_apps": false, "nasfs_t71_mounted": true}
+}
+```
+  [2026-05-29 05:39] dflash-al3-driver: driver review APPROVED: T71 produced HS_RESTORED_ONE_STEP_OK on spark-3: 1000/1000 symlink targets visible, one real optimizer step completed (global_step 501, train/loss=6.781) with no ANCHOR-SKIP, and no train.py/GPU app left live. The AdamW foreach/fused resume patch is approved for bounded follow-up only; next task must keep it scoped, backed up, and produce fast checkpoint signal.
+
+Events (9):
+  [2026-05-29 05:03] created {'assignee': 'atlasdflash3', 'status': 'ready', 'parents': ['t_ee017e27'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 05:03] [run 578] claimed {'lock': 'macmini.local:95094', 'expires': 1780057134, 'run_id': 578}
+  [2026-05-29 05:03] [run 578] spawned {'pid': 95096}
+  [2026-05-29 05:11] [run 578] heartbeat {'note': 'Restored spark-3 NasFS FUSE mount at /home/dnola/nas_traces via tmux nasfs_t71; 1000-entry symlink Path.exists coverage gate is running slowly over FUSE/SSH before any trainer launch.'}
+  [2026-05-29 05:24] commented {'author': 'atlasdflash3', 'len': 1500}
+  [2026-05-29 05:24] [run 578] blocked {'reason': 'review-required: HS_RESTORED_ONE_STEP_OK on spark-3, but proof required a live trainer.py AdamW foreach/fused resume patch that needs human approval before counting done.'}
+  [2026-05-29 05:39] commented {'author': 'dflash-al3-driver', 'len': 388}
+  [2026-05-29 05:39] unblocked
+  [2026-05-29 05:39] [run 582] completed {'result_len': 0, 'summary': 'HS_RESTORED_ONE_STEP_OK approved: spark-3 NasFS hidden-state access restored, coverage 1000/1000, one real optimizer step completed at global_step=501 after scoped AdamW foreach/fused resume patch. Follow-up bounded continuation filed.'}
+
+Runs (2):
+  #578 blocked      @atlasdflash3  1216s  2026-05-29 05:03
+        → review-required: HS_RESTORED_ONE_STEP_OK on spark-3, but proof required a live trainer.py AdamW foreach/fused resume patch that needs human approval before coun
+  #582 completed    @atlasdflash3  0s  2026-05-29 05:39
+        → HS_RESTORED_ONE_STEP_OK approved: spark-3 NasFS hidden-state access restored, coverage 1000/1000, one real optimizer step completed at global_step=501 after sco

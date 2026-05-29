@@ -1,0 +1,61 @@
+Task t_82a718d9: T66: FAST AL measure harvested spark-3 093736 step500 checkpoint (corrected offset)
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_82a718d9
+  max-retries: 2 (default)
+  created:   2026-05-29 03:57 by atlaspatch4
+  started:   2026-05-29 04:02
+  completed: 2026-05-29 04:26
+  parents:   t_13040a98, t_20e56873
+
+Body:
+# T66: FAST AL measure harvested spark-3 093736 step500 checkpoint (corrected offset)
+
+## Why
+T65 cleaned the orphan spark-3 trainer/cron leak and harvested a newer complete same-family step500 checkpoint that T59 appears not to have measured directly. T59 used `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T074947Z/step_00000500` and measured AL=1.641 through the corrected d2t-OFFSET MiniMax/buun path. T65 found `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500`, complete and potentially useful.
+
+## Dependencies
+- Parent T65 must be complete: spark-3 cleaned and checkpoint harvested.
+- Parent T64 should finish first to avoid spark-2 contention and to reuse any prompt/BOS finding.
+
+## Host scope
+- Use spark-2 for conversion/inference ONLY after preflight: no train.py, no trainer tmux, no GPU compute apps, >=90GB available.
+- Read-only access to spark-3 is allowed only to copy/inspect the source checkpoint.
+- Do not launch training. Do not touch spark-4. One actor per host.
+
+## Source checkpoint
+`/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z/step_00000500`
+
+T65 harvest note: `/home/dnola/v18_fix/T65_SPARK3_LEASE_CLEANUP.md`.
+
+## Required path
+Use the corrected T62/T59 d2t-OFFSET rebake rule, NOT old absolute-d2t:
+`target_ids = arange(len(d2t)) + d2t`
+Preserve axes: draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59].
+
+## Measurement
+Run MiniMax/buun runtime AL smoke at draft_max=9, deterministic temp=0/top_k=1, 2-3 prompts x <=512 output. If T64 found a better prompt/BOS operating point, include that arm; otherwise match T59 shape for clean comparison.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T66_093736_STEP500_MINIMAX_AL.md` with source ckpt, rebake assertions, AL per prompt, mean AL, and comparison to T59=1.641 / T62=1.680 / target=3.0.
+
+## Verdict
+- AL>=3.0: GOAL HIT.
+- 1.65<AL<3: improvement but below target; recommend next bounded checkpoint/recipe lever.
+- AL<=1.65: no improvement; pivot to recipe/data-target/BOS-tokenization lever from T63/T64.
+
+Latest summary:
+Measured harvested spark-3 093736 step500 checkpoint through corrected d2t-OFFSET MiniMax/buun path on spark-2. Report written to /home/dnola/v18_fix/T66_093736_STEP500_MINIMAX_AL.md; clean baseline mean AL=1.623 (no improvement vs T59=1.641/T62=1.680), T64 chat-template arm mean AL=1.846 but still below target.
+
+Events (7):
+  [2026-05-29 03:57] created {'assignee': 'atlasdflash4', 'status': 'todo', 'parents': ['t_13040a98', 't_20e56873'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 04:01] promoted
+  [2026-05-29 04:02] [run 570] claimed {'lock': 'macmini.local:49412', 'expires': 1780053424, 'run_id': 570}
+  [2026-05-29 04:02] [run 570] spawned {'pid': 80028}
+  [2026-05-29 04:08] [run 570] heartbeat {'note': 'Copying 093736 step500 checkpoint from spark-3 to spark-2 staging; initial rsync hit 300s local timeout, checking partial copy/resuming.'}
+  [2026-05-29 04:15] [run 570] heartbeat {'note': 'Converted/rebaked T66 checkpoint and launched MiniMax/buun server on spark-2; health is still 503 while the 100B target mmap/load finishes, checking logs before AL run.'}
+  [2026-05-29 04:26] [run 570] completed {'result_len': 0, 'summary': 'Measured harvested spark-3 093736 step500 checkpoint through corrected d2t-OFFSET MiniMax/buun path on spark-2. Report written to /home/dnola/v18_fix/T66_093736_STEP500_MINIMAX_AL.md; clean baseline mean AL=1.623 (no improvement vs T59=1.641/T62=1.680), T64 chat-template arm mean AL=1.846 but still below target.', 'artifacts': ['/home/dnola/v18_fix/T66_093736_STEP500_MINIMAX_AL.md', '/home/dnola/v18_fix/t66_093736/prepped_minimax_rebaked_v17d2t_offset/prep_summary.json', '/home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf', '/home/dnola/v18_fix/t66_093736/al_runs_offset_draftmax9_baseline_plus_chat.jsonl', '/home/dnola/v18_fix/t66_093736/summary_baseline_plus_chat.json', '/home/dnola/v18_fix/t66_093736/run_baseline_plus_chat.log', '/home/dnola/v18_fix/t66_093736/server_18092.log']}
+
+Runs (1):
+  #570 completed    @atlasdflash4  1458s  2026-05-29 04:02
+        → Measured harvested spark-3 093736 step500 checkpoint through corrected d2t-OFFSET MiniMax/buun path on spark-2. Report written to /home/dnola/v18_fix/T66_093736

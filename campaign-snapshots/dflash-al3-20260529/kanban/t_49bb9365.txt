@@ -1,0 +1,286 @@
+Task t_49bb9365: T13: Sustained spark-1 inference-side investigation loop (NEVER COMPLETES) — draftmax/temp/category/verifier/gguf-audit/zlab-compare cycles
+  status:    blocked
+  assignee:  atlas6dflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 07:58 by user
+  started:   2026-05-28 12:27
+
+Body:
+# T13: Sustained spark-1 inference-side investigation loop (NEVER COMPLETES)
+
+## PURPOSE
+
+Background never-completes task that keeps spark-1 productive on inference-side AL diagnosis whenever T11 and T12 are blocked / between cycles. Same pattern as T5 (the spark-1 eval filler) but focused on the runtime-AL-gap investigation instead of repro benchmarks.
+
+## YOUR JOB (one cycle per dispatch)
+
+Each dispatch, do ONE of the following on spark-1 inference path, then block `review-required` with a one-line summary. Driver unblocks next tick → loops forever.
+
+### Menu (priority order)
+
+1. **Sweep draft_max ∈ {3, 5, 7, 9, 11}** on a fixed 5-prompt subset from training distribution (rsync from spark-2 if not local) and chart accept_length vs draft_max. Theory: training was at block_size=8 (so draft_max=7 active positions); inference with shorter draft_max should monotone-decrease AL, longer should monotone-increase up to plateau. Anomalies = signal.
+
+2. **Sweep temperature ∈ {0, 0.2, 0.5, 0.8, 1.0}** on same prompt subset. Theory: training argmax-match is temperature=0 equivalent. Higher T should monotone-decrease AL. Confirm.
+
+3. **Sweep prompt categories**: code / math / qa / summarization / writing × 3 prompts each. Compare per-category AL vs T16's per-family numbers (`/home/dnola/exports/c15_iq4v18_step2500/benchmarks/summary.json`). Identify which category has biggest training-vs-runtime divergence. Theory: training distribution may be skewed toward code/math (NAS pool source); runtime AL on qa/writing should match worse.
+
+4. **Verifier-only AR baseline regression**: re-run the AR-only baseline on T16's 25 prompts. Compare to T16's AR jsonl (`/home/dnola/exports/c15_iq4v18_step2500/benchmarks/ar.jsonl`). If AR output diverges, the verifier itself isn't deterministic across runs — invalidates the comparison framework.
+
+5. **Speculative-only metric harvest**: run dflash_llama benchmark() in speculative-only mode (no AR comparison) on 10 fixed prompts, capture full timing breakdown per-step (draft latency, verify latency, accept ratio). Identify where the 0.679× speedup is leaking — speedup < 1.0 means DFlash is SLOWER than AR, which is the surprising/wrong outcome.
+
+6. **GGUF metadata audit**: dump the full `gguf-dump` output for `c15_iq4v18_step2500_dflash.gguf` and `c15_iq4v18_step2500_dflash_mm_tok.gguf`. Compare the embedded `n_position`, `n_block_size`, `vocab_size`, drafter layer count, and any embedded acceptance/τ metadata against the training config (`/home/dnola/exports/c15_iq4v18_step2500/config.json`). Skill `dflash-c15-fp8-hybrid-winning-config-and-health-rules` Rule 2 warns NOT to trust GGUF metadata as a ceiling, but mismatches with the source config are still real evidence of conversion bugs.
+
+7. **Compare current ckpt to z-lab public DFlash drafter on identical 3-prompt subset**: download `z-lab/Qwen3.6-35B-A3B-DFlash` (or whichever sub-100B reference is most apples-to-apples) to spark-1, run 3 prompts through both via dflash_llama. Confirm the public drafter measures the published AL on our harness — that pins down whether our LOW AL is harness-noise or drafter-quality.
+
+### After ONE menu cycle
+
+- Write `<workspace>/sustained_<menu_id>_<N>.json` with results.
+- Comment one-line summary on this task.
+- Block review-required with reason `sustained-cycle-<N>-<menu_id>-done`.
+- Driver unblocks → next cycle next tick.
+
+### If nothing useful left after 10 cycles
+
+- Comment "sustained-investigation: cycles N exhausted, no new candidate hypotheses; recommend T11/T12 outputs be merged into a focused follow-up task".
+- Block with `IDLE-await-orchestrator-direction`.
+
+## HOST SCOPE
+
+spark-1 ONLY.
+
+## HARD RULES
+
+- DO NOT modify any export directory.
+- DO NOT modify the dflash_llama library source — that's T12's job. This task is read-only on source, write-only on workspace artifacts.
+- DO NOT touch model architecture or weights.
+- Assignee: atlas6dflash2 (idle profile, parallel with T11/T12).
+- Parents: none.
+- Priority: 40 (filler).
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+
+Latest summary:
+review-required: sustained-cycle-16-5-done — base GGUF fails to load (missing tokenizer merges); runnable _mm_tok GGUF stays low at measured AL=1.404 on 3-prompt smoke subset
+
+Comments (34):
+  [2026-05-28 08:14] atlas6dflash2: sustained-cycle-1-menu6 GGUF metadata audit on spark-1 done: both GGUFs match config on n_position/context_length=204800, block_size=8, vocab=200064, 6 layers, hidden/intermediate sizes, target_layer_ids, n_target_features, and mask_token_id; only notable finding is no embedded tau/acceptance/full_acc metadata, so GGUF metadata does not explain low runtime AL. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_6_1.json and sustained_6_1_summary.json
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 12:33] atlas6dflash2: sustained-cycle-2-menu1 blocked before launch: spark-1 already had two active inference jobs holding llama-server processes (`/home/dnola/t15_sweep1.py` on port 18103 draft_max=3 and `/tmp/t5_finish_extended_writing.py` on port 19192 draft_max=7). I did not launch another sweep because it would interfere with active spark-1 timing/AL work; wrote resource-conflict artifact `/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_1_2.json`. No export dirs or dflash_llama source modified.
+  [2026-05-28 12:47] default: Driver pausing lower-priority sustained filler this tick because T14/T15 are both active and need spark-1 GPU. Resume after priority Track B measurements complete/block.
+  [2026-05-28 12:47] default: BLOCKED: paused filler: avoid spark-1 GPU contention with priority T14/T15
+  [2026-05-28 15:16] atlas6dflash2: sustained-cycle-3-menu1 done via read-only reuse of active spark-1 T15 sweep artifacts: 5-prompt draft_max mean AL was 3=1.2546, 5=1.3634, 7=1.4664, 9=1.4688, 11=1.4845; monotone but effectively plateaus after 7, so longer draft windows do not recover the runtime-AL gap. Artifact: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_1_3.json
+  [2026-05-28 16:52] driver: review auto-approved filler cycle 3: draft_max sweep monotone but plateaus after 7 (mean AL 3=1.2546, 5=1.3634, 7=1.4664, 9=1.4688, 11=1.4845). Unblocking for next spark-1 sustained investigation cycle; host is currently idle.
+  [2026-05-28 17:10] driver: Pausing sustained filler to free spark-1 for priority T20 crossval-mismatch closure. Preserve last cycle state; resume filler after T20 blocks/completes.
+  [2026-05-28 17:10] default: BLOCKED: paused filler: free spark-1 GPU for priority T20 crossval mismatch closure
+  [2026-05-28 17:48] atlas6dflash2: sustained-cycle-4-menu2 temperature sweep on spark-1 done: fixed 5-prompt math subset at draft_max=7 produced mean AL temp0=1.4664, 0.2=1.5304, 0.5=1.5459, 0.8=1.5258, 1.0=1.5010 (pooled AL 1.4873/1.5302/1.5463/1.5430/1.5285). Not monotone decreasing from temp=0; AL rises through temp=0.5 then falls, so “higher T should monotonically decrease AL” is falsified on this subset. Artifact: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_2_4.json. No export dirs or dflash_llama source modified.
+  [2026-05-28 20:06] driver: review auto-approved filler cycle 4 and unblocking for next spark-1 cycle. New priority from T26: do a public-reference reproduction on a genuinely comparable dataset axis if feasible (menu 4 preferred: GSM8K/HumanEval/MT-Bench small subset using public prompts/settings), or menu 5 larger simple-vs-API crossval if public suite setup is not ready. spark-1 is recovered/free; host scope remains spark-1 ONLY; do not touch source/export dirs.
+  [2026-05-28 20:25] atlas6dflash2: sustained-cycle-5-menu4 public-axis smoke subset on spark-1 done: 9 paired AR/DFlash prompts (GSM8K/HumanEval/MT-Bench, 3 each, temp=0, draft_max=7, max_tokens=128) produced pooled measured runtime AL=1.322 and DFlash/AR speedup=0.709×; per-suite AL was GSM8K=1.308, HumanEval=1.317, MT-Bench=1.327, so all public-axis categories remain far below published B8 public-card AL context and DFlash is still slower than AR. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_4_5.json and sustained_4_5_rows.jsonl. No export dirs or dflash_llama source modified.
+  [2026-05-28 23:09] dflash-al3-driver: Driver cycle: spark-1 appears free on this board. Resume ONE fast spark-1-only sustained cycle. Highest-value action now: replace the blocked T43 spark-2 sweep by running a SMALL buun/z-lab draft_max sweep on spark-1 if artifacts are present: 2 GSM8K prompts, max_out=512, draft_max {3,5,7,9,11}, Qwen3.6 target, z-lab buun drafter; aim <30 min. If buun/z-lab artifacts are not already local, do not spend >10 min staging; instead run next T13 menu item that yields numeric AL quickly. Do not touch spark-2/spark-work/spark-4. Block review-required after one numeric cycle.
+  [2026-05-28 23:13] atlas6dflash2: sustained-cycle-6-menu7 buun/z-lab small draft_max sweep on spark-1 done: 2 GSM8K prompts, max_out=512, temp=0, Qwen3.6 target + z-lab buun drafter. Mean measured runtime AL by draft_max was 3=1.1429, 5=1.0846, 7=1.0846, 9=1.2569, 11=1.2569; not monotone non-decreasing, with only a small lift at 9/11 and all values far below z-lab published GSM8K B8 AL context. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_7_6.json and sustained_7_6_rows.jsonl. No spark-2/spark-work/spark-4 touched; no export dirs or dflash_llama source modified.
+  [2026-05-29 02:07] dflash-al3-driver: review auto-approved sustained cycle 6. Unblocking ONE spark-1-only filler cycle to keep spark-1 productive while T53 owns spark-2 and spark-3 is busy. Preflight for existing spark-1 GPU jobs; if busy, block SPARK1_BUSY. Prefer a fast numeric cycle (<30m) that informs OUR MiniMax AL gap; do not touch spark-2/spark-3/spark-work/spark-4.
+  [2026-05-29 02:19] atlas6dflash2: sustained-cycle-7-menu5 speculative-only MiniMax metric harvest on spark-1 done: 10 fixed prompts, draft_max=7/temp=0/max_tokens=128, DFlash-only pooled measured runtime AL=1.310 (mean prompt AL=1.302), token draft accept ratio=4.43%, mean DFlash throughput=3.15 tok/s. Instrumented spec-cycle timing shows verifier dominates: mean cycle total=505.7ms with draft=9.3ms, verify=496.0ms, accept=0.43ms. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_5_7.json and sustained_5_7_rows.jsonl. No spark-2/spark-3/spark-work/spark-4 touched; no export dirs or dflash_llama source modified.
+  [2026-05-29 03:18] dflash-al3-driver: review auto-approved sustained cycle 7: MiniMax spec-only AL=1.310, verifier dominates timing. Unblocking ONE spark-1-only fast numeric cycle to keep spark-1 productive while spark-2 runs corrected-offset/latest-ckpt AL. Highest-value next cycle: fast diagnosis of why buun/z-lab small spark-1 sweep underreported vs T43 spark-2/T33 published (same 2 prompt subset if possible, compare invocation/target/draft files, no source changes) OR a MiniMax AL-gap read-only prompt-family slice. HARD: spark-1 only, preflight existing GPU jobs, <30m, block review-required after one numeric finding; do not touch spark-2/spark-3/spark-work/spark-4.
+  [2026-05-29 03:21] atlas6dflash2: sustained-cycle-8-menu7 diagnosis done on spark-1: same 2 GSM8K z-lab/buun prompts at draft_max=7 with --ignore-eos showed raw prompts still low (mean AL=1.297) but manual Qwen chat formatting recovered mean AL=3.164 (3.154/3.175) and ~2.4× higher decoded tok/s. Finding: cycle-6 underreport was primarily prompt-format/chat-template artifact, with short-EOS noise secondary; public z-lab comparisons should use chat-formatted prompts. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_7_8.json and sustained_7_8_rows.jsonl. No spark-2/spark-3/spark-work/spark-4 touched; no export dirs or dflash_llama source modified.
+  [2026-05-29 04:09] dflash-al3-driver: Driver 04:10 PDT: auto-approved sustained-cycle-8 (important finding: z-lab raw AL=1.297 vs Qwen chat-formatted AL=3.164 on same 2 prompts; prompt formatting can be decisive on public Qwen). Resume ONE spark-1-only fast cycle now. Do not contend with spark-2/T66. Highest-value menu: apply the same operating-point discipline to OUR MiniMax path using already-available corrected-offset artifacts if present on spark-1, or otherwise run a public-reference control with exact chat template. Keep <30 min, measured runtime AL only, block review-required after one cycle.
+  [2026-05-29 04:21] atlas6dflash2: sustained-cycle-9-menu5 MiniMax operating-point check on spark-1 done: same 5 prompt subset at draft_max=7/temp=0/max_tokens=128 showed chat_api_jinja pooled measured runtime AL=1.296 vs raw /v1/completions AL=1.307, i.e. raw vs chat formatting moves AL by only +0.011 and does not recover the MiniMax low-runtime-AL gap (unlike Qwen/z-lab raw-vs-chat). Verifier still dominates spec-cycle timing (~491–502ms verify vs ~502–514ms total). Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_5_9.json and sustained_5_9_rows.jsonl. No spark-2/spark-3/spark-work/spark-4 touched; no export dirs or dflash_llama source modified.
+  [2026-05-29 05:03] dflash-al3-driver: Driver tick: accepting sustained-cycle-9 result (MiniMax raw-vs-chat does NOT explain low AL; chat 1.296 vs raw 1.307, no AL>3). spark-1 is otherwise idle while T68 owns spark-2 and T71 owns spark-3, so resume ONE spark-1-only fast inference/diagnosis cycle. Highest value: if feasible within <30 min, stage/use the current-best T66/T68 GGUF on spark-1 without touching active spark-2; otherwise run the next smallest MiniMax AL-gap sanity check. Numeric measured AL only, then block review-required.
+  [2026-05-29 05:18] atlas6dflash2: sustained-cycle-10-menu3 MiniMax prompt-family fixed-harness rerun on spark-1 done: first 3 prompts/family (15 total, chat API, draft_max=7, temp=0, max_tokens=128) produced pooled measured runtime AL=1.342 vs T16 fixed-harness baseline 1.363 (delta -0.021). Per-family AL: math=1.437, code=1.385, qa=1.342, summarization=1.327, writing=1.324; ordering matches prior gap shape (math/code best, writing/summarization worst) and confirms no drift upward. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_3_10.json and sustained_3_10_rows.jsonl. No spark-2/spark-3/spark-work/spark-4 touched; no export dirs or dflash_llama source modified.
+  [2026-05-29 05:21] dflash-al3-driver: Driver 05:21 PDT: auto-approved T13 sustained cycle 10 (MiniMax family slice AL=1.342; no AL>3). spark-1 is idle by read-only occupancy check; spark-2 has T68, spark-3 has T71. Resume ONE spark-1-only fast numeric cycle; keep <30min, no source/export mutation, no spark-2/spark-3/spark-work/spark-4. Prefer a discriminating operating-point or current-best MiniMax AL sanity check, then block review-required.
+  [2026-05-29 05:36] atlas6dflash2: sustained-cycle-11-menu4 AR baseline regression on spark-1 done: full 25-prompt T16 MiniMax verifier-only rerun at temp=0/max_tokens=128 matched `/home/dnola/exports/c15_iq4v18_step2500/benchmarks/ar.jsonl` exactly on 25/25 responses and token counts (divergent_indices=[]). This rules out verifier nondeterminism as the cause of the DFlash-vs-AR comparison gap for this fixed harness. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_4_11.json and sustained_4_11_rows.jsonl. No spark-2/spark-3/spark-work/spark-4 touched; no export dirs or dflash_llama source modified.
+  [2026-05-29 05:39] dflash-al3-driver: driver tick: accepted cycle 11 AR-baseline regression (25/25 exact; verifier nondeterminism ruled out). Unblocking T13 for ONE spark-1-only fast numeric cycle while T72 owns spark-2 and T73 owns spark-3. Stay <30min, no source/export mutation, no spark-2/spark-3/spark-work/spark-4, then block review-required with the numeric result.
+  [2026-05-29 05:50] atlas6dflash2: sustained-cycle-12-menu5 MiniMax long-output sanity check on spark-1 done: 3 math prompts, chat API, draft_max=7/temp=0/max_tokens=512 produced pooled measured runtime AL=1.360 (mean prompt AL=1.352), lower than the comparable cycle-10 128-token math slice AL=1.437 (delta -0.078). Verifier still dominates timing (mean verify=498.4ms of total=509.4ms; draft=10.5ms). Finding: the 128-token cap was not depressing measured MiniMax runtime AL; longer outputs do not recover the gap. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_5_12.json and sustained_5_12_rows.jsonl. No spark-2/spark-3/spark-work/spark-4 touched; no export dirs or dflash_llama source modified.
+  [2026-05-29 05:57] dflash-al3-driver: driver 05:56 PDT: accepted cycle 12 result (MiniMax 512-token math sanity AL=1.360; output length cap not the cause). Unblocking T13 for ONE spark-1-only fast numeric cycle because spark-1 is otherwise idle while T72 owns spark-2 and T73 owns spark-3. Keep <30min, no source/export mutation, no spark-2/spark-3/spark-work/spark-4, then block review-required with measured AL/cause-isolation result.
+  [2026-05-29 06:07] atlas6dflash2: sustained-cycle-13-menu5 MiniMax ignore-EOS operating-point check on spark-1 done: same 5 fixed prompts, chat API, draft_max=7/temp=0/max_tokens=128 produced identical pooled measured runtime AL with normal EOS and `--ignore-eos` (both 1.3158; every paired prompt delta 0.0, completion_tokens all 128). Finding: MiniMax low runtime AL is not an EOS/short-stop artifact; verifier still dominates timing (~489–491ms verify of ~499–500ms total). Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_5_13.json and sustained_5_13_rows.jsonl. No spark-2/spark-3/spark-work/spark-4 touched; no export dirs or dflash_llama source modified.
+  [2026-05-29 06:14] dflash-al3-driver: Driver auto-approves previous review-required filler cycle and resumes ONE spark-1-only fast cycle. Current priority: use spark-1 only to extend the current-best MiniMax runtime operating point WITHOUT contending with spark-2/T74. If the T66/T72 corrected GGUF + MiniMax target are already present on spark-1, run 3-5 prompts <=512 at draft_max=15 (and optional draft_max=17 if fast) using MiniMax native-chat formatting; report raw measured AL only. If artifacts are not already local and staging would take >10 min, do the next fastest read-only T13 menu item that yields a numeric AL finding. No source/model mutation, no spark-2/spark-3/spark-work/spark-4, block review-required after one cycle.
+  [2026-05-29 06:34] atlas6dflash2: sustained-cycle-14-menu5 MiniMax high-draft_max operating-point fallback on spark-1 done: corrected T66/T72 GGUF was not present locally, so used already-local step2500 MiniMax drafter on 3 math prompts, native chat, temp=0, max_tokens=512. Measured runtime pooled AL remained low: draft_max=15 AL=1.3845 and draft_max=17 AL=1.3952 (+0.0107), throughput ~2.9 tok/s, verifier still dominates (~500–507ms/cycle). Finding: pushing draft_max far beyond trained block_size active positions does not recover the MiniMax runtime-AL gap on this drafter. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_5_14.json and sustained_5_14_rows.jsonl. No source/export/model mutation; no spark-2/spark-3/spark-work/spark-4 touched.
+  [2026-05-29 06:49] driver: Driver cycle: spark-1 appears unleased; unblocking this never-completes filler for ONE fast inference-side cycle. Hard scope: spark-1 only, no spark-2/3/4, block yourself review-required after one result.
+  [2026-05-29 07:02] atlas6dflash2: sustained-cycle-15-menu5 MiniMax context-position/prompt-length sweep on spark-1 done: same math prompt with neutral prefixes at ~79/1300/2516/4948 prompt tokens, chat API, draft_max=7/temp=0/max_tokens=64 produced measured runtime AL 1.348/1.333/1.324/1.319 (pooled 1.326). Finding: moving generation deeper into context up to ~5k prompt tokens does not recover the MiniMax runtime-AL gap; AL slightly decreases while verifier timing stays ~492–509ms/cycle. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_5_15.json and sustained_5_15_rows.jsonl. No source/export/model mutation; no spark-2/spark-3/spark-work/spark-4 touched.
+  [2026-05-29 07:06] driver: Driver 07:06 PDT: auto-approved sustained-cycle-15 spark-1 filler result (context-position sweep: AL 1.348/1.333/1.324/1.319, pooled 1.326; no AL>3; useful negative signal that longer MiniMax prompt context does not recover AL). Resume ONE spark-1-only fast inference cycle now. Hard scope: spark-1 only; no spark-2/3/4/spark-work; block review-required after one numeric result.
+  [2026-05-29 07:11] atlas6dflash2: sustained-cycle-16-menu5 MiniMax drafter-GGUF variant sanity check on spark-1 done: base `/home/dnola/exports/c15_iq4v18_step2500_dflash.gguf` cannot be used by llama-server as a draft model (`cannot find tokenizer merges in model file`), while the `_mm_tok` export runs but remains low on the 3-prompt smoke subset with pooled measured runtime AL=1.404 (math=1.348, code=1.422, writing=1.410), verify still ~487/497ms of spec cycle. Finding: the non-mm_tok GGUF is a load-time packaging/tokenizer failure, not a hidden better runtime variant; the runnable mm_tok artifact still shows the MiniMax low-AL gap. Artifacts: /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/sustained_5_16.json and sustained_5_16_rows.jsonl. No source/export/model mutation; no spark-2/spark-3/spark-4/spark-work touched.
+
+Events (401):
+  [2026-05-29 06:15] [run 588] heartbeat {'note': 'cycle 14: corrected T66/T72 GGUF not present on spark-1 exports; falling back to already-local MiniMax step2500 GGUF, running 3 math prompts at native chat draft_max=15 and optional 17 for measured runtime AL'}
+  [2026-05-29 06:26] [run 588] heartbeat {'note': 'cycle 14 dmax15 complete (3 math, max_tokens=512, measured AL=1.3845); dmax17 optional leg is running on spark-1, waiting for completion'}
+  [2026-05-29 06:34] commented {'author': 'atlas6dflash2', 'len': 757}
+  [2026-05-29 06:34] [run 588] blocked {'reason': 'review-required: sustained-cycle-14-5-done — MiniMax high draft_max check stayed low (dmax15 AL=1.3845, dmax17 AL=1.3952); longer draft windows do not recover runtime AL'}
+  [2026-05-29 06:49] commented {'author': 'driver', 'len': 204}
+  [2026-05-29 06:49] unblocked
+  [2026-05-29 06:49] [run 593] claimed {'lock': 'macmini.local:16939', 'expires': 1780063457, 'run_id': 593}
+  [2026-05-29 06:49] [run 593] spawned {'pid': 21579}
+  [2026-05-29 06:49] [run 593] heartbeat {'note': 'cycle 15 oriented; preflighting spark-1 occupancy and inspecting existing workspace/spark-1 scripts before selecting one fast spark-1-only numeric inference cycle'}
+  [2026-05-29 06:51] [run 593] heartbeat {'note': 'cycle 15 selected menu 5: MiniMax DFlash-only context-position/prompt-length sweep on spark-1 (same math prompt, neutral prefixes 0/256/1024/2048 repeats, draft_max=7, temp=0, max_tokens=128)'}
+  [2026-05-29 07:02] commented {'author': 'atlas6dflash2', 'len': 670}
+  [2026-05-29 07:02] [run 593] blocked {'reason': 'review-required: sustained-cycle-15-5-done — MiniMax context-position sweep stayed low (AL 1.348→1.319 from 79→4948 prompt tokens); longer prompt context does not recover runtime AL'}
+  [2026-05-29 07:06] commented {'author': 'driver', 'len': 379}
+  [2026-05-29 07:06] unblocked
+  [2026-05-29 07:06] [run 595] claimed {'lock': 'macmini.local:25934', 'expires': 1780064493, 'run_id': 595}
+  [2026-05-29 07:06] [run 595] spawned {'pid': 25937}
+  [2026-05-29 07:06] [run 595] heartbeat {'note': 'cycle 16 oriented; preflighting spark-1 occupancy and workspace/spark-1 artifacts before selecting one fast spark-1-only numeric inference cycle'}
+  [2026-05-29 07:07] [run 595] heartbeat {'note': 'cycle 16 selected menu 5: MiniMax read-only drafter-GGUF variant sanity check on spark-1, comparing base c15_iq4v18_step2500_dflash.gguf vs _mm_tok GGUF on the same 3 prompts'}
+  [2026-05-29 07:11] commented {'author': 'atlas6dflash2', 'len': 820}
+  [2026-05-29 07:11] [run 595] blocked {'reason': 'review-required: sustained-cycle-16-5-done — base GGUF fails to load (missing tokenizer merges); runnable _mm_tok GGUF stays low at measured AL=1.404 on 3-prompt smoke subset'}
+
+Runs (81):
+  #28  crashed      @atlas6dflash2  14s  2026-05-28 07:58
+        ! pid 53523 not alive
+  #30  crashed      @atlas6dflash2  2s  2026-05-28 07:58
+        ! pid 53682 not alive
+  #32  crashed      @atlas6dflash2  4s  2026-05-28 07:58
+        ! pid 53712 not alive
+  #34  crashed      @atlas6dflash2  0s  2026-05-28 07:59
+        ! pid 53753 not alive
+  #36  crashed      @atlas6dflash2  3s  2026-05-28 07:59
+        ! pid 53769 not alive
+  #38  crashed      @atlas6dflash2  2s  2026-05-28 07:59
+        ! pid 53810 not alive
+  #40  crashed      @atlas6dflash2  5s  2026-05-28 07:59
+        ! pid 53832 not alive
+  #42  crashed      @atlas6dflash2  3s  2026-05-28 07:59
+        ! pid 53864 not alive
+  #44  crashed      @atlas6dflash2  42s  2026-05-28 07:59
+        ! pid 53913 not alive
+  #46  crashed      @atlas6dflash2  1s  2026-05-28 07:59
+        ! pid 54079 not alive
+  #48  crashed      @atlas6dflash2  4s  2026-05-28 07:59
+        ! pid 54115 not alive
+  #50  crashed      @atlas6dflash2  1s  2026-05-28 08:00
+        ! pid 54156 not alive
+  #52  crashed      @atlas6dflash2  2s  2026-05-28 08:00
+        ! pid 54175 not alive
+  #54  crashed      @atlas6dflash2  2s  2026-05-28 08:00
+        ! pid 54215 not alive
+  #56  crashed      @atlas6dflash2  5s  2026-05-28 08:00
+        ! pid 54252 not alive
+  #58  crashed      @atlas6dflash2  3s  2026-05-28 08:00
+        ! pid 54285 not alive
+  #60  crashed      @atlas6dflash2  42s  2026-05-28 08:00
+        ! pid 54330 not alive
+  #62  crashed      @atlas6dflash2  1s  2026-05-28 08:00
+        ! pid 54550 not alive
+  #64  crashed      @atlas6dflash2  1s  2026-05-28 08:00
+        ! pid 54573 not alive
+  #66  crashed      @atlas6dflash2  3s  2026-05-28 08:00
+        ! pid 54598 not alive
+  #68  crashed      @atlas6dflash2  1s  2026-05-28 08:01
+        ! pid 54650 not alive
+  #70  crashed      @atlas6dflash2  2s  2026-05-28 08:01
+        ! pid 54667 not alive
+  #72  crashed      @atlas6dflash2  2s  2026-05-28 08:01
+        ! pid 54718 not alive
+  #74  crashed      @atlas6dflash2  5s  2026-05-28 08:01
+        ! pid 54755 not alive
+  #76  crashed      @atlas6dflash2  3s  2026-05-28 08:01
+        ! pid 54803 not alive
+  #78  crashed      @atlas6dflash2  42s  2026-05-28 08:01
+        ! pid 54837 not alive
+  #80  crashed      @atlas6dflash2  2s  2026-05-28 08:01
+        ! pid 55050 not alive
+  #82  crashed      @atlas6dflash2  1s  2026-05-28 08:01
+        ! pid 55083 not alive
+  #84  crashed      @atlas6dflash2  2s  2026-05-28 08:01
+        ! pid 55108 not alive
+  #86  crashed      @atlas6dflash2  1s  2026-05-28 08:02
+        ! pid 55132 not alive
+  #88  crashed      @atlas6dflash2  3s  2026-05-28 08:02
+        ! pid 55149 not alive
+  #90  crashed      @atlas6dflash2  1s  2026-05-28 08:02
+        ! pid 55186 not alive
+  #92  crashed      @atlas6dflash2  5s  2026-05-28 08:02
+        ! pid 55211 not alive
+  #94  crashed      @atlas6dflash2  3s  2026-05-28 08:02
+        ! pid 55261 not alive
+  #96  crashed      @atlas6dflash2  42s  2026-05-28 08:02
+        ! pid 55303 not alive
+  #98  crashed      @atlas6dflash2  3s  2026-05-28 08:02
+        ! pid 55789 not alive
+  #100 crashed      @atlas6dflash2  1s  2026-05-28 08:02
+        ! pid 55828 not alive
+  #102 crashed      @atlas6dflash2  2s  2026-05-28 08:02
+        ! pid 55867 not alive
+  #104 crashed      @atlas6dflash2  0s  2026-05-28 08:03
+        ! pid 55895 not alive
+  #106 crashed      @atlas6dflash2  3s  2026-05-28 08:03
+        ! pid 55916 not alive
+  #110 crashed      @atlas6dflash2  2s  2026-05-28 08:03
+        ! pid 55990 not alive
+  #114 crashed      @atlas6dflash2  5s  2026-05-28 08:03
+        ! pid 56031 not alive
+  #118 crashed      @atlas6dflash2  3s  2026-05-28 08:03
+        ! pid 56092 not alive
+  #122 crashed      @atlas6dflash2  42s  2026-05-28 08:03
+        ! pid 56162 not alive
+  #126 crashed      @atlas6dflash2  2s  2026-05-28 08:03
+        ! pid 56426 not alive
+  #130 crashed      @atlas6dflash2  2s  2026-05-28 08:03
+        ! pid 56457 not alive
+  #134 crashed      @atlas6dflash2  2s  2026-05-28 08:04
+        ! pid 56498 not alive
+  #140 crashed      @atlas6dflash2  2s  2026-05-28 08:04
+        ! pid 56541 not alive
+  #144 crashed      @atlas6dflash2  2s  2026-05-28 08:04
+        ! pid 56606 not alive
+  #148 crashed      @atlas6dflash2  5s  2026-05-28 08:04
+        ! pid 56670 not alive
+  #152 crashed      @atlas6dflash2  3s  2026-05-28 08:04
+        ! pid 56754 not alive
+  #156 crashed      @atlas6dflash2  42s  2026-05-28 08:04
+        ! pid 56787 not alive
+  #160 crashed      @atlas6dflash2  2s  2026-05-28 08:04
+        ! pid 57099 not alive
+  #164 crashed      @atlas6dflash2  3s  2026-05-28 08:04
+        ! pid 57142 not alive
+  #168 crashed      @atlas6dflash2  1s  2026-05-28 08:05
+        ! pid 57207 not alive
+  #172 crashed      @atlas6dflash2  2s  2026-05-28 08:05
+        ! pid 57269 not alive
+  #176 crashed      @atlas6dflash2  2s  2026-05-28 08:05
+        ! pid 57304 not alive
+  #180 crashed      @atlas6dflash2  5s  2026-05-28 08:05
+        ! pid 57348 not alive
+  #184 crashed      @atlas6dflash2  3s  2026-05-28 08:05
+        ! pid 57394 not alive
+  #188 crashed      @atlas6dflash2  38s  2026-05-28 08:05
+        ! pid 57437 not alive
+  #192 reclaimed    @atlas6dflash2  14s  2026-05-28 08:05
+        ! manual_reclaim: skill propagated, redispatching
+  #195 reclaimed    @atlas6dflash2  81s  2026-05-28 08:06
+        ! manual_reclaim: user stop: campaign retired
+  #204 blocked      @atlas6dflash2  0s  2026-05-28 08:07
+        → user stop: dflash-al3 campaign retired
+  #212 blocked      @atlas6dflash2  294s  2026-05-28 08:09
+        → review-required: sustained-cycle-1-6-done — GGUF metadata audit found config match; no embedded acceptance/tau metadata
+  #224 blocked      @atlas6dflash2  341s  2026-05-28 12:27
+        → resource-conflict: sustained-cycle-2-menu1 not launched — spark-1 already running T15/T5 inference servers, retry when idle or authorize cleanup if stale
+  #230 blocked      @atlas6dflash2  36s  2026-05-28 12:46
+        → paused filler: avoid spark-1 GPU contention with priority T14/T15
+  #244 blocked      @atlas6dflash2  112s  2026-05-28 15:14
+        → review-required: sustained-cycle-3-1-done — draft_max AL is monotone but plateaus after 7 on fixed 5-prompt subset; artifact sustained_1_3.json
+  #252 blocked      @atlas6dflash2  1064s  2026-05-28 16:52
+        → paused filler: free spark-1 GPU for priority T20 crossval mismatch closure
+  #258 blocked      @atlas6dflash2  905s  2026-05-28 17:33
+        → review-required: sustained-cycle-4-2-done — temperature sweep falsified monotone-decrease theory; mean AL peaked at temp=0.5 then declined
+  #370 blocked      @atlas6dflash2  1177s  2026-05-28 20:06
+        → review-required: sustained-cycle-5-4-done — public-axis smoke subset AL=1.322 and speedup=0.709× across GSM8K/HumanEval/MT-Bench
+  #524 blocked      @atlas6dflash2  272s  2026-05-28 23:09
+        → review-required: sustained-cycle-6-7-done — buun/z-lab GSM8K draft_max sweep AL stayed low (1.08–1.26) and was non-monotone
+  #552 blocked      @atlas6dflash2  712s  2026-05-29 02:07
+        → review-required: sustained-cycle-7-5-done — spec-only MiniMax harvest AL=1.310; verify dominates cycle time (~496/506ms) while draft is ~9ms
+  #566 blocked      @atlas6dflash2  218s  2026-05-29 03:18
+        → review-required: sustained-cycle-8-7-done — z-lab/buun low AL diagnosed as prompt-format artifact: raw AL=1.297 vs Qwen chat-formatted AL=3.164 on same 2 prompt
+  #572 blocked      @atlas6dflash2  680s  2026-05-29 04:09
+        → review-required: sustained-cycle-9-5-done — MiniMax raw-vs-chat operating point does not explain low AL (chat 1.296 vs raw 1.307)
+  #579 blocked      @atlas6dflash2  859s  2026-05-29 05:03
+        → review-required: sustained-cycle-10-3-done — MiniMax family slice AL=1.342, same low ordering as T16 (math/code best; writing/summarization worst), no upward dr
+  #580 blocked      @atlas6dflash2  899s  2026-05-29 05:21
+        → review-required: sustained-cycle-11-4-done — AR-only MiniMax verifier rerun matched T16 baseline exactly on 25/25 prompts; verifier nondeterminism ruled out for
+  #584 blocked      @atlas6dflash2  631s  2026-05-29 05:39
+        → review-required: sustained-cycle-12-5-done — MiniMax 512-token math sanity AL=1.360, below 128-token math AL=1.437; output length cap does not explain low runti
+  #586 blocked      @atlas6dflash2  640s  2026-05-29 05:57
+        → review-required: sustained-cycle-13-5-done — MiniMax ignore-EOS check produced identical AL to normal EOS (1.3158 vs 1.3158); EOS/short-stop artifact ruled out
+  #588 blocked      @atlas6dflash2  1211s  2026-05-29 06:14
+        → review-required: sustained-cycle-14-5-done — MiniMax high draft_max check stayed low (dmax15 AL=1.3845, dmax17 AL=1.3952); longer draft windows do not recover r
+  #593 blocked      @atlas6dflash2  779s  2026-05-29 06:49
+        → review-required: sustained-cycle-15-5-done — MiniMax context-position sweep stayed low (AL 1.348→1.319 from 79→4948 prompt tokens); longer prompt context does n
+  #595 blocked      @atlas6dflash2  275s  2026-05-29 07:06
+        → review-required: sustained-cycle-16-5-done — base GGUF fails to load (missing tokenizer merges); runnable _mm_tok GGUF stays low at measured AL=1.404 on 3-promp

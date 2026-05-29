@@ -1,0 +1,92 @@
+Board: dflash-al3 (13 other boards — `hermes kanban boards list`)
+
+⊘ t_99224412  blocked   atlas6dflash5         T42: FAST first AL of our adapter on buun harness — the diagnostic number <15min
+⊘ t_c3a5cdff  blocked   atlasdflash3          T41: FAST v18b training smoke (200 steps) — early proof <15min
+✓ t_b8c2b26a  done      atlaspatch3           T35: Non-PR llama.cpp DFlash harness implementation — reproduce z-lab AL without ruixiang PR
+✓ t_d8ecc736  done      atlasdflash3          T39: Launch REAL v18b training — contention-safe, full trajectory
+✓ t_936ecd6d  done      atlas6dflash5         T36: Validate non-PR llama.cpp DFlash harness against z-lab published AL
+✓ t_8590c460  done      atlas6dflash4         T33: Reproduce z-lab's published benchmark conditions exactly — close out the harness investigation (USER TOP PRIORITY)
+✓ t_5b6ff68c  done      atlas6dflash5         T34: Stand up upstream llama.cpp PR #22105 DFlash as our working inference harness (PRIMARY)
+✓ t_71dc6045  done      atlas6dflash5         T34v2: RESUME the PR #22105 100-sample GSM8K run on spark-work (user reversed the kill, evaluate on real data)
+✓ t_b898e7fb  done      atlas6dflash5         T35: Stand up buun-llama-cpp DFlash inference on spark-work (the right fork)
+✓ t_1115ef4c  done      atlasdflash4          T37: Diagnose spark-2 training wedge — ROOT CAUSE not recovery
+✓ t_1049881a  done      atlasdflash4          T43: FAST draft_max sweep on recovered harness — map AL plateau <30min (idle spark-2)
+● t_8d75abd4  running   atlaspatch5           T88: FAST buun DFlash AL denominator + 7-head validity audit
+✓ t_b46dcef8  done      atlas6dflash5         T38: Prove v18 ckpt -> buun conversion + first AL on recovered harness
+◻ t_275bee94  todo      atlaspatch5           T89: FAST AL_true of T86 step800 checkpoint after denominator audit
+✓ t_e39debf2  done      atlaspatch5           T49: FAST read-only harvest spark-3 step>=500 ckpt and hand to AL path
+✓ t_c6f81f91  done      atlaspatch5           T58: FAST MiniMax target-layer metadata sweep and AL smoke
+✓ t_77ba24fa  done      atlasdflash4          T79: FAST AL of T78 step650 checkpoint on MiniMax/buun
+✓ t_368912e2  done      atlasdflash4          T50: FAST v15 deep MiniMax conversion + 3x512 AL on buun harness
+✓ t_36b1e363  done      atlasdflash5          T25: USER ACTION REQUIRED — spark-2 hardware block before any T3 relaunch
+✓ t_c6d4b9e4  done      atlas6dflash5         T51: FAST cause-isolation plan from T48 low AL — choose next <1hr lever
+✓ t_4106997b  done      atlasdflash3          T80: FAST spark-3 bounded continuation from T78 step650 to next checkpoint
+✓ t_01856c50  done      atlasdflash4          T77: FAST T73 higher draft_max goal attempt (15/17) after T74
+✓ t_fbf231e5  done      atlasdflash2          T1: Apply v18 resume-corruption fix + relaunch v18 training on spark-2 from step 2500
+✓ t_932d5792  done      atlasdflash5          T21: Throughput gate decision NOW using T19+T8 results — YELLOW/RED verdict + v18b launcher proposal
+⊘ t_6ff86735  blocked   atlas6dflash3         T22: AL-trajectory proof — measure per-pos AL at every v18b checkpoint, prove vocab fix improves drafter quality (NEVER-COMPLETES PROOF LOOP)
+✓ t_55f99520  done      atlasdflash3          T28: Validate spark-3 as alternate single-Spark training host (bounded smoke)
+✓ t_d7a58a8c  done      atlaspatch1           T30: spark-2 deep workaround search for v18b host-lock (within-constraint angles T24 did not explore)
+✓ t_a888d931  done      atlasdflash4          T31: Launch v18b training on spark-2 with TE-stable venv (T28-viable incantation, root cause resolved)
+✓ t_fdc4d9d2  done      atlasdflash4          T32: Eliminate NasFS as DataLoader I/O bottleneck — pre-warm cache, then launch training
+✓ t_e508d49c  done      atlaspatch4           T44: recover spark-2 for T42 fast AL path (Kasa plug 2, evidence, unblock)
+✓ t_b70b09ea  done      atlaspatch1           T24: Diagnose/fix spark-2 v18b host-lock before T3 relaunch
+✓ t_61455e7b  done      atlasdflash4          T7: Throughput profile — exact breakdown of where v18 step time goes (target >1 it/s)
+✓ t_3062521b  done      atlasdflash1          T11: Training-prompt replay through inference path — does runtime AL match training per-pos when prompts are identical?
+✓ t_b7a79b41  done      atlas6dflash4         T23: Z-lab calibration on FIXED harness — confirm harness fix before trusting v18b trajectory
+✓ t_f2dc0d8b  done      atlasdflash5          T54: FAST spark-3 continuation smoke from step500 — next ckpt for AL path
+✓ t_2c83cdfe  done      atlaspatch5           T62: FAST corrected d2t-offset rebake of T53 step500 + tiny AL smoke
+✓ t_1d34be1d  done      atlas6dflash1         T67: FAST training-distribution AL probe for current best MiniMax adapter
+✓ t_c277f755  done      atlasdflash2          T7 follow-up: single-spark kernel deep dive for v18 throughput gap (no FSDP)
+✓ t_9f13000a  done      atlasdflash4          T68: FAST current-best draft_max ceiling sweep on MiniMax native chat arm
+✓ t_98118712  done      atlas6dflash3         T69: FAST training-side vs runtime gap audit for T66 checkpoint
+✓ t_60a49078  done      atlas6dflash3         T14: Z-lab public DFlash drafter ground-truth — measure a KNOWN-GOOD drafter on our exact harness (single highest-info experiment)
+✓ t_d3032bd0  done      atlas6dflash4         T26: Fix remaining z-lab fixed-harness underreporting after T22 releases spark-1
+⊘ t_9b2b7536  blocked   atlaspatch5           T52: FAST mapping/scatter audit of T48 low-AL rebake
+✓ t_c7e0c028  done      atlasdflash4          T53: FAST AL of fresh spark-3 step500 checkpoint on MiniMax/buun path
+⊘ t_e15f4d73  blocked   atlasdflash2          T8: Apply throughput optimizations — liger kernels first, then ranked candidates from T7
+✓ t_654c45ec  done      atlas6dflash5         T29: Upstream llama.cpp PR #22105 DFlash workstream on spark-work
+✓ t_5ecfb6b6  done      atlasdflash4          T59: FAST latest spark-3 checkpoint -> MiniMax/buun AL (<1h)
+✓ t_4beca304  done      atlas6dflash2         T81: FAST spark-1 MiniMax AL operating-point rescue probe
+✓ t_b735f0a2  done      atlas6dflash1         T20: Close fixed-harness simple-vs-API crossval mismatch
+✓ t_fbe81fc2  done      atlasdflash3          T71: FAST restore spark-3 hidden-state access + one-step proof
+✓ t_a9564cc2  done      atlas6dflash4         T15: Inference-time AL headroom — structural ceiling of v18 step 2500 drafter (draftmax/oracle/perpos decomposition)
+✓ t_3e38d826  done      atlasdflash2          T18: Operator-level CE/backward deep dive for v18 throughput gate (spark-2 only)
+⊘ t_6781d383  blocked   atlasdflash3          T3: Continue v18 training to epoch 1 + AL trajectory harvest every 1000 steps
+✓ t_f08179b8  done      atlas6dflash1         T12: Per-position-accept telemetry instrumentation in dflash_llama runtime
+✓ t_b14b49a6  done      atlasdflash2          T19: Fix v18 vocab-axis regression + fused/streaming CE-backward microprototype
+✓ t_52a74ba0  done      atlaspatch5           T60: FAST root-cause audit for AL stuck near 1.65
+✓ t_82a718d9  done      atlasdflash4          T66: FAST AL measure harvested spark-3 093736 step500 checkpoint (corrected offset)
+◻ t_dd04ec41  todo      atlasdflash5          T10: Permanence — commit C15-defaults regression-prevention package (test + audit script + postmortem + skill update)
+✓ t_64167ad3  done      atlas6dflash5         T17: Plan-to-AL-3 synthesis — derive empirical roadmap from T11/T12/T13/T14/T15 outputs
+✓ t_a8b300c6  done      atlaspatch5           T63: FAST post-T62 next-lever synthesis for measured MiniMax AL>=3
+◻ t_d58a7a68  todo      atlasdflash5          T4: Architectural sweep (anchor/depth/capacity/blocksize) if v18 cannot reach AL>3
+⊘ t_14c05057  blocked   atlasdflash3          T5: Background AL sweep on spark-1 — repro, draft-max sweep, deep-dive, public-ref benchmarks (NEVER completes)
+⊘ t_49bb9365  blocked   atlas6dflash2         T13: Sustained spark-1 inference-side investigation loop (NEVER COMPLETES) — draftmax/temp/category/verifier/gguf-audit/zlab-compare cycles
+✓ t_5353dfaf  done      atlaspatch1           T61: FAST spark-work stale buun server cleanup / lease audit
+⊘ t_a1893079  blocked   atlasdflash4          T6: Background trainer-side experiments on spark-2 — AL harvest, throughput audit, resume-probe sanity (NEVER completes)
+✓ t_a954121a  done      atlaspatch2           T27: Restore spark-1 reachability for harness/trajectory work (worker-owned recovery)
+✓ t_6c9f2d76  done      atlaspatch5           T45: READ-ONLY harvest active spark-3 v18b training state for fast AL inputs
+✓ t_d4928523  done      atlaspatch5           T46: READ-ONLY re-harvest spark-3 v18b checkpoint after step>=500
+⊘ t_eb6fec80  blocked   atlas6dflash5         T47: FAST AL of our adapter with compatible MiniMax 3072 target
+✓ t_fab7e72b  done      atlasdflash4          T48: FAST MiniMax reconvert of OUR adapter + first valid AL
+✓ t_60aae868  done      atlaspatch5           T55: FAST finish T52 row-norm/generated-token coverage audit after T53
+✓ t_50ef4f0e  done      atlas6dflash5         T56: FAST post-T53 AL decision and next bounded lever
+✓ t_b1c65598  done      atlaspatch5           T57: FAST corrected MiniMax scatter rebake of T53 step500 and AL smoke after T55
+✓ t_20e56873  done      atlaspatch5           T64: FAST MiniMax AL prompt/BOS A-B after latest corrected-offset measurement
+✓ t_13040a98  done      atlaspatch4           T65: FAST spark-3 lease cleanup / orphan trainer harvest for next AL loop
+✓ t_ee017e27  done      atlasdflash3          T70: FAST spark-3 ANCHOR-SKIP root-cause + one-step proof
+✓ t_4476d81c  done      atlasdflash4          T72: FAST reproduce current-best MiniMax draft_max=13 AL on 3-5 prompts
+✓ t_630f7ab8  done      atlasdflash3          T73: FAST spark-3 bounded continuation after HS restore (ckpt by step600)
+✓ t_fe09fcd8  done      atlasdflash4          T74: FAST AL of T73 fresh checkpoint on MiniMax/buun
+✓ t_b2d5b4f2  done      atlasdflash3          T75: FAST spark-3 bounded continuation from T73 step550 to next checkpoint
+✓ t_f10d84d5  done      atlasdflash4          T76: FAST AL of T75 fresh checkpoint on MiniMax/buun
+✓ t_a088a79d  done      atlasdflash3          T78: FAST spark-3 bounded continuation from T75 to next checkpoint
+● t_9af63f88  running   atlas6dflash5         T82: FAST AL of T80 step700 checkpoint on MiniMax/buun
+✓ t_040f6b3d  done      atlasdflash3          T83: FAST spark-3 bounded continuation from T80 to next checkpoint
+✓ t_d8791b68  done      atlas6dflash2         T84: FAST reproduce T81 AL>=3 MiniMax operating point
+● t_7ff38a5f  running   atlasdflash4          T85: FAST AL of T83 step750 checkpoint on MiniMax/buun
+✓ t_c0a75935  done      atlasdflash3          T86: FAST spark-3 bounded continuation from T83 step750 to next checkpoint
+● t_a1148a7f  running   atlas6dflash1         T87: FAST sustained 10-prompt confirmation of T84/T81 AL>=3 on MiniMax
+⊘ t_e6dde2c8  blocked   atlas6dflash2         T_VALDIST: FAST in-distribution (Tulu3 val) runtime AL vs GSM8K — does 2.9 translate?
+◻ t_d5077e99  todo      atlas6dflash2         T_SPEEDUP: FAST measured wall-clock speedup of current-best drafter vs no-draft baseline

@@ -1,0 +1,47 @@
+Task t_8d75abd4: T88: FAST buun DFlash AL denominator + 7-head validity audit
+  status:    running
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_8d75abd4
+  max-retries: 2 (default)
+  created:   2026-05-29 08:51 by user
+  started:   2026-05-29 08:51
+  children:  t_275bee94
+
+Body:
+# T88: FAST buun DFlash AL denominator + 7-head validity audit (spark-3 only)
+
+## Mission
+Before we celebrate T81/T84/T87 AL>=3, prove whether the reported `n_predict/(n_drafted/draft_max)` is a REAL verified acceptance length or a denominator artifact. User flagged a hard red flag: our DFlash drafter trains 7 positions, but T81/T84 used draft_max=17 and AL rose with draft_max. If the denominator is wrong, the apparent AL>=3 is fake regardless of prompts.
+
+## Host scope
+spark-3 ONLY. Read/source audit + tiny inference/counter reproduction only. Do not touch spark-1/spark-2/spark-work/spark-4. No Kasa. No training. One actor per host: if spark-3 has a live task/llama/vLLM/train.py/GPU compute app, block SPARK3_BUSY with evidence.
+
+## Inputs
+Use the canonical buun runtime source and MiniMax artifacts already on spark-3 if present. Current-best GGUF path to prefer: `/home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf`. If absent, use `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf` ONLY as a labelled fallback and do NOT call it the current adapter. Target: `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`.
+
+## Required checks (do in this order, FAST)
+1. Source-line audit: locate buun `llama-speculative-simple` / DFlash reporting code. Quote exact file:line definitions for `n_predict`, `n_drafted`, `draft_max`, target verify loop count if present, and how `--draft-max > 7` behaves with a 7-position DFlash drafter (self-feed loop? repeated heads? tree?).
+2. Raw counter audit: run 1-2 short deterministic prompts (<=128 output) at draft_max in {7, 13, 15, 17}. Print every counter the runner exposes: tokens_emitted/n_predict, target forward/verify steps if exposed, n_drafted, proposed, accepted, draft_max, accept fraction, stop reason.
+3. Recompute manually:
+   - `AL_reported = n_predict/(n_drafted/draft_max)` if those are the counters T81/T84 used.
+   - `AL_true = tokens_emitted / n_target_forward_passes` if target-forward counter exists.
+   - If no target-forward counter exists, verdict must be `INCONCLUSIVE_COUNTER_MISSING` and the next task is instrumentation, not celebration.
+4. Validity verdict:
+   - `VERIFIED_DENOMINATOR`: AL_true exists, matches reported, output correctness/lossless counter path is credible, and AL_true does NOT artifactually rise just because draft_max>7.
+   - `FAKE_DENOMINATOR`: AL_reported differs materially from AL_true OR reported AL rises via denominator while target-forward acceptance does not.
+   - `INCONCLUSIVE_COUNTER_MISSING`: source/runner does not expose target-forward/verified-accepted counters.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T88_BUUN_DENOMINATOR_AUDIT.md` and comment a compact table with source file:line quotes, per-draft_max raw counters, AL_reported vs AL_true, model path used, and verdict. Raw measured numbers only; no multipliers.
+
+## Hard rules
+FAST <=45min. spark-3 only. Inference/source audit only. No source edits except optional tiny local throwaway logging if counters are not printed; if you patch, write the diff path and do not claim a real AL until rerun.
+
+
+Events (3):
+  [2026-05-29 08:51] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 08:51] [run 609] claimed {'lock': 'macmini.local:55838', 'expires': 1780070804, 'run_id': 609}
+  [2026-05-29 08:51] [run 609] spawned {'pid': 55842}
+
+Runs (1):
+  #609 running      @atlaspatch5  active  2026-05-29 08:51

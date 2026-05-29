@@ -1,0 +1,64 @@
+Task t_d4928523: T46: READ-ONLY re-harvest spark-3 v18b checkpoint after step>=500
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_d4928523
+  max-retries: 2 (default)
+  created:   2026-05-29 00:19 by user
+  started:   2026-05-29 00:19
+  completed: 2026-05-29 00:21
+
+Body:
+# T46: READ-ONLY re-harvest spark-3 v18b training after step>=500 — feed T42 fast AL inputs
+
+## Mission
+Fast follow-up to T45. Spark-3 has a live v32768 training run (`c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z`) that had no checkpoint at step~205. Recheck now/read-only; if a checkpoint exists, hand it to T42 immediately.
+
+## Host scope
+spark-3 READ-ONLY only. Do not kill, restart, Kasa-cycle, launch training, or modify run dirs. Do not touch spark-1/spark-2/spark-work/spark-4.
+
+## Steps (<15 min)
+1. SSH spark-3 read-only: inspect active `scripts/train.py`, train.log tail/mtime, checkpoint dir, free memory, GPU compute apps.
+2. If current step >=500 and checkpoint/val artifact exists, list exact paths and verify config/effective vocab axis (requested/effective 32768 if logged; model/config enough for conversion).
+3. Comment any usable candidate checkpoint path onto T42 (`t_99224412`) as "additional candidate after current FIXED_v32768 attempt".
+4. If no checkpoint yet but run is live, report current step/loss and recommended next recheck time. If stale/orphan, report evidence only; do not mutate.
+
+## Deliverable
+Comment on this task with classification: CKPT_AVAILABLE, LIVE_NO_CKPT, ORPHAN_STALE, or UNREACHABLE. Then block `review-required` (do not complete yourself).
+
+## Hard rules
+READ-ONLY. No mutation. No Kasa. No training/inference launch. <15 min. Numeric/proof artifacts preferred but not required.
+
+Latest summary:
+T46 accepted: LIVE_NO_CKPT on spark-3, training live at step 365 with no checkpoint files yet; recheck after step>=500 (~00:33-00:35 PDT).
+
+Comments (2):
+  [2026-05-29 00:20] atlaspatch5: classification: LIVE_NO_CKPT
+
+READ-ONLY spark-3 inspection at 2026-05-29T07:19-07:20Z.
+
+Evidence:
+- Host reachable: `spark-3`; no mutations performed.
+- Active training process: PID 2076071, cwd `/home/dnola/speculators-c15-api`, command includes `scripts/train.py`, `--run-name c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z`, `--draft-vocab-size 32768`, `--checkpoint-freq 1`, `--val-every-steps 500`.
+- Active script: `/home/dnola/speculators-c15-api/scripts/train.py`, size 27869, mtime `2026-05-27 02:22:40.482984472 -0700`, sha256 `4c2802a485c53765d58c18c1480f7c84c338188ef62da2829619f2bed291cfa7`.
+- Log live: `/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/train.log`, mtime `2026-05-29 00:20:04.145618687 -0700`, latest observed `global_step=365`, `train/loss=5.781`, `epoch=0`, `lr=1.09e-04`.
+- Checkpoint dir: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z` exists, but `find -maxdepth 2` showed only the directory itself; no checkpoint files yet.
+- Val artifacts: no usable val/eval/metric/json artifacts found under the run log/checkpoint dirs.
+- Memory/GPU proof: `free -h` showed 119Gi total, 45Gi available; `nvidia-smi --query-compute-apps` showed PID 2076071 using 25228 MiB.
+
+No usable candidate checkpoint was available, so I did not comment a path onto T42. Recommended next recheck: around 2026-05-29T07:33-07:35Z (shortly after expected step>=500 / val interval, allowing a little checkpoint write time).
+  [2026-05-29 00:21] dflash-al3-driver: review APPROVED. T46 fast re-harvest found spark-3 training live at step 365, no checkpoint yet; next useful read-only recheck after step>=500 (~00:33-00:35 PDT). No mutation needed.
+
+Events (7):
+  [2026-05-29 00:19] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 00:19] [run 536] claimed {'lock': 'macmini.local:25274', 'expires': 1780040044, 'run_id': 536}
+  [2026-05-29 00:19] [run 536] spawned {'pid': 25277}
+  [2026-05-29 00:20] commented {'author': 'atlaspatch5', 'len': 1504}
+  [2026-05-29 00:20] [run 536] blocked {'reason': 'review-required: LIVE_NO_CKPT on spark-3; run is live at step 365 with no checkpoint files yet, recheck around 2026-05-29T07:33-07:35Z.'}
+  [2026-05-29 00:21] commented {'author': 'dflash-al3-driver', 'len': 182}
+  [2026-05-29 00:21] [run 538] completed {'result_len': 0, 'summary': 'T46 accepted: LIVE_NO_CKPT on spark-3, training live at step 365 with no checkpoint files yet; recheck after step>=500 (~00:33-00:35 PDT).'}
+
+Runs (2):
+  #536 blocked      @atlaspatch5  80s  2026-05-29 00:19
+        → review-required: LIVE_NO_CKPT on spark-3; run is live at step 365 with no checkpoint files yet, recheck around 2026-05-29T07:33-07:35Z.
+  #538 completed    @atlaspatch5  0s  2026-05-29 00:21
+        → T46 accepted: LIVE_NO_CKPT on spark-3, training live at step 365 with no checkpoint files yet; recheck after step>=500 (~00:33-00:35 PDT).

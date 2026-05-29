@@ -1,0 +1,137 @@
+Task t_6ff86735: T22: AL-trajectory proof — measure per-pos AL at every v18b checkpoint, prove vocab fix improves drafter quality (NEVER-COMPLETES PROOF LOOP)
+  status:    blocked
+  assignee:  atlas6dflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_6ff86735
+  max-retries: 2 (default)
+  created:   2026-05-28 17:42 by user
+  started:   2026-05-28 17:42
+
+Body:
+# T22: AL-trajectory proof — measure per-pos AL at every v18b checkpoint, prove vocab fix improves drafter quality
+
+## USER CHALLENGE
+
+User: "then prove it. It can be shown fairly early in training and if you really did fix training speed it wouldn't be long."
+
+The hypothesis: T19's vocab-axis fix (V=200064 silent regression → V=32768 actual) means the trainer is finally building the correct-shape lm_head. If true, per-position accuracy should improve MEASURABLY within hours, not days, of v18b retraining.
+
+The proof: measure per-position accuracy on a fixed prompt suite at every v18b checkpoint, plot trajectory, show measurable improvement past the broken-drafter ceiling of 1.37 within a few thousand steps.
+
+## YOUR JOB (long-running on spark-1)
+
+### Phase 1 — Establish baseline (do this NOW, before T3 produces any new ckpt)
+
+1. Run the SAME 25-prompt benchmark from T16, but using the FIXED harness (T20 EOS-semantics patch + T12 per-pos telemetry). Target: the existing /home/dnola/exports/c15_iq4v18_step2500/ ckpt.
+2. Output to /home/dnola/exports/c15_iq4v18_step2500/benchmarks_fixed_harness/summary.json.
+3. This is the "broken drafter, fixed harness" baseline. Per T14 partial: AL should land somewhere around 2.0-2.5 (z-lab on fixed harness was 2.883; v18 was 1.363 on broken harness; with fixed harness we expect v18 to recover some of the Outcome-B harness gap).
+4. Write a one-line baseline summary to /home/dnola/exports/c15_iq4v18_step2500/benchmarks_fixed_harness/BASELINE.md: "v18 step 2500 (broken drafter, FIXED harness): AL=X.XXX, per_pos=[...]".
+
+### Phase 2 — Trajectory measurement (long-running, every 30 min)
+
+1. Poll /home/dnola/exports/c15_iq4v18b_step*/ every 30 min for new exports written by T3's retraining.
+2. For each new step_{N} export:
+   a. GGUF-convert via the standard pipeline. Output: /home/dnola/exports/c15_iq4v18b_step{N}_dflash_mm_tok_prepped/.
+   b. Run the 25-prompt FIXED-harness benchmark.
+   c. Save summary.json + per-pos vector.
+   d. Append a row to /home/dnola/exports/AL_TRAJECTORY.md:
+      "step {N}: AL = X.XXX (CI a.aaa-b.bbb), per_pos = [...], step_time = T.T ms".
+3. Plot the trajectory every 4 ckpts to /home/dnola/exports/AL_TRAJECTORY.png (matplotlib) showing AL vs step.
+
+### Phase 3 — Proof gate
+
+Watch the trajectory. The proof claim succeeds when:
+- AL@step_N > 1.5 (clear improvement past the broken-drafter ceiling 1.37), OR
+- per_position_accept at position 1 (P_1) improves by ≥0.05 absolute over the AL_LB baseline at step 2500.
+
+Either gate hit → comment on this task "PROOF GATE HIT at step N: AL=X.XXX, P_1 baseline B.BB → current C.CC. Vocab fix is real." Block review-required so the orchestrator/user can see it.
+
+If trajectory shows NO improvement after 5000 retraining steps (i.e. step_9000): comment "PROOF FAILED: vocab fix did not improve drafter quality at expected timescale. Recommend root-cause investigation." Block review-required.
+
+If trajectory shows improvement crossing AL=3.0: comment "TARGET MET at step N: measured AL = X.XXX." Block review-required for user confirmation.
+
+## CADENCE
+
+This task runs forever; the loop body is "any new ckpt → measure → append → check gate → block-review-required → driver unblocks next tick". Pattern matches T5/T13 fillers but with the explicit proof gate.
+
+## HARD RULES
+
+- spark-1 ONLY.
+- DO NOT touch any export directory; READ ONLY on /home/dnola/exports/c15_iq4v18b_step*/, WRITE only to your own *_fixed_harness subdirs and AL_TRAJECTORY.md/png at /home/dnola/exports/AL_TRAJECTORY.*.
+- DO NOT modify the harness; use what T12 + T20 produced.
+- DO NOT touch model architecture or training.
+- Required skills: dflash-c15-fp8-hybrid-winning-config-and-health-rules.
+- Assignee: atlas6dflash3.
+- Priority: 100 (the user's explicit proof requirement).
+
+Latest summary:
+review-required: T53 step500 measured runtime AL=1.651107 crosses the AL>1.5 proof gate and AL_TRAJECTORY was updated; no spark-1 /home/dnola/exports/c15_iq4v18b_step* export exists for canonical fixed-harness per-pos measurement. Unblock after human/orchestrator accepts the runtime-axis proof or when T58/new spark-1 export provides the next canonical input.
+
+Comments (8):
+  [2026-05-28 18:12] atlas6dflash3: T22 handoff/status:
+
+- Oriented on spark-1 and verified `/home/dnola/exports/c15_iq4v18_step2500/` exists; no `/home/dnola/exports/c15_iq4v18b_step*/` exports exist yet.
+- Created fixed-harness runner script at `/home/dnola/exports/c15_iq4v18_step2500/benchmarks_fixed_harness/t22_eval_fixed_harness.py` using `/home/dnola/dflash-llama/src/dflash_llama/inference/{server.py,analyze.py}` (T20/T12 source path).
+- Direct T22 dmax=7 baseline launch failed before model load with `cudaSetDevice` OOM because another spark-1 benchmark (`/home/dnola/t5_draftmax_sweep.py`, PID 412270/llama-server) already occupied the CUDA runtime. I did not kill it.
+- To preserve the "baseline before v18b ckpt" requirement, reused the just-completed fixed-harness T5 25-prompt dmax=5 run from `/tmp/t5_draftmax_sweep_c15_iq4v18_step2500/draftmax_sweep_c15_iq4v18_step2500.json` and wrote:
+  - `/home/dnola/exports/c15_iq4v18_step2500/benchmarks_fixed_harness/summary.json`
+  - `/home/dnola/exports/c15_iq4v18_step2500/benchmarks_fixed_harness/BASELINE.md`
+  - `/home/dnola/exports/AL_TRAJECTORY.md`
+- Baseline recorded: runtime AL=1.277, per_pos=[0.244403, 0.024437, 0.006613, 0.001477, 0.0], draft_max=5. Caveat: this is fixed-harness telemetry but not the requested T16 draft_max=7 axis; rerun dmax=7 once spark-1 clears if strict axis match is required.
+
+No v18b checkpoint is available to convert/measure yet.
+  [2026-05-28 18:22] driver: DRIVER 18:22: spark-1 was power-cycled and is back. Baseline currently recorded from reused dmax=5 fixed-harness T5 artifact: AL=1.277, per_pos=[0.244403,0.024437,0.006613,0.001477,0.0]. Resume T22; if GPU is clear, run the strict requested dmax=7 baseline and update BASELINE.md/AL_TRAJECTORY.md, then continue polling for v18b exports. T3 is currently blocked by reproducible spark-2 host-lock before first export, so no new v18b ckpt yet.
+  [2026-05-28 18:57] atlas6dflash3: T22 status after driver unblock:
+
+- spark-1 GPU was clear; reran the strict requested dmax=7 25-prompt fixed-harness baseline against `/home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf`.
+- Updated `/home/dnola/exports/c15_iq4v18_step2500/benchmarks_fixed_harness/summary.json` (now draft_max=7), `/home/dnola/exports/c15_iq4v18_step2500/benchmarks_fixed_harness/BASELINE.md`, and `/home/dnola/exports/AL_TRAJECTORY.md`.
+- Strict baseline: AL=1.362642, CI=1.369-1.416 from prompt bootstrap in the runner, per_pos=[0.297307, 0.052204, 0.011613, 0.001518, 0.000000, 0.000000, 0.000000], n_accept=10274, n_draft=28331.
+- Verified `/home/dnola/exports/c15_iq4v18b_step*` is still empty on spark-1, so no v18b trajectory checkpoint can be converted/measured yet.
+
+Proof gate state: not evaluated for v18b yet because there is no v18b export. Baseline P1 for future gate comparison is 0.297307.
+  [2026-05-28 21:33] user: 21:32 PDT DRIVER UPDATE: remain blocked. Do not resume T22 trajectory measurement until T36 delivers a WORKING non-PR llama.cpp DFlash harness invocation OR a new canonical comparator. Old harness numbers are not trustworthy for v18b trajectory.
+  [2026-05-28 21:46] atlas6dflash4: T33 canonical comparator for v18b trajectory:
+
+Use `/home/dnola/zlab_ref_drafter/benchmarks_t33_published_conditions/summary_gsm8k_4096_thinking.json` as the known-good harness recovery comparator.
+
+Result: z-lab reference drafter on spark-1, Qwen3.6-35B-A3B target, GSM8K prompts formatted per z-lab `dflash/benchmark.py`, chat template `enable_thinking=True`, max_new_tokens=4096, temperature=0, draft_max=7. Time-boxed subset n=7 measured mean AL=5.849265395254337 vs z-lab published B8 GSM8K AL=5.21. Verdict: HARNESS_FULL_RECOVERY. The harness can reproduce published-scale AL when output length/thinking/dataset match; T23/T26 short custom prompts are a different operating point, not evidence of a broken harness.
+
+Full verdict: `/home/dnola/v18_fix/T33_HARNESS_FINAL_VERDICT.md`
+  [2026-05-29 02:25] dflash-al3-driver: Driver 02:20: New evidence is available: T53 measured fresh step500 MiniMax/buun AL=1.651 at draft_max=9; T55/T57 say conversion scatter artifact is unlikely; T58 is now checking target-layer metadata. Resume ONE spark-1-only T22 trajectory/proof cycle if GPU is free: consume the existing step500/T53 artifacts, update AL_TRAJECTORY with the measured runtime AL axis, and if no new export/checkpoint is available block review-required with the exact waiting condition. Do not touch spark-2/spark-3/spark-4.
+  [2026-05-29 02:27] atlas6dflash3: PROOF GATE HIT at step 500 on the measured runtime MiniMax/buun axis: AL=1.651107 (T53 raw accept_length mean over 3x512, draft_max=9) > 1.5 gate. Baseline fixed-harness strict dmax=7 remains AL=1.362642 with P1=0.297307; current P1 is n/a because T53 is runtime aggregate only, not per-position telemetry.
+
+Updated spark-1 artifacts:
+- `/home/dnola/exports/AL_TRAJECTORY.md` now has `500 | T53_v18b_step500_runtime_minimax_buun | AL = 1.651107 ...`.
+- `/home/dnola/exports/AL_TRAJECTORY.png` regenerated with baseline + step500 runtime point.
+
+Caveats/axis labels: this is raw measured runtime AL, not the original 25-prompt fixed-harness per-pos axis. T55/T57 say conversion scatter artifact is unlikely; T58 is still checking target-layer metadata. Verified spark-1 currently has no `/home/dnola/exports/c15_iq4v18b_step*` export dirs, so no canonical spark-1 fixed-harness per-position trajectory checkpoint is available to run in this cycle.
+  [2026-05-29 02:43] dflash-al3-driver: Driver review accepted: T53/T22 proof gate update is valid on the raw measured runtime axis (step500 MiniMax/buun AL=1.651107 > 1.5, still below campaign target AL>=3). T58 has since ruled out target-layer metadata mismatch. Keep trajectory/proof loop blocked until T59 supplies the next measured checkpoint or a new export exists; do not consume spark-1 on stale no-input cycles.
+
+Events (28):
+  [2026-05-28 18:22] commented {'author': 'driver', 'len': 441}
+  [2026-05-28 18:22] unblocked
+  [2026-05-28 18:22] [run 269] claimed {'lock': 'macmini.local:28892', 'expires': 1780018668, 'run_id': 269}
+  [2026-05-28 18:22] [run 269] spawned {'pid': 28896}
+  [2026-05-28 18:23] [run 269] heartbeat {'note': 'resumed after driver unblock; checking spark-1 GPU/export state, then will rerun strict dmax=7 baseline if clear and poll v18b exports'}
+  [2026-05-28 18:29] [run 269] heartbeat {'note': 'strict dmax=7 fixed-harness baseline is running on spark-1; llama-server loaded successfully and is processing the 25 prompts'}
+  [2026-05-28 18:36] [run 269] heartbeat {'note': 'strict dmax=7 baseline still running on spark-1; 6/25 prompts completed, partial runtime AL about 1.46 at 4/25, no v18b export present at launch'}
+  [2026-05-28 18:45] [run 269] heartbeat {'note': 'strict dmax=7 baseline progress on spark-1: 12/25 prompts completed, partial AL=1.429; continuing to completion before updating BASELINE/trajectory'}
+  [2026-05-28 18:57] commented {'author': 'atlas6dflash3', 'len': 896}
+  [2026-05-28 18:57] [run 269] blocked {'reason': 'waiting-for-peer-output: strict dmax=7 fixed-harness baseline is now written (AL=1.362642, P1=0.297307), but /home/dnola/exports/c15_iq4v18b_step* is still empty on spark-1; unblock when T3 produces the first v18b export to convert/measure.'}
+  [2026-05-28 21:33] commented {'author': 'user', 'len': 245}
+  [2026-05-28 21:46] commented {'author': 'atlas6dflash4', 'len': 786}
+  [2026-05-29 02:25] commented {'author': 'dflash-al3-driver', 'len': 507}
+  [2026-05-29 02:25] unblocked
+  [2026-05-29 02:25] [run 557] claimed {'lock': 'macmini.local:56296', 'expires': 1780047618, 'run_id': 557}
+  [2026-05-29 02:25] [run 557] spawned {'pid': 56298}
+  [2026-05-29 02:25] [run 557] heartbeat {'note': 'resumed for one spark-1-only proof cycle per driver: checking spark-1 GPU/export/T53 artifact state before updating AL_TRAJECTORY or blocking on exact wait condition'}
+  [2026-05-29 02:27] commented {'author': 'atlas6dflash3', 'len': 946}
+  [2026-05-29 02:27] [run 557] blocked {'reason': 'review-required: T53 step500 measured runtime AL=1.651107 crosses the AL>1.5 proof gate and AL_TRAJECTORY was updated; no spark-1 /home/dnola/exports/c15_iq4v18b_step* export exists for canonical fixed-harness per-pos measurement. Unblock after human/orchestrator accepts the runtime-axis proof or when T58/new spark-1 export provides the next canonical input.'}
+  [2026-05-29 02:43] commented {'author': 'dflash-al3-driver', 'len': 380}
+
+Runs (3):
+  #263 blocked      @atlas6dflash3  1823s  2026-05-28 17:42
+        → waiting-for-peer-output: no /home/dnola/exports/c15_iq4v18b_step*/ export exists yet; baseline artifacts are written, but trajectory measurement cannot start un
+  #269 blocked      @atlas6dflash3  2099s  2026-05-28 18:22
+        → waiting-for-peer-output: strict dmax=7 fixed-harness baseline is now written (AL=1.362642, P1=0.297307), but /home/dnola/exports/c15_iq4v18b_step* is still empt
+  #557 blocked      @atlas6dflash3  156s  2026-05-29 02:25
+        → review-required: T53 step500 measured runtime AL=1.651107 crosses the AL>1.5 proof gate and AL_TRAJECTORY was updated; no spark-1 /home/dnola/exports/c15_iq4v18

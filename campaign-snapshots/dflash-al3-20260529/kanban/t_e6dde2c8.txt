@@ -1,0 +1,129 @@
+Task t_e6dde2c8: T_VALDIST: FAST in-distribution (Tulu3 val) runtime AL vs GSM8K — does 2.9 translate?
+  status:    blocked
+  assignee:  atlas6dflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_e6dde2c8
+  max-retries: 2 (default)
+  created:   2026-05-29 08:37 by main-driver-followup
+  started:   2026-05-29 08:37
+  children:  t_d5077e99
+
+Body:
+# FAST in-distribution runtime AL: decode val (Tulu3) prompts, not GSM8K (<=1h)
+
+## Mission
+Falsify-or-confirm whether the current-best measured runtime AL (T72 GSM8K-style: dmax13 5-prompt mean 2.433, dmax15 3-prompt mean 2.922) TRANSLATES to the actual training/eval distribution. Hypothesis (high prior): GSM8K is OUT-of-distribution-easy vs our val mix, inflating runtime AL above the val-derived teacher-forced ceiling AL_HI=2.20 (computed from step600 val per-position accs). Measure raw runtime AL on IN-DISTRIBUTION val prompts and compare.
+
+## Why this matters
+- Consolidated dataset = 86% prompts_tulu3 (170,305 rows), 14% preprocessed; seq_len median 529 / p90 1664. NOT short grade-school math.
+- Val step600 per-position accept: pos1=0.302 .. pos7=0.094 -> teacher-forced AL_LO=1.38, AL_HI(1+Sum p_i)=2.20.
+- Runtime GSM8K AL (2.43-2.92) sits ABOVE AL_HI=2.20 -> classic OOD-easy-prompt inflation OR looser runtime accept rule. This task isolates the prompt-distribution factor.
+
+## Host scope
+spark-2 ONLY (conversion + buun runtime AL smoke). Inference/eval only. Do NOT touch spark-1/spark-3/spark-4/spark-work. No Kasa. No training. Block SPARK2_BUSY if a live train.py/llama-server/GPU compute app owns the host. Cap TORCHINDUCTOR_COMPILE_THREADS.
+
+## Exact inputs
+- Draft GGUF (current best, already converted, corrected d2t-OFFSET): /home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf
+- Target: /home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf
+- Val/prompt source: datasets.load_from_disk('/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts') -- fields: input_ids (int32, pre-tokenized), loss_mask (bool, completion region), seq_len, source_name, source_row_idx.
+
+## Steps (FAST, target <=45min)
+1. From the consolidated dataset, sample a small IN-DISTRIBUTION prompt set for runtime decode:
+   - Take 8-10 rows where source_name=='prompts_tulu3' (the dominant val source). Reconstruct the PROMPT region only = input_ids where loss_mask==False up to first True (the user/instruction portion); decode to text with the SAME tokenizer the runtime harness uses, OR feed input_ids prefix directly if the buun runner accepts token ids. Keep prompts with reconstructed prompt length in [128, 1024] tokens to match median seq_len ~529.
+   - Record source_row_idx for each so the set is reproducible.
+2. Run the SAME buun/MiniMax runtime harness + SAME accept rule as T72: deterministic temp=0/top_k=1, max_out<=512. Measure at draft_max=13 AND draft_max=15 (match T72 arms) so the comparison is apples-to-apples.
+3. Record raw measured runtime AL only (tokens_predicted/(draft_n/draft_max)), per-prompt and mean, plus mean draft acceptance fraction. No multiplier, no extrapolation.
+4. Compare three numbers head to head:
+   - val teacher-forced AL_HI = 2.20 (ceiling), AL_LO = 1.38
+   - GSM8K runtime AL: 2.433 (dmax13/5p), 2.922 (dmax15/3p)
+   - NEW in-dist (Tulu3) runtime AL: <measured>
+5. Verdict logic:
+   - If in-dist runtime AL is materially BELOW GSM8K runtime AL and near/within [AL_LO, AL_HI] -> CONFIRMED: GSM8K was OOD-easy; 2.9 does not translate; report the honest in-dist AL as the real current capability.
+   - If in-dist runtime AL still EXCEEDS AL_HI=2.20 -> prompt distribution is NOT the cause; flag RUNTIME_ACCEPT_LOOSER (next task: audit buun accept rule / temp / top_k vs teacher-forced eval).
+
+## Deliverable
+Write /home/dnola/v18_fix/T_VALDIST_INDIST_AL.md and comment:
+- exact source_row_idx list used, reconstructed prompt token-lengths, runner args, per-prompt + mean runtime AL at dmax13 and dmax15, mean accept fraction, and the verdict (CONFIRMED_OOD_EASY | RUNTIME_ACCEPT_LOOSER | INCONCLUSIVE with reason).
+
+## Hard rules
+FAST <=1h, inference only, spark-2 only, no source edits, no spark-4, raw measured AL only.
+
+
+Latest summary:
+SPARK1_BUSY: spark-1 GPU is already owned by live llama-speculative-simple PID 120523; per hard rule I did not start this eval.
+
+Comments (6):
+  [2026-05-29 08:37] atlasdflash4: SPARK2_BUSY preflight: spark-2 currently has a live buun runtime AL smoke owning the GPU:
+
+```
+PID 174841 python /home/dnola/venv-llamacpp-buun/bin/python ./t85_t83_al_smoke.py
+PID 175844 llama-server /home/dnola/llama.cpp.buun/build/bin/llama-server -m /home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf -md /home/dnola/v18_fix/t85_t83_step750/t83_step750_minimax_buun_offset_rebaked.gguf --spec-type dflash --draft-max 17 --temp 0 --top-k 1 -c 8192 -ngl 99 -ngld 99 --port 18096 --host 127.0.0.1 --no-webui
+nvidia-smi compute app: PID 175844 using 102931 MiB
+```
+
+Per task hard rule, I did not start conversion/eval or touch any process.
+  [2026-05-29 08:42] main-driver-followup: ## ⚠️ TOP PRIORITY + ADVERSARIAL VERIFICATION GATE (added by driver)
+
+This result (from-scratch step-500 drafter clearing AL after weeks) is suspiciously good. The runtime AL already EXCEEDS its own teacher-forced ceiling (2.9 > AL_HI 2.20), which is a red flag, NOT a win. Treat your job as trying to PROVE THE NUMBER IS FAKE. Only if you cannot break it does it count. Run this anti-fooling checklist and report each item explicitly with evidence:
+
+1. OUTPUT CORRECTNESS — speculative decoding MUST be lossless. Run the SAME prompt through (a) target-only greedy and (b) target+draft greedy. The generated token sequences MUST be IDENTICAL token-for-token. If they differ, the harness is NOT doing real verified spec-decode — it is free-running the draft and the AL is meaningless. Report: exact-match Y/N per prompt.
+
+2. AL DENOMINATOR SANITY — confirm the AL formula uses VERIFIED-ACCEPTED tokens over TARGET FORWARD PASSES, i.e. AL = tokens_emitted / n_target_verify_steps. A common fake: dividing by (draft_n/draft_max) or by draft calls instead of target verify steps inflates AL. Print the raw counters: tokens_emitted, n_target_forward_passes, n_draft_tokens_proposed, n_draft_tokens_accepted. Recompute AL by hand from these and confirm it matches the reported number.
+
+3. NO SHORT-CIRCUIT / EOS GAMING — check stop reason per prompt. If runs stop early on 'eos' with tiny token counts, AL is computed over too few tokens to be meaningful. Require >=128 emitted tokens per prompt for the AL to count; flag any prompt that stopped short.
+
+4. TARGET ACTUALLY LOADED — confirm the MiniMax target GGUF is genuinely the verifier (not the draft self-verifying, not a stub). Print model load lines + n_params for BOTH models from the server log. A draft-verifying-itself bug produces high AL and zero real speedup.
+
+5. ACCEPT-RATE vs AL CONSISTENCY — with accept_frac ~0.04 and draft_max 13-15, mean accepted per step should be small. If AL ~2.9 but accept_frac ~0.04, those are in tension; reconcile them arithmetically or flag INCONSISTENT.
+
+VERDICT must be one of: VERIFIED_REAL (all 5 pass + output identical) | FAKE_<which item failed> | INCONCLUSIVE_<reason>. Do not report a positive AL/speedup as real unless item 1 (identical output) passes.
+  [2026-05-29 08:43] main-driver-followup: DRIVER RETARGET: spark-2 is busy with a live t85/t83 AL smoke (102931 MiB GPU). spark-1 is now FREE (T81 completed) and has T81 artifacts staged locally. HOST SCOPE CHANGE: run this on spark-1 ONLY instead of spark-2. All other rules unchanged (inference only, no spark-4, no Kasa, block SPARK1_BUSY if a live task/llama/vLLM/GPU proc owns the host, cap TORCHINDUCTOR_COMPILE_THREADS). The companion speedup task t_d5077e99 MUST run on the SAME host (spark-1) so baseline vs speculative timings are comparable. The current-best step500 draft GGUF lives on spark-3 at /home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf — copy via QSFP (192.168.200.x) if absent on spark-1, or if only the T81 step2500 export is local, measure THAT and label which GGUF was used. Identical-output lossless check (gate item 1) is mandatory regardless of GGUF.
+  [2026-05-29 08:44] atlas6dflash2: SPARK1_BUSY preflight after driver retarget: spark-1 has a live GPU compute app owning the host, so I did not start this eval or touch the process.
+
+Evidence:
+```
+$ ssh spark-1 'nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader; ps -o pid,ppid,etime,stat,cmd -p 120523'
+120523, /home/dnola/buun-llama-cpp/build/bin/llama-speculative-simple, 7400 MiB
+PID    PPID     ELAPSED STAT CMD
+120523 120449   05:15   Rl   /home/dnola/buun-llama-cpp/build/bin/llama-speculative-simple -m /home/dnola/models/MiniMax-M2.7-GGUF/... -md /home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf --spec-type dflash --draft-max 17 ... -n 512 ... --temp 0.0 --top-k 1
+GPU util sample: 2%
+```
+
+Per updated hard rule, block rather than contend for spark-1.
+  [2026-05-29 08:45] main-driver-followup: DRIVER — ELEVATED PRIME SUSPECT (read before running): User flagged draft_max=17 is impossible as a HEAD count — we trained only 7 draft positions (pos1..pos7). Confirmed: T81 did NOT use our step500 adapter; it fell back to the OLDER /home/dnola/exports/c15_iq4v18_step2500_dflash_mm_tok.gguf because the step500 GGUF was missing on spark-1. So the 3.39 is a DIFFERENT model + easy prompts + draft_max=17. 
+
+ROOT CONCERN: the AL formula used by T72/T81 is `n_predict/(n_drafted/draft_max)`. This is NOT verified-accepted/target-verify-steps. Raising draft_max 15->17 INCREASING AL is the signature of a DENOMINATOR ARTIFACT (draft_max in the denominator inflates AL when n_drafted does not scale with it), NOT a better drafter. 
+
+MANDATORY #1 DELIVERABLE (do this FIRST, before any in-dist sweep): 
+(a) From the buun-llama-cpp source (llama-speculative-simple, --spec-type dflash), extract the EXACT definition of: n_predict, n_drafted, draft_max, and how a 7-head DFlash drafter produces a >7 token draft (autoregressive self-feed? tree pad? loop?). Quote the source lines + file:line. 
+(b) Print the RAW per-run counters the runner exposes: tokens_emitted, n_target_forward_passes (verify steps), n_draft_tokens_proposed, n_draft_tokens_accepted, draft_max. 
+(c) Recompute the CORRECT acceptance length AL_true = tokens_emitted / n_target_forward_passes and compare to the reported `n_predict/(n_drafted/draft_max)`. If they differ, the reported AL (2.92, 3.39) is FAKE_DENOMINATOR — report that loudly with both numbers. 
+(d) ONLY use OUR step500 GGUF /home/dnola/v18_fix/t66_093736/step500_093736_minimax_buun_offset_rebaked.gguf — copy it from spark-3 via QSFP 192.168.200.x if absent. Do NOT silently fall back to the step2500 export; if you must, label the model explicitly and do NOT call it our current adapter. 
+(e) Sweep draft_max in {7, 13, 15, 17} and report AL_true for each — AL_true must NOT keep rising past the 7 trained heads if the drafter is real; if AL_true climbs with draft_max it confirms the denominator/self-feed artifact. 
+This denominator audit OUTRANKS the in-dist prompt question — a wrong denominator fakes the number on ANY prompt set.
+  [2026-05-29 08:51] main-driver-followup: DRIVER ADD — answer two more user questions on the SAME audit: 
+(A) STEP2500 TRAIN-SIDE BAND: The fallback model that hit 'AL 3.39' was the OLDER step2500 export (c15_iq4v18_step2500_dflash_mm_tok.gguf, 5x more trained than our step500). User wants its fair train-side AL_LO/AL_HI for comparison vs step500's [1.38, 2.20]. Locate its training log / val per-position accuracies (it is the v18 NON-b lineage, ~step2500; source likely c15_full_run/*v18* or an archived/rotated log — check spark-1 /home/dnola/exports sidecars, spark-3 archives, and any *v18_*step*2500* checkpoint trainer_state/val json). Compute AL_LO=1+sum(prefix-products) and AL_HI=1+sum(p_i) from its per-position accept accuracies. If the log is gone, say so explicitly and reconstruct the band by running a SHORT teacher-forced eval of the step2500 GGUF on the val set (same harness). Report step2500 [AL_LO, AL_HI] next to step500 [1.38, 2.20]. 
+(B) TOP_K INVARIANCE RED FLAG: In T81, dmax15_topk1 and dmax15_topk0 produced BYTE-IDENTICAL AL (2.944955), and dmax17_topk1==dmax17_topk0 (3.388706). If sampling truly differed, AL should differ. Explain from source whether the accept decision actually depends on the verifier distribution, or whether top_k is being ignored / the AL counter is independent of the verify outcome (which would mean the draft is NOT being properly verified). 
+(C) PROPORTIONAL-WITH-DRAFTMAX RED FLAG: same prompts' AL rose in lockstep 15->17 (p1 3.43->3.98, p2 2.46->2.79). Confirm whether this is the n_drafted/draft_max denominator inflating, by reporting AL_true=emitted/target_verify_steps for both dmax — AL_true should be ~flat across dmax if the drafter is real.
+
+Events (15):
+  [2026-05-29 08:37] created {'assignee': 'atlasdflash4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 08:37] [run 607] claimed {'lock': 'macmini.local:97595', 'expires': 1780069940, 'run_id': 607}
+  [2026-05-29 08:37] [run 607] spawned {'pid': 51383}
+  [2026-05-29 08:37] commented {'author': 'atlasdflash4', 'len': 678}
+  [2026-05-29 08:37] [run 607] blocked {'reason': 'SPARK2_BUSY: spark-2 GPU is already owned by live t85_t83_al_smoke.py/llama-server (102931 MiB); per hard rule I did not start this eval.'}
+  [2026-05-29 08:42] commented {'author': 'main-driver-followup', 'len': 2253}
+  [2026-05-29 08:43] commented {'author': 'main-driver-followup', 'len': 867}
+  [2026-05-29 08:43] assigned {'assignee': 'atlas6dflash2'}
+  [2026-05-29 08:43] unblocked
+  [2026-05-29 08:43] [run 608] claimed {'lock': 'macmini.local:16977', 'expires': 1780070315, 'run_id': 608}
+  [2026-05-29 08:43] [run 608] spawned {'pid': 53579}
+  [2026-05-29 08:44] commented {'author': 'atlas6dflash2', 'len': 770}
+  [2026-05-29 08:44] [run 608] blocked {'reason': 'SPARK1_BUSY: spark-1 GPU is already owned by live llama-speculative-simple PID 120523; per hard rule I did not start this eval.'}
+  [2026-05-29 08:45] commented {'author': 'main-driver-followup', 'len': 2169}
+  [2026-05-29 08:51] commented {'author': 'main-driver-followup', 'len': 1669}
+
+Runs (2):
+  #607 blocked      @atlasdflash4  39s  2026-05-29 08:37
+        → SPARK2_BUSY: spark-2 GPU is already owned by live t85_t83_al_smoke.py/llama-server (102931 MiB); per hard rule I did not start this eval.
+  #608 blocked      @atlas6dflash2  59s  2026-05-29 08:43
+        → SPARK1_BUSY: spark-1 GPU is already owned by live llama-speculative-simple PID 120523; per hard rule I did not start this eval.

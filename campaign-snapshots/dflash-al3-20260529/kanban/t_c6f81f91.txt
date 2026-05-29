@@ -1,0 +1,72 @@
+Task t_c6f81f91: T58: FAST MiniMax target-layer metadata sweep and AL smoke
+  status:    done
+  assignee:  atlaspatch5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_c6f81f91
+  max-retries: 2 (default)
+  created:   2026-05-29 02:25 by user
+  started:   2026-05-29 02:25
+  completed: 2026-05-29 02:39
+
+Body:
+# T58: FAST MiniMax target-layer metadata sweep — verify runtime taps match training taps, rerun AL
+
+## Why
+Measured runtime AL on OUR MiniMax path is still low:
+- T48 older rebake: OUR_ADAPTER_AL=1.334
+- T50 v15 step22000: V15_AL=1.644
+- T53 fresh spark-3 step500: STEP500_AL=1.6511068636139357 at draft_max=9
+- T55/T57: conversion scatter artifact unlikely (corrected target ids unique=32768; generated-token coverage 89.7%; no rebake)
+
+Next highest-value bounded lever is target-layer alignment. Training used MiniMax verifier taps `[2,16,30,45,59]` (`--target-layer-ids 2 16 30 45 59`, fc input = 5*3072). buun/z-lab examples often report target_ids like `[1,10,19,28,37]`. If our GGUF/runtime metadata is using the wrong tap list, AL will be low even with a valid scatter.
+
+## Host scope / one-actor rule
+- Use spark-2 ONLY.
+- No spark-4. No Kasa. No training.
+- Preflight for contention: if `scripts/train.py`, `llama-server`, another kanban task, or GPU-heavy process is active on spark-2, block `SPARK2_BUSY` with exact process lines. Do not kill.
+- Write only under `/home/dnola/v18_fix/t58/` and this task workspace. Do not mutate source checkpoints/shared model dirs.
+
+## Inputs
+- T53 report: `/home/dnola/v18_fix/T53_STEP500_MINIMAX_AL.md`
+- T53 source checkpoint copy: `/home/dnola/v18_fix/t53/source_step_00000500`
+- T53 GGUF: `/home/dnola/v18_fix/t53/step500_minimax_buun_rebaked.gguf`
+- Target GGUF: `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`
+- Mapping files: `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/d2t.npy`, `/home/dnola/iq4_full_run/iq4_v17_consolidated/prompts/t2d.npy`
+- buun build/server: `/home/dnola/llama.cpp.buun/build/bin/`
+
+## Steps (<1h, aim <30m)
+1. Dump GGUF metadata for the T53 draft and target. Extract all DFlash target-layer/tap metadata keys (`target_ids`, `target_layer_ids`, `dflash.*`, `n_target_features`, etc.). Compare against training taps `[2,16,30,45,59]` and fc input shape 15360.
+2. If metadata already exactly encodes `[2,16,30,45,59]` and server logs confirm those target_ids at load, complete `TAPS_ALREADY_MATCH` with evidence and recommend the next non-tap lever.
+3. If metadata/server logs use a different tap list (especially `[1,10,19,28,37]`), create a task-local patched copy of the draft GGUF (or converter invocation) that encodes `[2,16,30,45,59]`. Do not edit the original T53 artifact.
+4. Launch buun DFlash with the patched copy and run the SAME bounded smoke as T53: 3 completed 512-token MiniMax prompts, temp=0, draft_max=9. Record raw measured runtime AL, draft_n, draft_n_accepted. No multipliers.
+5. Write `/home/dnola/v18_fix/t58/T58_TARGET_LAYER_SWEEP.md` and comment one of:
+   - `PATCHED_TAPS_AL=<mean>` plus old-vs-new target_ids and artifact paths;
+   - `TAPS_ALREADY_MATCH` plus evidence;
+   - `RUNTIME_BLOCKED` with exact failing assertion/log;
+   - `SPARK2_BUSY` with process evidence.
+
+## Decision rule
+- If patched AL >= 3: comment `GOAL_HIT_CANDIDATE` and recommend reproducibility task.
+- If patched AL improves materially but remains <3: recommend next fast variant (e.g. neighboring tap sweep around [2,16,30,45,59]).
+- If no improvement / taps already match: next lever is training/recipe/data-target mismatch, not conversion scatter or runtime tap metadata.
+
+Latest summary:
+T58 finished as TAPS_ALREADY_MATCH: the T53 MiniMax draft GGUF already encodes training taps [2,16,30,45,59] with n_target_features=15360, and buun runtime source consumes that exact GGUF key for target hidden-state capture. Wrote the report at /home/dnola/v18_fix/t58/T58_TARGET_LAYER_SWEEP.md and copied it into the task workspace; no patched AL smoke was run because there was no metadata mismatch to test.
+
+Comments (1):
+  [2026-05-29 02:39] atlaspatch5: TAPS_ALREADY_MATCH
+
+Report: `/home/dnola/v18_fix/t58/T58_TARGET_LAYER_SWEEP.md` (also copied to task workspace as `T58_TARGET_LAYER_SWEEP.md`).
+
+Evidence: T53 draft GGUF metadata has `dflash-draft.dflash.target_layer_ids = [2,16,30,45,59]`, `dflash-draft.dflash.n_target_features = 15360`, and `dflash_fc.weight` shape `[15360,3072]`. buun runtime source reads `%s.dflash.target_layer_ids` into `hparams.dflash_target_layer_ids` and passes those IDs to `llama_set_dflash_capture`, so runtime taps are the training taps. No patched GGUF or new AL smoke was run; next lever is training/recipe/data-target mismatch or a deliberately trained/converted neighboring tap sweep, not runtime tap metadata.
+
+Events (6):
+  [2026-05-29 02:25] created {'assignee': 'atlaspatch5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 02:25] [run 556] claimed {'lock': 'macmini.local:56296', 'expires': 1780047618, 'run_id': 556}
+  [2026-05-29 02:25] [run 556] spawned {'pid': 56297}
+  [2026-05-29 02:26] [run 556] heartbeat {'note': 'Preflight clear on spark-2; dumped GGUF metadata and now launching short server-load check for target-layer log confirmation.'}
+  [2026-05-29 02:39] commented {'author': 'atlaspatch5', 'len': 696}
+  [2026-05-29 02:39] [run 556] completed {'result_len': 0, 'summary': 'T58 finished as TAPS_ALREADY_MATCH: the T53 MiniMax draft GGUF already encodes training taps [2,16,30,45,59] with n_target_features=15360, and buun runtime source consumes that exact GGUF key for target hidden-state capture. Wrote the report at /home/dnola/v18_fix/t58/T58_TARGET_LAYER_SWEEP.md and copied it into the task workspace; no patched AL smoke was run because there was no metadata mismatch'}
+
+Runs (1):
+  #556 completed    @atlaspatch5  843s  2026-05-29 02:25
+        → T58 finished as TAPS_ALREADY_MATCH: the T53 MiniMax draft GGUF already encodes training taps [2,16,30,45,59] with n_target_features=15360, and buun runtime sour

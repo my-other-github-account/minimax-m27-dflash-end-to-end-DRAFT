@@ -1,0 +1,44 @@
+Task t_5353dfaf: T61: FAST spark-work stale buun server cleanup / lease audit
+  status:    done
+  assignee:  atlaspatch1
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_5353dfaf
+  max-retries: 2 (default)
+  created:   2026-05-29 02:43 by user
+  started:   2026-05-29 02:43
+  completed: 2026-05-29 02:45
+
+Body:
+# T61: FAST spark-work stale buun server lease cleanup / contention audit (<30m)
+
+## Mission
+Driver observed an old local ssh process from ~22:02 launching `llama-server` on spark-work with the z-lab drafter. It appears detached from any active running kanban task and may be occupying spark-work for future fast AL work. Verify and clean ONLY if it is stale from a done/archived task.
+
+## Scope
+- Host: spark-work only. Do not touch sparks 1-4.
+- Do not launch training or inference. This is cleanup/lease audit.
+
+## Steps
+1. Identify the remote `llama-server` process on spark-work (if still alive), command line, GPU memory, port 18080, elapsed time.
+2. Cross-check dflash-al3 board: if the owning task is done/archived or no active task claims spark-work, it is a stale squatter.
+3. If stale, terminate the remote server and the local ssh wrapper cleanly/forcefully as needed. If it belongs to an active task, do NOT kill; block with owner evidence.
+4. Verify spark-work has no DFlash llama-server/vLLM GPU squatter after cleanup.
+5. Comment concise result.
+
+Hard rules: spark-work only; no spark-4; no training; no benchmark; cleanup only after owner-state verification.
+
+Latest summary:
+Stale spark-work buun `llama-server` on port 18080 was verified as belonging to completed/superseded spark-work tasks, terminated cleanly with SIGTERM, and post-cleanup checks show no local ssh wrapper, no remote DFlash/llama/vLLM process, no :18080 listener, and no GPU compute apps.
+
+Comments (1):
+  [2026-05-29 02:45] atlaspatch1: Cleanup result: found stale spark-work `llama-server` PID 1271144 (parent sshd 1271143) listening on 127.0.0.1:18080, launched via local macmini ssh wrapper PIDs 89260/89263, elapsed ~4h41m, using ~19,161 MiB GPU. Command was `/home/dnola/llama.cpp.buun` z-lab drafter/35B-A3B target with `--spec-dflash-default`. Board audit found the matching spark-work/buun workstream tasks completed/superseded (notably T35/t_b898e7fb done at 22:51 and T38/t_b46dcef8 done/superseded); current active tasks T59/T60 do not claim spark-work for a live server (T59 uses spark-2; T60 read-only audit). Terminated PID 1271144 with SIGTERM; ssh wrapper exited. Verification after cleanup: no local `ssh spark-work` wrapper, no remote `llama-server`/vLLM/DFlash process, nothing listening on :18080, and no GPU compute apps reported by `nvidia-smi`.
+
+Events (5):
+  [2026-05-29 02:43] created {'assignee': 'atlaspatch1', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 02:43] [run 560] claimed {'lock': 'macmini.local:60543', 'expires': 1780048684, 'run_id': 560}
+  [2026-05-29 02:43] [run 560] spawned {'pid': 60546}
+  [2026-05-29 02:45] commented {'author': 'atlaspatch1', 'len': 830}
+  [2026-05-29 02:45] [run 560] completed {'result_len': 0, 'summary': 'Stale spark-work buun `llama-server` on port 18080 was verified as belonging to completed/superseded spark-work tasks, terminated cleanly with SIGTERM, and post-cleanup checks show no local ssh wrapper, no remote DFlash/llama/vLLM process, no :18080 listener, and no GPU compute apps.'}
+
+Runs (1):
+  #560 completed    @atlaspatch1  132s  2026-05-29 02:43
+        → Stale spark-work buun `llama-server` on port 18080 was verified as belonging to completed/superseded spark-work tasks, terminated cleanly with SIGTERM, and post

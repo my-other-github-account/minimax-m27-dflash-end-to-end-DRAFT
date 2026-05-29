@@ -1,0 +1,66 @@
+Task t_d58a7a68: T4: Architectural sweep (anchor/depth/capacity/blocksize) if v18 cannot reach AL>3
+  status:    todo
+  assignee:  atlasdflash5
+  workspace: scratch
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules, dflash-training
+  max-retries: 2 (default)
+  created:   2026-05-28 07:30 by user
+  parents:   t_6781d383
+
+Body:
+# T4: Architectural sweep design + execution — anchor count, depth/capacity, output head
+
+## CONTEXT (READ ONLY UNLESS DISPATCHED)
+
+This task is a **contingent fallback**, parent-gated on T3. It dispatches if:
+- T3 reports epoch 0 completion without measured AL > 3, OR
+- T2 reports the fix did NOT recover AL > 1.5 (meaning resume-bug was not the limiting factor)
+
+The premise: the C15 v18 architecture **cannot reach AL > 3** with more training alone, so we need to change the model. Reference points from public DFlash drafters:
+- z-lab Qwen3.6-35B-A3B-DFlash B=8: τ 3.94–6.34
+- Kimi-K2.5-DFlash B=8: AL 3.7–5.5 across tasks
+- Qwen3.5-9B-DFlash B=8: AL 4.35–5.87
+
+Our v18 baseline: hidden=3072, num_heads=24, head_dim=128, 6L, anchors=1024, block_size=7. The z-lab refs are mostly bigger drafters at bigger block sizes — but Kimi-K2.5 architecture is the closest peer reference (skill `dflash-c15-fp8-hybrid-winning-config-and-health-rules` references it).
+
+## HOST SCOPE
+
+**The user previously enforced spark-2 ONLY scope. Before dispatching parallel sweeps on spark-3/spark-4/spark-work, this task MUST first ask the user via the kanban-comment trail (NOT clarify()) which hosts are authorized.** Worker behavior: comment on this task "scope-check: which sparks am I authorized to use for sweep? [3,4,work] suggested. Awaiting user direction via cron monitor or chat." Then block on `review-required`. The cron monitor will surface the request to the user.
+
+ONCE AUTHORIZED, design + run a 3-cell sweep on the granted hosts. Suggested cells (any 3 of):
+- **A. Anchor scale-up**: 1024 → 4096 anchors. Same arch. Tests whether anchor coverage is the bottleneck.
+- **B. Depth+capacity**: 6L hidden=3072 → 8L hidden=4096 (~1B params). Tests whether capacity is the bottleneck.
+- **C. Output head capacity**: increase output head MLP capacity / wider vocabulary projection (block 12 instead of 7, vocab 65536 expansion). Tests whether the decode-side has too few learnable parameters.
+- **D. Block size 7 → 8 or 16**: matches z-lab/Kimi reference block sizes. Forces re-training but is the closest apples-to-apples to public refs.
+
+## YOUR JOB (when dispatched)
+
+1. Comment: scope-check. Block.
+2. After user grants scope (via comment from another agent or chat): unblocked. Read the comment, identify granted hosts.
+3. File 3 child sweep tasks (one per cell), each pointed at one granted host, each with their own training config + dataset prep if needed. Use parent links so each cell's eval task gates on the trainer.
+4. For each cell, monitor + benchmark every 1000 steps. Stop conditions same as T3 (AL > 3 → complete; epoch 0 done → block for human review).
+5. After all cells complete, COMPLETE THIS TASK with a comparison report: which cell wins, by how much, what's the recipe for the next campaign.
+
+## DELIVERABLES
+
+- `/home/dnola/v19_sweep/SWEEP_REPORT.md` comparing all cells.
+- Per-cell ckpt + benchmark in `/home/dnola/exports/c15_v19_<cell>_step*/`.
+- Final comment: "best cell: {A,B,C,D}, measured AL = X.XXX, speedup = Y.YYY×, recipe: ..."
+
+## HARD RULES
+
+- Host scope: spark-2 reserved for T3's v18 long-train. Sweeps go on USER-AUTHORIZED hosts only.
+- Required skills: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`, `dflash-training`, `dflash-training-dataset-coverage-gate`.
+- Assignee: atlasdflash5.
+- Parents: T3 (parent-gated, only dispatches if T3 blocks or completes without target).
+
+Comments (1):
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+
+Events (6):
+  [2026-05-28 07:30] created {'assignee': 'atlasdflash5', 'status': 'todo', 'parents': ['t_6781d383'], 'tenant': None, 'branch_name': None, 'skills': ['dflash-c15-fp8-hybrid-winning-config-and-health-rules', 'dflash-training']}
+  [2026-05-28 08:07] commented {'author': 'default', 'len': 47}
+  [2026-05-28 08:07] promoted
+  [2026-05-28 08:57] commented {'author': 'default', 'len': 24}
+  [2026-05-28 08:57] promoted
+  [2026-05-28 08:57] archived

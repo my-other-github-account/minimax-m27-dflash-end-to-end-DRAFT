@@ -1,0 +1,65 @@
+Task t_368912e2: T50: FAST v15 deep MiniMax conversion + 3x512 AL on buun harness
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_368912e2
+  max-retries: 2 (default)
+  created:   2026-05-29 01:13 by user
+  started:   2026-05-29 01:13
+  completed: 2026-05-29 01:44
+  children:  t_c7e0c028
+
+Body:
+# T50: FAST v15 deep checkpoint MiniMax conversion + first AL on buun harness
+
+## Why
+T48 produced the first valid OUR step4000 MiniMax AL: `OUR_ADAPTER_AL=1.334`, below AL>=3 and in the old weak band. Before assuming the current recipe is doomed, measure the best-trained historical MiniMax-compatible adapter: v15 step_22000. This is fast inference/conversion signal, not training.
+
+## Host scope
+spark-2 ONLY. Inference/conversion only. No training. No Kasa. Do not touch spark-1/spark-3/spark-work/spark-4.
+
+## Starting artifacts
+- v15 fallback ckpt from T42/T44: `/home/dnola/c15_v15_run/c15_v15_iq4v15_20260517T182652Z/ckpt/step_00022000/` (draft_vocab_size=32768, block_size=8)
+- MiniMax target: `/home/dnola/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf`
+- T48 report/conversion pattern: `/home/dnola/v18_fix/T48_MINIMAX_RECONVERT_AL.md` and `/home/dnola/v18_fix/t48/`
+- buun runtime on spark-2: `/home/dnola/llama.cpp.buun/build/bin/llama-server` or known-good buun speculative-simple path from T43.
+
+## Steps (target <45 min)
+1. Preflight spark-2: no active train.py/tmux/GPU compute apps; free enough memory. If busy, block with evidence rather than contend.
+2. Convert/rebake v15 step_22000 for the actual MiniMax target using the successful T48 approach (MiniMax tokenizer, v17/v15 d2t/t2d scatter if reduced-vocab lm_head needs full 200064 rows). Do not mutate source ckpt; work under `/home/dnola/v18_fix/t50/`.
+3. Verify metadata before launch: MiniMax tokenizer/vocab compatible, hidden 3072, block_size 8, no qwen35 metadata.
+4. Run 3 short GSM8K-style prompts at max_out=512, temp=0/top-k=1, draft_max=9 (T43 practical plateau) and optionally draft_max=7 if time remains.
+5. Record raw measured runtime accept_length / draft_n_accepted only. No multiplier.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T50_V15_MINIMAX_AL.md` and comment:
+- `V15_AL=<mean>` if measured; compare to T48 step4000 AL=1.334 and campaign target AL>=3.
+- `CONVERTER_BLOCKED` with exact file/function/field if conversion fails.
+- `RUNTIME_BLOCKED` with first failing assertion/log if runtime fails.
+
+## Hard rules
+Fast proof only. No training. No source/model mutation outside `/home/dnola/v18_fix/t50/`. No spark-4. Do not claim AL without valid MiniMax target/draft pair.
+
+
+Latest summary:
+Measured v15 step_22000 against actual MiniMax-M2.7 on spark-2 after MiniMax-tokenizer conversion, v15 d2t lm_head rebake, and buun DFlash runtime. Final report written to /home/dnola/v18_fix/T50_V15_MINIMAX_AL.md with V15_AL=1.644 at draft_max=9: above T48 step4000 AL=1.334, still below AL>=3 target.
+
+Comments (1):
+  [2026-05-29 01:44] atlasdflash4: T50 result: `V15_AL=1.644` mean runtime accept length for v15 step_22000 at draft_max=9 on valid MiniMax-M2.7 target/draft pair. This beats T48 OUR step4000 AL=1.334 but remains below campaign target AL>=3.
+
+Report: `/home/dnola/v18_fix/T50_V15_MINIMAX_AL.md`
+Artifacts: `/home/dnola/v18_fix/t50/`
+Selected 3x512 runs: run1 AL=1.676 (115/2750 accepted), run2 AL=1.693 (119/2722), run5 AL=1.564 (87/2947). Metadata verified: MiniMax tokenizer, draft arch dflash-draft, hidden=3072, block_size=8, output.weight full 200064 rows. No training; source checkpoint untouched.
+
+Events (8):
+  [2026-05-29 01:13] created {'assignee': 'atlasdflash4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 01:13] [run 543] claimed {'lock': 'macmini.local:37935', 'expires': 1780043321, 'run_id': 543}
+  [2026-05-29 01:13] [run 543] spawned {'pid': 37937}
+  [2026-05-29 01:15] [run 543] heartbeat {'note': 'preflight passed on spark-2 (no train/llama-server compute, GB10 util 0%, 114GiB available); starting v15 step_22000 MiniMax prep/rebake under /home/dnola/v18_fix/t50'}
+  [2026-05-29 01:30] [run 543] claim_extended {'reason': 'pid_alive', 'worker_pid': 37937, 'claim_lock': 'macmini.local:37935', 'claim_expires_was': 1780043430, 'claim_expires_now': 1780044336, 'last_heartbeat_at': 1780042530}
+  [2026-05-29 01:31] [run 543] heartbeat {'note': 'conversion succeeded; metadata verified (MiniMax tokenizer, dflash-draft hidden=3072, block_size=8, output.weight full 200064). llama-server loading on spark-2 port 18086 for draft_max=9 AL run'}
+  [2026-05-29 01:44] commented {'author': 'atlasdflash4', 'len': 568}
+  [2026-05-29 01:44] [run 543] completed {'result_len': 0, 'summary': 'Measured v15 step_22000 against actual MiniMax-M2.7 on spark-2 after MiniMax-tokenizer conversion, v15 d2t lm_head rebake, and buun DFlash runtime. Final report written to /home/dnola/v18_fix/T50_V15_MINIMAX_AL.md with V15_AL=1.644 at draft_max=9: above T48 step4000 AL=1.334, still below AL>=3 target.'}
+
+Runs (1):
+  #543 completed    @atlasdflash4  1863s  2026-05-29 01:13
+        → Measured v15 step_22000 against actual MiniMax-M2.7 on spark-2 after MiniMax-tokenizer conversion, v15 d2t lm_head rebake, and buun DFlash runtime. Final report

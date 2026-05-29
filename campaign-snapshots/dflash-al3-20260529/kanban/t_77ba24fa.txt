@@ -1,0 +1,62 @@
+Task t_77ba24fa: T79: FAST AL of T78 step650 checkpoint on MiniMax/buun
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_77ba24fa
+  max-retries: 2 (default)
+  created:   2026-05-29 07:24 by user
+  started:   2026-05-29 07:24
+  completed: 2026-05-29 07:49
+  parents:   t_a088a79d
+
+Body:
+# T79: FAST AL of T78 step650 checkpoint on MiniMax/buun (<1h)
+
+## Mission
+Measure the fresh T78 checkpoint's raw runtime AL on OUR MiniMax target immediately. Campaign goal: measured runtime AL >=3.0 sustained/reproducible. T76 showed T75 step600 dmax15 mean AL=2.820702 (below T72 2.921564); T78 trained to step650 with better val full_acc (0.1647). Get the number fast.
+
+## Dependency
+Parent T78. Read T78 handoff first. Source checkpoint:
+`/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000650`
+
+## Host scope
+spark-2 ONLY for conversion/inference. Do not touch spark-3 except reading/copying the T78 checkpoint. Do not touch spark-1/spark-work/spark-4. No Kasa. No training.
+
+## Steps
+1. Preflight spark-2 one-actor lease: no train.py/trainer tmux/llama-server/vLLM/GPU compute app; >=90GB free. If occupied by a live task, block SPARK2_BUSY with evidence.
+2. Copy/read T78 step650 checkpoint. Convert/rebake via the validated corrected MiniMax path: MiniMax target GGUF, draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59], corrected d2t-OFFSET mapping `target_id = arange(len(d2t)) + d2t`.
+3. Run fast MiniMax native-chat AL smoke with raw measured runtime only: draft_max=15 first, 5 prompts <=512 output, temp=0/top_k=1. If mean AL is 2.9-3.05 or any prompt >3, add draft_max=17 on 3 prompts. If draft_max=15 is clearly <2.7 after 3 prompts, stop early and report.
+4. No multipliers/extrapolations; quote measured accept_length only.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T79_T78_STEP650_MINIMAX_AL.md` and comment concise table: ckpt path, GGUF path, draft_max, per-prompt ALs, mean AL, draft_n_decoded/accepted if available, verdict GOAL_HIT / NEAR_MISS / NO_IMPROVEMENT.
+
+## Hard rules
+FAST <=1h. One actor per host. Preserve locked knobs. No spark-4. Raw measured AL only.
+
+Latest summary:
+Measured T78 step650 on spark-2 via corrected MiniMax/buun OFFSET path. Report written to /home/dnola/v18_fix/T79_T78_STEP650_MINIMAX_AL.md; draft_max=15 early-stop 3-prompt mean raw runtime AL=2.682631, verdict NO_IMPROVEMENT.
+
+Comments (1):
+  [2026-05-29 07:48] atlasdflash4: T79 AL result (spark-2 only):
+
+| ckpt | GGUF | draft_max | per-prompt raw runtime AL | mean AL | draft_n_decoded | draft_n_accepted | verdict |
+|---|---|---:|---|---:|---|---|---|
+| `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T78_spark3_bounded_step700_ckpt50_20260529T135637Z/step_00000650` | `/home/dnola/v18_fix/t79_t78_step650/t78_step650_minimax_buun_offset_rebaked.gguf` | 15 | [2.668539, 2.743309, 2.636046] | 2.682631 | [2136, 2466, 2003] | [75, 100, 66] | NO_IMPROVEMENT |
+
+Report: `/home/dnola/v18_fix/T79_T78_STEP650_MINIMAX_AL.md`
+
+Notes: preflight found no spark-2 train/server/vLLM compute process and 930G free. Used corrected OFFSET mapping `target_ids = arange(len(d2t)) + d2t`; prep verified 32768/32768 target IDs covered. Early-stopped after 3 draft_max=15 prompts because mean=2.682631 and max=2.743309 were clearly below the 2.7/goal band; draft_max=17 was not run.
+
+Events (8):
+  [2026-05-29 07:24] created {'assignee': 'atlasdflash4', 'status': 'ready', 'parents': ['t_a088a79d'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 07:24] [run 596] claimed {'lock': 'macmini.local:97595', 'expires': 1780065581, 'run_id': 596}
+  [2026-05-29 07:24] [run 596] spawned {'pid': 29916}
+  [2026-05-29 07:27] [run 596] heartbeat {'note': 'Preflight spark-2 passed: no live train/server compute apps, 930G free on /; preparing T79 scripts and copying T78 step650 checkpoint read-only from spark-3.'}
+  [2026-05-29 07:37] [run 596] heartbeat {'note': 'Checkpoint copy from spark-3 to spark-2 completed with rsync code 23 due a read-mapping warning; verifying copied safetensors/config integrity before conversion.'}
+  [2026-05-29 07:38] [run 596] heartbeat {'note': 'T79 prep+GGUF conversion complete on spark-2. Rebaked GGUF: /home/dnola/v18_fix/t79_t78_step650/t78_step650_minimax_buun_offset_rebaked.gguf; starting raw runtime AL smoke.'}
+  [2026-05-29 07:48] commented {'author': 'atlasdflash4', 'len': 897}
+  [2026-05-29 07:49] [run 596] completed {'result_len': 0, 'summary': 'Measured T78 step650 on spark-2 via corrected MiniMax/buun OFFSET path. Report written to /home/dnola/v18_fix/T79_T78_STEP650_MINIMAX_AL.md; draft_max=15 early-stop 3-prompt mean raw runtime AL=2.682631, verdict NO_IMPROVEMENT.'}
+
+Runs (1):
+  #596 completed    @atlasdflash4  1461s  2026-05-29 07:24
+        → Measured T78 step650 on spark-2 via corrected MiniMax/buun OFFSET path. Report written to /home/dnola/v18_fix/T79_T78_STEP650_MINIMAX_AL.md; draft_max=15 early-

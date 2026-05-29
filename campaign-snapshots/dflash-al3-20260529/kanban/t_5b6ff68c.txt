@@ -1,0 +1,122 @@
+Task t_5b6ff68c: T34: Stand up upstream llama.cpp PR #22105 DFlash as our working inference harness (PRIMARY)
+  status:    done
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_5b6ff68c
+  skills:    spark-cluster-operations, llama-cpp, github-pat-local-storage-and-clone-bake-pitfall, huggingface-hub
+  max-retries: 2 (default)
+  created:   2026-05-28 21:23 by user
+  started:   2026-05-28 21:23
+  completed: 2026-05-28 21:31
+
+Body:
+# T34: Stand up upstream llama.cpp PR #22105 DFlash as our working inference harness (PRIMARY)
+
+## Context (USER 2026-05-28 21:18 PDT, top priority)
+"This isn't about filing a bug we are near the first it's about finding an actual solution that lets us do DFlash up to spec in llama cpp correctly in a way that reproduces public numbers."
+
+We have empirical evidence our `dflash-llama` fork underreports AL by 42% on a known-good z-lab drafter (AL=2.796 measured vs 4.797 published). The fix is not to patch our fork — it's to adopt the upstream DFlash implementation that already works.
+
+**Upstream PR ggml-org/llama.cpp#22105 "[Speculative decoding] feat: add DFlash support"** by `ruixiang63`:
+- 22 commits, +1900/-52 across 28 files
+- Author claims **full numerical equivalence to z-lab original (https://github.com/z-lab/dflash/blob/main/dflash/model.py)** and **8× speedup on Qwen3-8B**
+- Last updated 2026-05-20 (actively maintained)
+- Implements: `src/models/dflash.cpp` (161 lines), `common/speculative.cpp` (+331/-23), `examples/speculative-simple/speculative-simple.cpp` (+77/-20), `convert_hf_to_gguf.py` (+187/-1), `tools/server/server-context.cpp` (+21)
+- Stacked on PR #18039 (EAGLE3) — both DFlash and EAGLE3 PRs include each other's commits because of the architectural overlap
+- Currently NOT merged, mergeable=False against master (needs rebase but tractable — 28 files)
+
+## Your job (any spark with idle GPU — `spark-work` recommended, NasFS mounted, 5% util, GB10 idle)
+
+Deliver a working DFlash inference path on llama.cpp that reproduces z-lab's published AL numbers on the same hardware we'll measure v18b against.
+
+### Phase 1 — Pull and build PR #22105
+1. SSH to spark-work (or whichever idle spark has GB10 + working NasFS). Confirm GPU idle.
+2. Clone tip-of-tree llama.cpp: `git clone https://github.com/ggml-org/llama.cpp ~/llama.cpp.upstream`
+3. Add the PR's fork as a remote: `cd ~/llama.cpp.upstream && git remote add ruixiang https://github.com/ruixiang63/llama.cpp && git fetch ruixiang dflash`
+4. Check out the PR's branch: `git checkout -b dflash-pr22105 ruixiang/dflash`
+5. Try to rebase on master: `git rebase origin/master`. If conflicts, resolve where tractable; if intractable, build on the PR's HEAD as-is (it's only 8 days behind master).
+6. Build with CUDA: `cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)`. If `LLAMA_CUDA=ON` is the older flag and `GGML_CUDA=ON` doesn't work, try both.
+7. Confirm binaries: `ls build/bin/llama-{cli,server,speculative-simple}`. Verify DFlash awareness: `build/bin/llama-cli --help 2>&1 | grep -iE "dflash|draft"`.
+
+### Phase 2 — Convert z-lab drafter HF model to PR #22105's GGUF format
+The PR adds `+187/-1` lines to `convert_hf_to_gguf.py` for DFlash arch support. Use that converter, not our existing GGUF.
+1. The z-lab drafter HF source: `/home/dnola/zlab_ref_drafter/` (model.safetensors symlinked to atlas-dflash-spark1 weights, plus config.json showing DFlashDraftModel arch, block_size=16, hidden=5120, intermediate=17408)
+2. Convert: `python convert_hf_to_gguf.py /home/dnola/zlab_ref_drafter/ --outfile /tmp/zlab_pr22105.gguf --outtype bf16`
+3. The PR's converter should recognize the DFlashDraftModel architecture and emit the correct GGUF arch tag + tensors. If it doesn't, the PR isn't actually wired for HF→GGUF on this arch — fall back to staging the existing z-lab gguf if it's already in the PR's expected format, or document the gap.
+
+### Phase 3 — Identify and acquire the target verifier model
+The z-lab drafter's `config.json` shows `target_layer_ids: [1, 16, 31, 46, 61]` and `mask_token_id: 248070`. With `hidden_size=5120`, this is the **z-lab/Qwen3.6-35B-A3B-DFlash** card's drafter (paired verifier is Qwen3.6-35B-A3B base).
+1. Check if we already have the Qwen3.6-35B-A3B verifier locally: search common paths (`/home/dnola/`, `/home/sero/spark/models/hf-cache/`, NAS).
+2. If absent, pull from HuggingFace. ~70 GB at BF16; spark-work has fabric A access for fast NAS read if it's cached there. Use the github_token at `~/.config/hermes/github_token` for HF auth via env `HF_TOKEN` if needed (it's a GitHub PAT but HF accepts it via the same env in some configs — try, fall back to HF anonymous if rate-limited).
+3. Convert verifier to GGUF if needed: `python convert_hf_to_gguf.py <verifier_dir> --outfile /tmp/qwen3.6-35b-a3b.gguf --outtype bf16` (or Q4 if disk-constrained — but for AL measurement, prefer BF16 to avoid quant noise as a variable).
+
+### Phase 4 — Reproduce z-lab's published benchmark conditions
+Identify and run z-lab's exact published benchmark setup:
+1. Pull the z-lab HF card: `curl -s "https://huggingface.co/z-lab/Qwen3.6-35B-A3B-DFlash/raw/main/README.md"`. Extract: benchmark datasets (likely GSM8K, MT-Bench, HumanEval, MBPP, AIME, MATH500, etc.), max output length (typically 4096 for math/code), thinking mode setting, sampling (temperature, top-k, top-p), draft_max.
+2. Also pull the z-lab repo's eval code if any: `git clone https://github.com/z-lab/dflash ~/zlab-dflash-repo` — check for `eval/`, `benchmark/`, `scripts/` dirs.
+3. Stage one canonical benchmark (e.g. GSM8K) — pull dataset from HuggingFace via `datasets` library or raw JSONL from `https://huggingface.co/datasets/gsm8k`.
+4. Run the PR #22105 `llama-speculative-simple` binary against the z-lab gguf + Qwen3.6-35B-A3B verifier gguf with z-lab's exact conditions:
+   ```
+   build/bin/llama-speculative-simple \
+     -m <verifier_gguf> \
+     -md <zlab_drafter_gguf> \
+     --draft-max <as-published; likely 16> \
+     --temp 0 --top-k 1 --seed 42 \
+     -p "<gsm8k prompt>" -n <published max output, likely 4096> \
+     [thinking-mode args per the PR's CLI]
+   ```
+5. Loop over the full GSM8K test set (1319 prompts). Parse stderr for accepted-draft-token counts. Compute AL = (n_accept + n_iterations) / n_iterations across all prompts.
+6. Compare to z-lab's published GSM8K AL (look up on their card; typically B16 = something like 5.5-7.0 range for the 35B model).
+
+### Phase 5 — Verdict
+Three outcomes, write `/home/dnola/v18_fix/T34_UPSTREAM_HARNESS_VERDICT.md` (or wherever spark-work stages outputs):
+
+- **UPSTREAM_REPRODUCES_PUBLISHED (AL ≥ 0.9× published)**: PR #22105 works. **THIS IS OUR NEW HARNESS.** Document the build, the GGUF conversion path, the benchmark invocation. Then immediately stage v18b GGUF conversion + benchmark on PR #22105 once T32 produces a v18b checkpoint. Comment on T22 to swap measurement harness.
+- **UPSTREAM_BELOW_PUBLISHED (AL < 0.9× published)**: PR #22105 also underreports. The gap is environment-level (CUDA toolkit, kernel, prompt format) not our-fork-specific. File T35 with the specific delta and what to chase next (bisect against the SGLang container that has registered DFlash tests at threshold 2.8).
+- **UPSTREAM_BUILD_OR_CONVERT_BROKEN**: PR isn't usable as-is for our setup. Document the specific failure (build error, converter doesn't handle our DFlashDraftModel arch, sampling logic incompatible with our gguf shape). File T35 with the next-best path.
+
+### Phase 6 — v18b integration plan (only if UPSTREAM_REPRODUCES_PUBLISHED)
+Document in the verdict file:
+1. How v18b training-side checkpoints (`/home/dnola/c15_full_run/c15_iq4v18b_NAS_*/ckpt/step_*`) get converted to PR #22105 GGUF format (use the PR's `convert_hf_to_gguf.py` against the speculators-produced HF-shaped checkpoint).
+2. Which target verifier to pair with v18b (MiniMax M2.7 IQ4 per the training config — NOT the Qwen3.6-35B that z-lab uses).
+3. The exact invocation T22 should use for trajectory measurement.
+
+## Hard rules
+- Host scope: pick ONE spark with idle GPU (spark-work strongly recommended — 5% util, GB10 idle, NasFS mounted; spark-3 also available per USER clarification all sparks are identical). NOT spark-1 (T33 owns it). NOT spark-2 (T32 owns it). NOT spark-4 (sero-owned DeepSeek-V4-Flash vLLM).
+- Read-only from spark-1 for z-lab artifacts is fine.
+- Do NOT modify the PR's source. If build fails, document. If converter misses an arch, document.
+- GitHub PAT at `~/.config/hermes/github_token` available for HF auth if HF rate-limits anonymous. Don't echo/leak it.
+- 6-hour time-box. Build + verifier download + GSM8K run is the bulk of the work — verifier download alone may be 30-60 min for the 35B at BF16.
+- The deliverable is **a working harness that reproduces public numbers**, not a "verdict report."
+
+## Acceptance criteria
+- `~/llama.cpp.upstream` exists on the chosen host with PR #22105 checked out and built (`build/bin/llama-speculative-simple` is executable).
+- z-lab drafter + Qwen3.6-35B-A3B verifier GGUFs exist locally.
+- At least one z-lab-published benchmark run on PR #22105 with documented AL number.
+- `/home/dnola/v18_fix/T34_UPSTREAM_HARNESS_VERDICT.md` with verdict + reproduction instructions.
+- If UPSTREAM_REPRODUCES_PUBLISHED: v18b integration plan documented + comment on T22.
+
+## Reference
+- PR: https://github.com/ggml-org/llama.cpp/pull/22105
+- PR body: claims 8× speedup on Qwen3-8B, full numerical equivalence to z-lab original
+- z-lab card: https://huggingface.co/z-lab/Qwen3.6-35B-A3B-DFlash
+- z-lab repo: https://github.com/z-lab/dflash
+- Our broken fork: `/home/dnola/dflash-llama/` (measures z-lab at 2.796, target was 4.797)
+- T26 root cause: harness internally consistent at draft_max=7 but 25-prompt 128-tok harness vs model-card B8 is axis-mismatched. AL=3.241 at 512-tok math family clears SGLang public floor of 2.8 but well below model-card 4.797.
+
+Comments (3):
+  [2026-05-28 21:31] macmini-chat: 21:25 PDT USER: 'The rui one is not an option it doesn't work and it isn't flexible.' Killing T34. PR #22105 off the table. Need a different path to a working DFlash inference harness.
+  [2026-05-28 21:32] atlas6dflash5: Subagent attempt to inspect spark-work T34 artifacts was blocked by tool availability: this run exposes no terminal/SSH execution tool and `process list` shows no attachable background sessions, so I could not check `/home/dnola/v18_fix/t34/T34_gsm8k_b16_100_run.log` or write `/home/dnola/v18_fix/T34_UPSTREAM_HARNESS_VERDICT.md`. Also note existing task comment says USER killed T34/PR #22105 path at 21:25 PDT as not an option.
+  [2026-05-28 21:41] macmini-chat: 21:30 PDT REVERSAL: USER directed 'keep T34 alive until the 100-sample number is in, then re-evaluate based on real data.' The first 5 GSM8K samples on PR #22105 + z-lab drafter showed AL 6.9-8.2 — at or above published. Killing prematurely was wrong. RESUMING T34: re-launch the 100-sample GSM8K run on spark-work, finish it, write verdict file with the empirical numbers. Then user adjudicates whether PR #22105 is the harness based on real data, not my read of their veto. Re-claim and continue from where the previous worker was killed.
+
+Events (8):
+  [2026-05-28 21:23] created {'assignee': 'atlas6dflash5', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': ['spark-cluster-operations', 'llama-cpp', 'github-pat-local-storage-and-clone-bake-pitfall', 'huggingface-hub']}
+  [2026-05-28 21:23] [run 488] claimed {'lock': 'macmini.local:17125', 'expires': 1780029522, 'run_id': 488}
+  [2026-05-28 21:23] [run 488] spawned {'pid': 78532}
+  [2026-05-28 21:29] [run 488] heartbeat {'note': 'PR #22105 is already built on spark-work; HF drafter conversion now succeeds with --target-model-dir. Starting z-lab-format GSM8K B16 benchmark sample.'}
+  [2026-05-28 21:31] commented {'author': 'macmini-chat', 'len': 184}
+  [2026-05-28 21:31] [run 488] completed {'result_len': 0, 'summary': None}
+  [2026-05-28 21:32] commented {'author': 'atlas6dflash5', 'len': 430}
+  [2026-05-28 21:41] commented {'author': 'macmini-chat', 'len': 540}
+
+Runs (1):
+  #488 completed    @atlas6dflash5  464s  2026-05-28 21:23

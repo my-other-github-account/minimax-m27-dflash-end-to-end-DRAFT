@@ -1,0 +1,95 @@
+Task t_3e38d826: T18: Operator-level CE/backward deep dive for v18 throughput gate (spark-2 only)
+  status:    done
+  assignee:  atlasdflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_3e38d826
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 13:37 by user
+  started:   2026-05-28 13:37
+  completed: 2026-05-28 13:55
+  parents:   t_c277f755
+  children:  t_b14b49a6
+
+Body:
+# Track A follow-up: operator-level CE/backward profiling + custom fused CE plan (spark-2 ONLY)
+
+Context from T7 + t_c277f755:
+- Gate remains >=0.5 it/s (<=2000 ms/step) with anchors locked at 3072 and batch/model capacity unchanged.
+- T7 baseline no-Liger: 5974.5 ms/step = 0.167 it/s; backward 4801.8 ms (80.4%), forward 916.1 ms, optimizer 251.1 ms, dataloader ~0.
+- Current Liger fused CE path OOMs (~72 GiB allocation) at the locked v18 shape.
+- Follow-up chunked Liger CE is numerically exact and compile-safe but far too slow: ~58425.8 ms/step. AdamW fused and compile/no-Liger also regress.
+
+YOUR JOB: one focused spark-2 cycle, no production training.
+
+1. Read /home/dnola/v18_throughput_audit/sweep_summary.md and /home/dnola/v18_throughput_audit/t7_followup_final_summary.md.
+2. Profile the baseline no-Liger backward path at operator level (PyTorch profiler or torch autograd profiler is fine) on a tiny bounded throwaway run that preserves the locked production shape: max_anchors=3072, block_size=8, hidden=3072, intermediate=4096, layers=6, seq_len=8192, draft_vocab=32768. Capture top CUDA/CPU ops, memory allocations, and exact tensor shapes for CE/logit/grad_weight path.
+3. Identify the smallest implementable custom/fused CE-backward or streaming-gradient design that can avoid materializing vocab-sized buffers without Python chunk-loop overhead. If a 1-step microprototype is feasible within budget, implement and measure ONE row; otherwise write a precise design + patch points.
+4. Measure or estimate only from profiler-backed data. Do NOT invent a speedup. If no measured row is available, report "not yet measured" and the concrete next coding task.
+5. Write artifacts under /home/dnola/v18_throughput_audit/operator_deepdive/:
+   - profiler_top_ops.json
+   - memory_shapes.md
+   - fused_ce_backward_plan.md
+   - optional microproto_result.json if implemented
+6. Block review-required with a concise verdict: best measured ms/step if any, dominant op(s), and the next patch required.
+
+HARD RULES:
+- HOST SCOPE: spark-2 ONLY.
+- NO FSDP, NO DDP, NO multi-host, NO multi-spark.
+- NEVER change capacity knobs: max_anchors=3072, block_size=8, hidden=3072, intermediate=4096, num_layers=6, total_seq_len=8192.
+- Do not launch or touch full production training/tmux. Throwaway bounded profiler jobs only.
+- Do not deploy chunked Liger CE as a production default; it is known too slow.
+
+Latest summary:
+T18 operator deep dive reviewed and accepted. Verified artifacts: profiler_top_ops.json, memory_shapes.md, fused_ce_backward_plan.md, ce_backward_timing.json. Critical finding: required 32768-vocab CE/lm_head path is ~436ms isolated, but current resumed trainer is full vocab V=200064; next task is enforce/fix vocab axis then implement fused/streaming CE-backward microprototype.
+
+Comments (2):
+  [2026-05-28 13:46] atlasdflash2: review-required handoff:
+{
+  "artifacts": [
+    "/home/dnola/v18_throughput_audit/operator_deepdive/profiler_top_ops.json",
+    "/home/dnola/v18_throughput_audit/operator_deepdive/memory_shapes.md",
+    "/home/dnola/v18_throughput_audit/operator_deepdive/fused_ce_backward_plan.md",
+    "/home/dnola/v18_throughput_audit/operator_deepdive/ce_backward_timing.json",
+    "/home/dnola/v18_throughput_audit/operator_deepdive/fullstep_backward_profile.json"
+  ],
+  "host_scope": "spark-2 only",
+  "production_training_touched": false,
+  "required_shape_microprofile": {
+    "max_anchors": 3072,
+    "block_size": 8,
+    "T": 24576,
+    "hidden": 3072,
+    "draft_vocab": 32768,
+    "linear_forward_ms_mean": 101.63,
+    "cross_entropy_forward_ms_mean": 62.72,
+    "backward_all_ms_mean": 271.80,
+    "total_measured_ms_mean": 436.25,
+    "peak_allocated_gib": 6.3446
+  },
+  "dominant_required_shape_ops": [
+    "aten::mm/linear materializes logits [24576,32768] (+1.50 GiB)",
+    "aten::_log_softmax materializes [24576,32768] (+1.50 GiB)",
+    "aten::nll_loss_backward and _log_softmax_backward_data each allocate dense [24576,32768]-class buffers (+1.50 GiB each)"
+  ],
+  "important_diagnostic": "The resumed audit checkpoint config.json has draft_vocab_size=200064; a bounded full trainer step observed _LayerNormLinearBackward shape [1,24576,200064]. That full-step profile is diagnostic, not 32768-vocab compliant.",
+  "custom_microprototype": "not implemented / not yet measured",
+  "next_patch_required": "First decide/enforce the intended vocab axis (32768 reduced-vocab vs current 200064 full-vocab resume). Then implement a Triton/custom autograd fused linear + weighted CE op that streams vocab tiles and accumulates dX/dW without materializing logits/log_softmax/grad_logits."
+}
+  [2026-05-28 13:55] driver: driver review APPROVED: verified T18 artifacts on spark-2. Key finding: locked-shape CE/lm_head microprofile [T=24576,H=3072,V=32768] is 436.25ms total / 271.80ms backward / 6.34GiB, but resumed trainer path is actually V=200064 despite draft_vocab_size=32768 directive. Creating T19 to enforce/fix vocab axis and build first fused/streaming CE-backward microprototype; keeping all model-capacity locks and spark-2-only scope.
+
+Events (9):
+  [2026-05-28 13:37] created {'assignee': 'atlasdflash2', 'status': 'ready', 'parents': ['t_c277f755'], 'tenant': None, 'branch_name': None, 'skills': ['dflash-c15-fp8-hybrid-winning-config-and-health-rules']}
+  [2026-05-28 13:37] [run 235] claimed {'lock': 'macmini.local:48861', 'expires': 1780001556, 'run_id': 235}
+  [2026-05-28 13:37] [run 235] spawned {'pid': 48865}
+  [2026-05-28 13:38] [run 235] heartbeat {'note': 'Read T7 summaries; starting spark-2-only bounded profiler for no-Liger lm_head+weighted CE backward at locked v18 shapes.'}
+  [2026-05-28 13:42] [run 235] heartbeat {'note': 'CE/lm_head microprofile completed; attempting one bounded full trainer step with a patched profiler copy under operator_deepdive on spark-2, max_train_steps=4001.'}
+  [2026-05-28 13:46] commented {'author': 'atlasdflash2', 'len': 1785}
+  [2026-05-28 13:46] [run 235] blocked {'reason': 'review-required: spark-2 operator deep dive artifacts written; required-shape CE/lm_head path measured 436 ms (272 ms backward, 6.34 GiB peak), but full resumed trainer is actually vocab=200064 not locked 32768 — next patch is enforce vocab axis then fused streaming linear+CE backward.'}
+  [2026-05-28 13:55] commented {'author': 'driver', 'len': 426}
+  [2026-05-28 13:55] [run 237] completed {'result_len': 0, 'summary': 'T18 operator deep dive reviewed and accepted. Verified artifacts: profiler_top_ops.json, memory_shapes.md, fused_ce_backward_plan.md, ce_backward_timing.json. Critical finding: required 32768-vocab CE/lm_head path is ~436ms isolated, but current resumed trainer is full vocab V=200064; next task is enforce/fix vocab axis then implement fused/streaming CE-backward microprototype.'}
+
+Runs (2):
+  #235 blocked      @atlasdflash2  538s  2026-05-28 13:37
+        → review-required: spark-2 operator deep dive artifacts written; required-shape CE/lm_head path measured 436 ms (272 ms backward, 6.34 GiB peak), but full resumed
+  #237 completed    @atlasdflash2  0s  2026-05-28 13:55
+        → T18 operator deep dive reviewed and accepted. Verified artifacts: profiler_top_ops.json, memory_shapes.md, fused_ce_backward_plan.md, ce_backward_timing.json. C

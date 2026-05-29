@@ -1,0 +1,75 @@
+Task t_d3032bd0: T26: Fix remaining z-lab fixed-harness underreporting after T22 releases spark-1
+  status:    done
+  assignee:  atlas6dflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_d3032bd0
+  max-retries: 2 (default)
+  created:   2026-05-28 18:56 by user
+  started:   2026-05-28 19:30
+  completed: 2026-05-28 20:06
+
+Body:
+# Follow-up: root-cause fixed-harness z-lab underreporting (spark-1 only, wait for T22)
+
+T23 completed with verdict STILL UNDERREPORTING: z-lab fixed-harness measured real AL=2.796, below the <3.0 still-broken threshold and only 58.3% of published B8 mean 4.797. The T20 simple-vs-API crossval mismatch is fixed (delta 0.030), so the remaining gap is deeper than that API path mismatch.
+
+Do NOT run while T22 is actively using spark-1. This card starts blocked as a lease guard. Once T22 blocks/completes and spark-1 is free, unblock and investigate harness accounting against a known-good public drafter. Deliverables: root-cause note, minimal patch if found, and re-run z-lab calibration until >=4.0 AL or a documented reason why our prompt/harness axis is incomparable.
+
+Host scope: spark-1 ONLY. Do not touch spark-2. Do not modify z-lab checkpoint. Do not change model/training.
+
+
+Latest summary:
+review-required: T26 root-cause note written; verdict is local 25-prompt harness vs z-lab model-card B8 is incomparable, no accounting patch found; needs human approval of comparator/gate recommendation.
+
+Comments (4):
+  [2026-05-28 18:56] default: BLOCKED: blocked lease guard: do not run while T22 owns spark-1; unblock after T22 blocks/completes and spark-1 is free
+  [2026-05-28 19:30] driver: DRIVER 19:29: spark-1 recovery task T27 is approved complete; T22 is blocked waiting for v18b exports, so spark-1 lease is free. Resume T26 now: investigate residual z-lab fixed-harness underreporting on spark-1 only. Do not touch spark-2/3/4; write verdict/patch and block review-required when done.
+  [2026-05-28 19:56] atlas6dflash4: review-required handoff:
+{
+  "verdict": "documented-incomparable-axis; no remaining fixed-harness n_accept/n_draft accounting defect found",
+  "root_cause_note": "/home/dnola/zlab_ref_drafter/benchmarks_t26_underreporting/ROOT_CAUSE_T26.md",
+  "artifacts": {
+    "t23_fixed_128_summary": "/home/dnola/zlab_ref_drafter/benchmarks_fixed_harness/summary.json",
+    "t26_len512_summary": "/home/dnola/zlab_ref_drafter/benchmarks_t26_len512/summary.json",
+    "t26_draft_max_8_crossval": "/home/dnola/zlab_ref_drafter/benchmarks_t26_underreporting/crossval.json",
+    "t26_note": "/home/dnola/zlab_ref_drafter/benchmarks_t26_underreporting/ROOT_CAUSE_T26.md"
+  },
+  "key_numbers": {
+    "t23_fixed_128_AL": 2.7957457094512934,
+    "t23_fixed_128_crossval_delta": 0.030434782608695476,
+    "t26_len512_AL": 3.161795166858458,
+    "t26_len512_delta_vs_128": 0.3660494574071645,
+    "t26_len512_math_family_AL": 3.2406621392190154,
+    "upstream_sglang_gsm8k_accept_length_threshold": 2.8,
+    "draft_max_8_crossval_simple_AL": 2.046875,
+    "draft_max_8_crossval_api_AL": 1.0526315789473684,
+    "draft_max_8_crossval_delta": 0.9942434210526316,
+    "draft_max_8_crossval_passed": false
+  },
+  "decision_recommendation": "Do not gate the local 25-prompt 128-token fixed harness on z-lab model-card B8 mean 4.797 or AL>=4.0. Label that comparator external/model-card/incomparable unless rerun uses the same published benchmark datasets, max output length 4096, thinking/chat settings, stack, and speculative-token semantics. For this harness, supported public-drafter sanity evidence is draft_max=7 simple/API crossval pass plus longer-output math AL above the local upstream SGLang GSM8K threshold scale (2.8).",
+  "scope": "spark-1 only; no spark-2/3/4 touched; no z-lab checkpoint/model/training changes",
+  "process_cleanup": "verified no t26/t23/llama-server/llama-speculative run processes left except the pgrep self-match; nvidia-smi compute-app query empty"
+}
+  [2026-05-28 20:06] driver: review APPROVED. Verified T26 artifacts on spark-1: ROOT_CAUSE_T26.md documents no remaining draft_max=7 fixed-harness accounting defect; 128-token local z-lab AL=2.7957, 512-token AL=3.1618, math-family AL=3.2407; draft_max=8 API/simple crossval FAIL (delta=0.994), so not a valid patch. Accepting the verdict that model-card B8=4.797 is an external/incomparable gate for the 25-prompt 128-token local harness; T29 upstream work remains the stronger adjudicator.
+
+Events (15):
+  [2026-05-28 18:56] created {'assignee': 'atlas6dflash4', 'status': 'blocked', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-28 18:56] promoted
+  [2026-05-28 18:56] commented {'author': 'default', 'len': 119}
+  [2026-05-28 18:56] [run 275] blocked {'reason': 'blocked lease guard: do not run while T22 owns spark-1; unblock after T22 blocks/completes and spark-1 is free'}
+  [2026-05-28 19:30] commented {'author': 'driver', 'len': 300}
+  [2026-05-28 19:30] unblocked
+  [2026-05-28 19:30] [run 368] claimed {'lock': 'macmini.local:46681', 'expires': 1780022744, 'run_id': 368}
+  [2026-05-28 19:30] [run 368] spawned {'pid': 46683}
+  [2026-05-28 19:33] [run 368] heartbeat {'note': 'Oriented on T23 artifacts; investigating DRAFT_MAX/block-size/accounting axis on spark-1 only. GPU clear, preparing isolated T26 diagnostics under /home/dnola/zlab_ref_drafter/benchmarks_t26_underreporting.'}
+  [2026-05-28 19:39] [run 368] heartbeat {'note': 'Running isolated T26 long-output (512-token) dflash-only calibration on spark-1; waiting for rows to finish.'}
+  [2026-05-28 19:46] [run 368] heartbeat {'note': 'T26 len512 calibration still running on spark-1; 25-prompt dflash pass in progress, no spark-2/3/4 touched.'}
+  [2026-05-28 19:56] commented {'author': 'atlas6dflash4', 'len': 1959}
+  [2026-05-28 19:57] [run 368] blocked {'reason': 'review-required: T26 root-cause note written; verdict is local 25-prompt harness vs z-lab model-card B8 is incomparable, no accounting patch found; needs human approval of comparator/gate recommendation.'}
+  [2026-05-28 20:06] commented {'author': 'driver', 'len': 463}
+  [2026-05-28 20:06] completed {'result_len': 0, 'summary': None}
+
+Runs (2):
+  #275 blocked      @atlas6dflash4  0s  2026-05-28 18:56
+        → blocked lease guard: do not run while T22 owns spark-1; unblock after T22 blocks/completes and spark-1 is free
+  #368 blocked      @atlas6dflash4  1577s  2026-05-28 19:30
+        → review-required: T26 root-cause note written; verdict is local 25-prompt harness vs z-lab model-card B8 is incomparable, no accounting patch found; needs human

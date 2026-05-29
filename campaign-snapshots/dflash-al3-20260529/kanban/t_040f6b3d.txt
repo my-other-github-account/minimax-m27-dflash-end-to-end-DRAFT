@@ -1,0 +1,83 @@
+Task t_040f6b3d: T83: FAST spark-3 bounded continuation from T80 to next checkpoint
+  status:    done
+  assignee:  atlasdflash3
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_040f6b3d
+  max-retries: 2 (default)
+  created:   2026-05-29 07:41 by user
+  started:   2026-05-29 07:41
+  completed: 2026-05-29 08:05
+  parents:   t_4106997b
+  children:  t_7ff38a5f, t_c0a75935
+
+Body:
+# T83: FAST spark-3 bounded continuation from T80 step700 to next checkpoint (<1h)
+
+## Mission
+Keep spark-3 productive while T79/T82 measure AL. Produce the next fresh candidate checkpoint quickly; do NOT run a full training job. Target remains measured runtime AL >=3.0, but this task only creates the next candidate checkpoint for the AL path.
+
+## Inputs
+Parent T80. Resume from T80 checkpoint:
+`/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700`
+T80 report: `/home/dnola/v18_fix/T80_SPARK3_BOUNDED_CONTINUATION.md`
+T71 optimizer-resume patch remains known-good: AdamW foreach/fused disabled on resume.
+
+## Host scope
+spark-3 ONLY. Do not touch spark-1/spark-2/spark-work/spark-4. No Kasa. You hold the spark-3 lease while running.
+
+## Fast experiment
+1. Preflight one-actor lease: no existing `scripts/train.py`, no trainer tmux, no GPU compute apps; `free -g` >=90GB. If another live actor owns spark-3, block SPARK3_BUSY with exact evidence; do not kill live owned work.
+2. Verify hidden-state visibility with a 1000-entry Path.exists sample over hidden_states_nas; require >=95% before training.
+3. Resume from T80 step700 for at most +100 optimizer steps (target around global_step 850, expect next saved ckpt around step750/800 depending trainer semantics). Set checkpoint frequency / val every 50 so at least one fresh checkpoint is saved before stop.
+4. Export `TORCHINDUCTOR_COMPILE_THREADS=4` and `OMP_NUM_THREADS=8`. One train.py only. Preserve locked knobs: max_anchors=3072, block=8, hidden=3072, intermediate=4096, layers=6, seq_len=8192, draft_vocab_size=32768, no FSDP/multihost.
+5. Stop after bounded run; do not leave a long trainer running.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T83_SPARK3_BOUNDED_CONTINUATION.md` and comment CKPT_READY with checkpoint path(s), global_step reached, train/val loss+full_acc start/end, AL_LO/AL_HI if logged, and post-run no-trainer/GPU evidence. If blocked, use PATCH_FAIL/DATA_UNAVAILABLE/SPARK3_BUSY with exact evidence.
+
+## Hard rules
+FAST <=1h, one actor per host, contention-safe training, no spark-4, no full convergence wait.
+
+Latest summary:
+CKPT_READY: spark-3 bounded continuation resumed from T80 step700, trained exactly 100 records to max_train_steps=800, and stopped cleanly with no trainer/GPU apps left. Fresh candidate checkpoint is `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750`; report written to `/home/dnola/v18_fix/T83_SPARK3_BOUNDED_CONTINUATION.md`.
+
+Comments (1):
+  [2026-05-29 08:04] atlasdflash3: CKPT_READY
+
+Checkpoint path(s):
+- fresh: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750`
+- convenience symlink: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/checkpoint_last_inepoch -> step_00000750`
+- source symlink: `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000700 -> /home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T80_spark3_bounded_step750_ckpt50_20260529T142824Z/step_00000700`
+
+Global step reached: stopped cleanly at `max_train_steps=800`; parsed train records `global_step=700..799`; fresh checkpoint trainer_state global_step=750.
+
+Train metrics:
+- start: global_step=700 loss=4.625 full_acc=0.158
+- end: global_step=799 loss=4.719 full_acc=0.207
+
+Val metrics:
+- step_00000700: loss_epoch=5.1390625 full_acc_epoch=0.161855913 AL_LO=1.396280 AL_HI=2.132152
+- step_00000750: loss_epoch=5.1218750 full_acc_epoch=0.182724073 AL_LO=1.469839 AL_HI=2.278093
+
+Preflight:
+- no prior trainer/GPU compute apps; memory available 98 GiB
+- hidden_states_nas visibility sample: 1000/1000 = 100.0%
+
+Post-run evidence:
+- trainer process count: 0
+- GPU compute app count: 0
+- free -g available: 97 GiB
+
+Report: `/home/dnola/v18_fix/T83_SPARK3_BOUNDED_CONTINUATION.md`
+Parse JSON: `/home/dnola/v18_fix/T83_PARSE.json`
+
+Events (6):
+  [2026-05-29 07:41] created {'assignee': 'atlasdflash3', 'status': 'ready', 'parents': ['t_4106997b'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 07:41] [run 600] claimed {'lock': 'macmini.local:34778', 'expires': 1780066619, 'run_id': 600}
+  [2026-05-29 07:41] [run 600] spawned {'pid': 34782}
+  [2026-05-29 07:53] [run 600] heartbeat {'note': 'Preflight passed on spark-3: no trainer/GPU compute apps, available memory 98 GiB, hidden-state Path.exists sample 1000/1000. Launching bounded T83 resume from T80 step700 with MAX_TRAIN_STEPS=800.'}
+  [2026-05-29 08:04] commented {'author': 'atlasdflash3', 'len': 1414}
+  [2026-05-29 08:05] [run 600] completed {'result_len': 0, 'summary': 'CKPT_READY: spark-3 bounded continuation resumed from T80 step700, trained exactly 100 records to max_train_steps=800, and stopped cleanly with no trainer/GPU apps left. Fresh candidate checkpoint is `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750`; report written to `/home/dnola/v18_fix/T83_SPARK3_BOUNDED_CONTINUATION.md`.', 'artifacts': ['/home/dnola/v18_fix/T83_PARSE.json', '/home/dnola/v18_fix/T83_RUN_LABEL.txt', '/home/dnola/iq4_full_run/launch_T83_spark3_bounded.sh', '/home/dnola/iq4_full_run/logs/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/train.log']}
+
+Runs (1):
+  #600 completed    @atlasdflash3  1393s  2026-05-29 07:41
+        → CKPT_READY: spark-3 bounded continuation resumed from T80 step700, trained exactly 100 records to max_train_steps=800, and stopped cleanly with no trainer/GPU a

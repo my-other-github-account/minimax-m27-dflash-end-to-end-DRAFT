@@ -1,0 +1,137 @@
+Task t_64167ad3: T17: Plan-to-AL-3 synthesis — derive empirical roadmap from T11/T12/T13/T14/T15 outputs
+  status:    done
+  assignee:  atlas6dflash5
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_64167ad3
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 08:03 by user
+  started:   2026-05-28 16:52
+  completed: 2026-05-28 17:10
+  parents:   t_3062521b, t_60a49078, t_a9564cc2, t_f08179b8
+  children:  t_b735f0a2
+
+Body:
+# T17: Plan-to-AL-3 synthesis — derive the empirical roadmap from T11/T12/T13/T14/T15 outputs
+
+## CONTEXT
+
+By the time this task dispatches, the board has produced:
+- T11: training-prompt replay outcome (PASS / training-vs-runtime delta / root cause)
+- T12: per-pos telemetry shipped (T16 harness bug fixed in dflash_llama)
+- T13: sustained investigation findings across draftmax/temp/category/verifier/gguf-audit cycles
+- T14: z-lab public drafter result on our harness (Outcome A, B, or C)
+- T15: structural ceiling of v18 step 2500 drafter
+
+Your job is to read all of these AND the T7 throughput sweep results, then produce ONE document that defines THE plan to beat AL>3.
+
+## YOUR JOB
+
+1. **Read all parent outputs** from spark-1:
+   - `~/.hermes/kanban/boards/dflash-al3/workspaces/t_3062521b/*.json` (T11)
+   - `~/.hermes/kanban/boards/dflash-al3/workspaces/t_f08179b8/*` (T12)
+   - `~/.hermes/kanban/boards/dflash-al3/workspaces/t_49bb9365/*.json` (T13)
+   - `~/.hermes/kanban/boards/dflash-al3/workspaces/<T14-id>/*.json` (T14)
+   - `~/.hermes/kanban/boards/dflash-al3/workspaces/<T15-id>/*.json` (T15)
+
+2. **Read T7's sweep result** on spark-2:
+   - `/home/dnola/v18_throughput_audit/sweep_summary.md`
+
+3. **Classify the situation** into one of these regimes:
+
+   **Regime I — Harness was the problem** (T14 Outcome C OR T11 says HARNESS-BUG): the path to AL>3 is harness-fix-first. Concrete next steps: (a) T12 patch reviewed + committed; (b) re-run T16 benchmark with fixed harness on the AS-EXPORTED v18 step 2500 weights; (c) measured AL almost certainly recovers to training-side prediction (~1.77 AL_LO, ~2.93 AL_HI); (d) Track A continues to deeper training, expected new measured AL after epoch 1 ≈ 2.5-4 based on Kimi-K2.5 reference trajectory. ETA to AL>3: 1-3 days of Track A training after harness fix lands.
+
+   **Regime II — Drafter was the problem** (T14 Outcome A AND T11 Phase 2 matches training): the path to AL>3 is more training. Concrete next steps: (a) T1 resume-fix + T9 throughput gate land; (b) T3 trains v18 through epoch 1-4; (c) re-measure every 1000 steps. Architecture stays same. ETA: 2-7 days of training time + ckpt evals.
+
+   **Regime III — Both** (T14 Outcome B): land T12 harness fix in parallel with T3 long-training; expect cumulative gains from both.
+
+   **Regime IV — Structural ceiling below 3** (T15 plateau < 2.5, T14 Outcome A, T11 matches training): the v18 architecture cannot reach AL>3 with this verifier. Architectural change required. Concrete next steps: file a new T16 (architectural sweep) task for the user to scope (since user has previously restricted multi-host, you must ask via comment for host scope grant rather than file the spark-3/spark-4/spark-work sweep yourself). Specifically propose: hidden_size 3072 → 4096, num_layers 6 → 8, intermediate_size 4096 → 6144. ETA: weeks; user must approve.
+
+4. **Write `/home/dnola/PLAN_TO_AL3.md`** structured as:
+   - One-paragraph current state (measured AL, training AL_LO/HI, z-lab reference)
+   - Diagnosis section: which regime, with the supporting numeric evidence (NOT prose hand-waving)
+   - Roadmap: 3-5 numbered steps with ETA, dependencies, and decision gates
+   - Risks: 3 things that could invalidate the plan and what we'd measure to detect each
+   - Open questions for user (if any) — but only structural / scope questions, no "should I do X" permission asks
+
+5. **Block review-required** with summary "PLAN_TO_AL3.md written, regime=I/II/III/IV, ETA=X days, primary next action=Y".
+
+## HOST SCOPE
+
+This task is read-only on both sparks. Workspace writes only.
+
+## HARD RULES
+
+- DO NOT recommend dropping --max-anchors / changing model architecture as a default option — user has locked these.
+- DO NOT recommend FSDP / multi-host training — user has restricted to single-spark training.
+- DO NOT recommend skipping verification gates or shortcutting any measurement.
+- Read every parent output before writing the plan; do not synthesize from memory or hand-waving.
+- Required skill: `dflash-c15-fp8-hybrid-winning-config-and-health-rules`.
+- Assignee: atlas6dflash5 (idle profile).
+- Parents: T11, T12, T13, T14, T15 (synthesis gates on ALL of them).
+- Priority: 70 (high but downstream).
+
+Latest summary:
+PLAN_TO_AL3.md reviewed/approved. Regime III (both harness/runtime mismatch and drafter quality). Immediate follow-ups: close API-vs-simple crossval, continue spark-2 throughput path, then single-spark training only after T9 GREEN.
+
+Comments (5):
+  [2026-05-28 08:57] default: BLOCKED: user stop final
+  [2026-05-28 12:27] user: PRE-EXISTING TRACK B FINDING (T11 t_3062521b done before campaign restart):
+
+T11 classified the training-vs-runtime per-position comparison as HARNESS_BUG: API JSONL has nonzero AL (mean 1.391) but all-zero per_position_accept, while direct llama-speculative-simple on T16 prompt 0 produced a real histogram and per_pos=[0.6,0.2,0,0,0,0,0]. Phase1/phase2/phase3 JSON artifacts written. Phase2/3 hidden-state/verifier attribution remains unproven until T12 per-request telemetry is fully verified.
+
+This is strong evidence for Regime I (harness was the dominant problem). When you synthesize PLAN_TO_AL3.md, lead with this finding and adjust regime weighting accordingly.
+  [2026-05-28 14:29] driver: DRIVER DEPENDENCY FIX: T13 is a NEVER-COMPLETES filler and must not gate T17 forever. Detaching T13 as a formal parent; T17 must still read T13 comments/artifacts as an input. Remaining hard gate is T15 completion plus already-done T11/T12/T14.
+  [2026-05-28 16:56] atlas6dflash5: review-required handoff:
+```json
+{
+  "artifact_local": "/Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_64167ad3/PLAN_TO_AL3.md",
+  "artifact_remote": "spark-1:/home/dnola/PLAN_TO_AL3.md",
+  "regime": "III",
+  "eta": "same-day harness rerun + ~1.2 days/epoch training at current T7 baseline; ~3-7 days depending on eval gates",
+  "primary_next_action": "land/lock T12 telemetry patch, rerun fixed-harness v18+z-lab crossval, and resume single-Spark v18 training with measured-safe baseline settings",
+  "evidence_read": {
+    "T11": ["phase1_harness_check.json", "phase2_training_prompt_replay.json", "phase3_gap_decomposition.json"],
+    "T12": ["PER_POS_TELEMETRY.md", "instrumented_one_prompt handoff from task comments"],
+    "T13": ["sustained_6_1.json", "sustained_1_3.json"],
+    "T14": ["summary.json", "report.md"],
+    "T15": ["sweep1_draftmax.json"],
+    "T7": ["/home/dnola/v18_throughput_audit/sweep_summary.md"]
+  },
+  "key_numbers": {
+    "v18_measured_dmax7_AL": 1.3626416293106491,
+    "v18_t15_plateau_weighted_AL_dmax9_15": 1.369633793524645,
+    "v18_max_weighted_AL_dmax15": 1.3724072052401746,
+    "zlab_measured_our_harness_AL": 2.8828428258875007,
+    "zlab_published_B8_mean_AL": 4.796666666666667,
+    "t14_crossval_abs_delta": 0.2376811594202899,
+    "training_side_AL_LO_from_T11_rounded_pk": 1.7124906849914323,
+    "training_side_AL_HI_from_T11_rounded_pk": 2.932,
+    "T7_best_it_s": 0.167,
+    "T7_best_ms_step": 5974.5
+  }
+}
+```
+  [2026-05-28 17:10] driver: review APPROVED. Read /home/dnola/PLAN_TO_AL3.md. Regime=III: both harness/runtime path and drafter quality. Key next actions: close simple-vs-API crossval mismatch, keep fixed-harness evals honest, and continue single-spark throughput/training path. Completing synthesis gate; campaign continues via follow-up tasks/fillers.
+
+Events (15):
+  [2026-05-28 08:03] created {'assignee': 'atlas6dflash5', 'status': 'todo', 'parents': ['t_3062521b', 't_f08179b8', 't_49bb9365', 't_60a49078', 't_a9564cc2'], 'tenant': None, 'branch_name': None, 'skills': ['dflash-c15-fp8-hybrid-winning-config-and-health-rules']}
+  [2026-05-28 08:07] commented {'author': 'default', 'len': 47}
+  [2026-05-28 08:07] promoted
+  [2026-05-28 08:57] commented {'author': 'default', 'len': 24}
+  [2026-05-28 08:57] archived
+  [2026-05-28 12:27] commented {'author': 'user', 'len': 670}
+  [2026-05-28 14:29] commented {'author': 'driver', 'len': 244}
+  [2026-05-28 14:29] unlinked {'parent': 't_49bb9365', 'child': 't_64167ad3'}
+  [2026-05-28 16:52] promoted
+  [2026-05-28 16:52] [run 251] claimed {'lock': 'macmini.local:98923', 'expires': 1780013267, 'run_id': 251}
+  [2026-05-28 16:52] [run 251] spawned {'pid': 98925}
+  [2026-05-28 16:56] commented {'author': 'atlas6dflash5', 'len': 1474}
+  [2026-05-28 16:57] [run 251] blocked {'reason': 'review-required: PLAN_TO_AL3.md written, regime=III, ETA=same-day harness rerun + ~1.2 days/epoch training (~3-7 days through gates), primary next action=land T12 telemetry patch then rerun fixed-harness v18/z-lab crossval and resume single-Spark training.'}
+  [2026-05-28 17:10] commented {'author': 'driver', 'len': 325}
+  [2026-05-28 17:10] [run 253] completed {'result_len': 0, 'summary': 'PLAN_TO_AL3.md reviewed/approved. Regime III (both harness/runtime mismatch and drafter quality). Immediate follow-ups: close API-vs-simple crossval, continue spark-2 throughput path, then single-spark training only after T9 GREEN.'}
+
+Runs (2):
+  #251 blocked      @atlas6dflash5  254s  2026-05-28 16:52
+        → review-required: PLAN_TO_AL3.md written, regime=III, ETA=same-day harness rerun + ~1.2 days/epoch training (~3-7 days through gates), primary next action=land T
+  #253 completed    @atlas6dflash5  0s  2026-05-28 17:10
+        → PLAN_TO_AL3.md reviewed/approved. Regime III (both harness/runtime mismatch and drafter quality). Immediate follow-ups: close API-vs-simple crossval, continue s

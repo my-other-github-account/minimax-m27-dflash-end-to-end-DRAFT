@@ -1,0 +1,101 @@
+Task t_5ecfb6b6: T59: FAST latest spark-3 checkpoint -> MiniMax/buun AL (<1h)
+  status:    done
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_5ecfb6b6
+  max-retries: 2 (default)
+  created:   2026-05-29 02:43 by user
+  started:   2026-05-29 02:43
+  completed: 2026-05-29 03:37
+  children:  t_20e56873
+
+Body:
+# T59: FAST latest spark-3 checkpoint -> MiniMax/buun AL measurement (<1h)
+
+## Mission
+CUSTOM DFlash adapter on OUR MiniMax target, measured AL >= 3 in actual practice. Latest known result is T53 step500 AL=1.651 at draft_max=9, below target. Get the next FAST measured runtime AL number from the active spark-3 training trajectory without waiting for full convergence.
+
+## Host scope
+- Use spark-2 for conversion/inference ONLY if preflight is clean: no train.py, no tmux trainer, no GPU compute apps, >=90GB available.
+- Read-only access to spark-3 is allowed ONLY to copy/inspect the latest COMPLETE checkpoint from the existing training run. Do not kill/restart/launch anything on spark-3.
+- Do NOT touch spark-4.
+- One actor per host. If spark-2 is occupied, block with exact evidence rather than contending.
+
+## Inputs / known artifacts
+- T53 measured step500 from `/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T064306Z/step_00000500` -> AL=1.651.
+- T55/T57: conversion scatter artifact unlikely.
+- T58: target-layer metadata already matches training taps [2,16,30,45,59].
+- T43: for z-lab, practical draft_max plateau around 9; use draft_max=9 for our adapter unless the existing T53 runner requires another exact arg.
+
+## Steps (FAST)
+1. On spark-3, find the newest complete checkpoint from the active `c15_iq4v18b_NAS_T3_spark3_val500_20260529T074947Z` or any newer same-family run. Completeness = config.json + model.safetensors present and stable size across two quick reads. Prefer highest global_step; if only step500 exists, report no new ckpt.
+2. Copy/read-only that checkpoint to spark-2 staging. Use the already-working T53/T48 MiniMax conversion/rebake path, NOT the incompatible Qwen target path.
+3. Convert/rebake to buun GGUF for MiniMax-M2.7 target. Preserve axes: draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59].
+4. Run SAME fast runtime AL smoke as T53: MiniMax target, buun llama-speculative-simple/server, 3 prompts x 512 output, draft_max=9, temp=0 / deterministic, raw measured accept_length. No multiplier/extrapolation.
+5. Write `/home/dnola/v18_fix/T59_LATEST_CKPT_MINIMAX_AL.md` with ckpt path/step, AL per prompt, mean AL, comparison to T53 1.651 and target 3.0.
+
+## Verdict
+- AL>=3.0: GOAL HIT. Comment loudly with exact ckpt path and numbers.
+- 1.65<AL<3: quality improving; file/advise next bounded checkpoint measurement.
+- AL<=1.65: no improvement; recommend recipe/data-target lever (coordinate with T60).
+- NO_NEW_CKPT: block with current active train status and latest available step.
+
+Hard rules: fast signal within <=1h, no full training, no spark-4, no host contention, measured runtime AL only.
+
+Latest summary:
+Measured latest complete spark-3 same-family checkpoint through the corrected T62 d2t-OFFSET MiniMax/buun path: mean runtime AL=1.641 over 3x512 at draft_max=9. No newer-than-step500 complete checkpoint existed in the active 093736Z run at probe time; report written to /home/dnola/v18_fix/T59_LATEST_CKPT_MINIMAX_AL.md.
+
+Comments (4):
+  [2026-05-29 03:00] dflash-al3-driver: PAUSE/RECLAIM: T60 found the T53/T59 prep path is invalid: d2t must be treated as OFFSET (target_id = arange(32768)+d2t), not absolute token ids. Later-checkpoint AL through the existing T53 path would inherit the bad 20,681-row output-head scatter and produce an invalid measured AL. Driver is reclaiming/blocking T59 and filing a fast corrected offset-rebake smoke first.
+  [2026-05-29 03:00] default: BLOCKED: paused: T60 found T53/T59 prep path invalid until d2t-offset rebake is smoked
+  [2026-05-29 03:18] dflash-al3-driver: DRIVER UNBLOCK after T62: corrected d2t-OFFSET rebake path is now proven usable. T62 used target_id = arange(32768)+d2t, passed mapping/metadata assertions, and tiny 2x256 MiniMax/buun smoke measured AL=1.680 (still <3). Resume T59, but DO NOT use the old T53/T59 absolute-d2t prep. Use the T62 corrected offset rebake path for the latest complete spark-3 checkpoint. FAST target: find latest complete checkpoint >= step500 (prefer newer if complete), convert/rebake with corrected offset mapping, run MiniMax/buun AL smoke at draft_max=9 (2-3 prompts, <=512 tok), report raw measured AL and compare to T62=1.680 / target=3.0. spark-2 only for conversion/inference; read-only harvest from spark-3; do not launch training or touch spark-4.
+  [2026-05-29 03:37] atlasdflash4: T59 handoff:
+```json
+{
+  "checkpoint_source": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T074947Z/step_00000500",
+  "active_run_no_newer_complete_ckpt": "/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T3_spark3_val500_20260529T093736Z",
+  "local_staging": "/home/dnola/v18_fix/t59_latest/source_step_00000500/",
+  "rebake_rule": "target_ids = arange(len(d2t)) + d2t",
+  "assertions": {
+    "target_ids_unique": 32768,
+    "target_ids_t2d_covered": 32768,
+    "output_weight_nonfloor_rows": 32768,
+    "target_layer_ids": [2, 16, 30, 45, 59],
+    "n_target_features": 15360
+  },
+  "draft_max": 9,
+  "prompt_shape": "3x512, temp=0, top_k=1",
+  "runtime_al_per_prompt": [1.586776859504132, 1.5829611817244933, 1.7527577025484977],
+  "mean_runtime_al": 1.6408319145923744,
+  "mean_draft_acceptance_fraction": 0.03807287695974305,
+  "report": "/home/dnola/v18_fix/T59_LATEST_CKPT_MINIMAX_AL.md",
+  "raw_jsonl": "/home/dnola/v18_fix/t59_latest/al_runs_offset_draftmax9_3x512.jsonl",
+  "server_stopped_after_measurement": true,
+  "verdict": "AL<=1.65: no improvement vs T53/T62; recommend recipe/data-target or BOS/tokenization lever, and next bounded measurement only after a newer complete checkpoint exists."
+}
+```
+
+Events (16):
+  [2026-05-29 02:43] created {'assignee': 'atlasdflash4', 'status': 'ready', 'parents': [], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 02:43] [run 558] claimed {'lock': 'macmini.local:60543', 'expires': 1780048684, 'run_id': 558}
+  [2026-05-29 02:43] [run 558] spawned {'pid': 60544}
+  [2026-05-29 02:46] [run 558] heartbeat {'note': 'oriented; spark-2 preflight clean (no GPU apps, ~973G avail). spark-3 active run 20260529T093736Z is at global_step~82 with no checkpoint yet; latest complete checkpoint remains step_00000500 from 074947Z.'}
+  [2026-05-29 03:00] commented {'author': 'dflash-al3-driver', 'len': 373}
+  [2026-05-29 03:00] [run 558] reclaimed {'manual': True, 'reason': 'superseded by T60 offset-mapping bug; pause invalid later-checkpoint AL path', 'prev_lock': 'macmini.local:60543', 'prev_pid': 60544, 'host_local': True, 'termination_attempted': True, 'terminated': True, 'sigkill': False}
+  [2026-05-29 03:00] commented {'author': 'default', 'len': 86}
+  [2026-05-29 03:00] [run 562] blocked {'reason': 'paused: T60 found T53/T59 prep path invalid until d2t-offset rebake is smoked'}
+  [2026-05-29 03:18] commented {'author': 'dflash-al3-driver', 'len': 738}
+  [2026-05-29 03:18] unblocked
+  [2026-05-29 03:18] [run 564] claimed {'lock': 'macmini.local:69351', 'expires': 1780050804, 'run_id': 564}
+  [2026-05-29 03:18] [run 564] spawned {'pid': 69352}
+  [2026-05-29 03:21] [run 564] heartbeat {'note': 'oriented; spark-2 preflight clean (~967G free, no GPU compute/training apps except self-match). spark-3 read-only probe shows active 093736Z training still running, but no complete checkpoint there yet; latest complete same-family checkpoint is 074947Z/step_00000500 (stable model.safetensors 2.28GB). Proceeding with corrected T62 offset rebake path on spark-2.'}
+  [2026-05-29 03:31] [run 564] heartbeat {'note': 'spark-2 converted latest complete 074947Z/step_00000500 using corrected d2t-offset rebake; server on 18089 reached health OK after model load. Starting 3x512 draft_max=9 runtime AL smoke.'}
+  [2026-05-29 03:37] commented {'author': 'atlasdflash4', 'len': 1252}
+  [2026-05-29 03:37] [run 564] completed {'result_len': 0, 'summary': 'Measured latest complete spark-3 same-family checkpoint through the corrected T62 d2t-OFFSET MiniMax/buun path: mean runtime AL=1.641 over 3x512 at draft_max=9. No newer-than-step500 complete checkpoint existed in the active 093736Z run at probe time; report written to /home/dnola/v18_fix/T59_LATEST_CKPT_MINIMAX_AL.md.', 'artifacts': ['/home/dnola/v18_fix/T59_LATEST_CKPT_MINIMAX_AL.md', '/home/dnola/v18_fix/t59_latest/step500_minimax_buun_offset_rebaked.gguf', '/home/dnola/v18_fix/t59_latest/al_runs_offset_draftmax9_3x512.jsonl', '/home/dnola/v18_fix/t59_latest/run_3x512_draftmax9.log', '/home/dnola/v18_fix/t59_latest/prepped_minimax_rebaked_v17d2t_offset/prep_summary.json']}
+
+Runs (3):
+  #558 reclaimed    @atlasdflash4  1032s  2026-05-29 02:43
+        ! manual_reclaim: superseded by T60 offset-mapping bug; pause invalid later-checkpoint AL path
+  #562 blocked      @atlasdflash4  0s  2026-05-29 03:00
+        → paused: T60 found T53/T59 prep path invalid until d2t-offset rebake is smoked
+  #564 completed    @atlasdflash4  1130s  2026-05-29 03:18
+        → Measured latest complete spark-3 same-family checkpoint through the corrected T62 d2t-OFFSET MiniMax/buun path: mean runtime AL=1.641 over 3x512 at draft_max=9.

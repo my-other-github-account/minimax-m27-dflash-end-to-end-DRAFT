@@ -1,0 +1,45 @@
+Task t_7ff38a5f: T85: FAST AL of T83 step750 checkpoint on MiniMax/buun
+  status:    running
+  assignee:  atlasdflash4
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_7ff38a5f
+  max-retries: 2 (default)
+  created:   2026-05-29 08:17 by user
+  started:   2026-05-29 08:17
+  parents:   t_040f6b3d
+
+Body:
+# T85: FAST AL of T83 step750 checkpoint on MiniMax/buun (<1h)
+
+## Mission
+Measure the fresh T83 checkpoint's raw runtime AL on OUR MiniMax target using the validated buun MiniMax path. Campaign goal: measured runtime AL >=3.0 sustained/reproducible. T82 is measuring T80 step700 on spark-work; this task measures newer T83 step750 on spark-2 in parallel for trajectory signal.
+
+## Inputs
+Parent T83. Read T83 handoff first. Source checkpoint:
+`/home/dnola/iq4_full_run/checkpoints/c15_iq4v18b_NAS_T83_spark3_bounded_step800_ckpt50_20260529T145314Z/step_00000750`
+T83 training-side val: step750 loss_epoch=5.1218750, full_acc_epoch=0.182724073, AL_LO=1.469839, AL_HI=2.278093.
+
+## Host scope
+spark-2 ONLY. Inference/conversion only. No training. No Kasa. Do not touch spark-1/spark-3/spark-work/spark-4. One actor per host: if spark-2 is busy with a live task/llama/vLLM/GPU process, block `SPARK2_BUSY` with exact evidence; do not kill live owned work.
+
+## Steps
+1. Preflight one-actor lease: no train.py/trainer tmux/llama-server/vLLM/GPU compute app from another task; >=90GB free if applicable. If busy, block with exact evidence.
+2. Convert/rebake T83 step750 via the validated corrected MiniMax path: MiniMax target GGUF, draft_vocab_size=32768, target vocab=200064, block_size=8, hidden=3072, target layers [2,16,30,45,59], corrected d2t-OFFSET mapping `target_id = arange(len(d2t)) + d2t`.
+3. Run fast MiniMax native-chat AL smoke: draft_max=17 first, 5 prompts <=512 output, temp=0/top_k=1. If mean >=3, add 3 fresh-prompt repeat. If clearly <2.7 after 3 prompts, stop early and report.
+4. No multipliers/extrapolations; quote measured accept_length/raw AL only.
+
+## Deliverable
+Write `/home/dnola/v18_fix/T85_T83_STEP750_MINIMAX_AL.md` and comment concise table: ckpt path, GGUF path, draft_max, per-prompt ALs, mean AL, accepted/drafted if available, verdict GOAL_REPRODUCED / NEAR_MISS / NO_IMPROVEMENT. Raw measured AL only.
+
+## Hard rules
+FAST <=1h. One actor per host. Preserve locked knobs. No spark-4. Inference/conversion only.
+
+Events (6):
+  [2026-05-29 08:17] created {'assignee': 'atlasdflash4', 'status': 'ready', 'parents': ['t_040f6b3d'], 'tenant': None, 'branch_name': None, 'skills': None}
+  [2026-05-29 08:17] [run 603] claimed {'lock': 'macmini.local:44851', 'expires': 1780068721, 'run_id': 603}
+  [2026-05-29 08:17] [run 603] spawned {'pid': 44864}
+  [2026-05-29 08:20] [run 603] heartbeat {'note': 'preflight clear on spark-2; copied T83 step750 checkpoint files from spark-3 to spark-2 over QSFP and rebaked OFFSET prep passed (32768 target rows, target layers [2,16,30,45,59]); converting to GGUF next'}
+  [2026-05-29 08:35] [run 603] claim_extended {'reason': 'pid_alive', 'worker_pid': 44864, 'claim_lock': 'macmini.local:44851', 'claim_expires_was': 1780068930, 'claim_expires_now': 1780069834, 'last_heartbeat_at': 1780068030}
+  [2026-05-29 08:50] [run 603] claim_extended {'reason': 'pid_alive', 'worker_pid': 44864, 'claim_lock': 'macmini.local:44851', 'claim_expires_was': 1780069834, 'claim_expires_now': 1780070737, 'last_heartbeat_at': 1780068030}
+
+Runs (1):
+  #603 running      @atlasdflash4  active  2026-05-29 08:17

@@ -1,0 +1,90 @@
+Task t_c277f755: T7 follow-up: single-spark kernel deep dive for v18 throughput gap (no FSDP)
+  status:    done
+  assignee:  atlasdflash2
+  workspace: scratch @ /Users/macmini/.hermes/kanban/boards/dflash-al3/workspaces/t_c277f755
+  skills:    dflash-c15-fp8-hybrid-winning-config-and-health-rules
+  max-retries: 2 (default)
+  created:   2026-05-28 12:32 by atlasdflash4
+  started:   2026-05-28 12:46
+  completed: 2026-05-28 13:37
+  parents:   t_61455e7b
+  children:  t_3e38d826, t_e15f4d73
+
+Body:
+T7 sweep artifacts are in /home/dnola/v18_throughput_audit/. Gate was <=2000ms/step (>=0.5 it/s), max_anchors=3072, block_size=8, single spark-2 only, NO FSDP.
+
+T7 result summary:
+- Best usable row: baseline no-liger workers=2/prefetch=2 at 5974.5 ms/step = 0.167 it/s.
+- Baseline is backward-bound: backward 4801.8 ms (80.4%), forward 916.1 ms, optimizer 251.1 ms, dataloader_next 0.175 ms.
+- workers=6/prefetch=8 regressed badly: 13037.0 ms mean over 46 steady rows, rc=137 before 50 steady rows.
+- Current liger_fused_linear_ce path OOMs before first AUDIT_STEP at this shape with ~72 GiB allocation; rows 4-6 are cumulative on that and also fail. compile max-autotune with Liger produced one 700.8s first step and then OOM.
+
+Artifacts to read first:
+- /home/dnola/v18_throughput_audit/sweep_summary.md
+- /home/dnola/v18_throughput_audit/sweep_summary.json
+- /home/dnola/v18_throughput_audit/optimization_candidates.json
+- /home/dnola/v18_throughput_audit/throughput_breakdown.json
+
+Job: continue single-spark optimization without changing architecture/token budget. Specifically investigate a DFlash-specific fused/streaming CE or chunked Liger replacement that avoids materializing the huge weighted CE/logit/grad_weight buffers at vocab=200064 and anchors=3072. Also test AdamW fused and compile/autotune independently from broken Liger if useful. Preserve constraints: spark-2 only, max_anchors=3072, block_size=8, hidden_size=3072, intermediate_size=4096, num_layers=6, total_seq_len=8192, draft_vocab_size=32768, no FSDP/multi-host, no batch/anchor/model shrink. Use throwaway audits only; do not touch production tmux. Block review-required with measured ms/step and exact diffs/artifacts.
+
+Latest summary:
+review-required: T7 follow-up audit complete; chunked Liger CE is numerically/compile-safe but far too slow, no row met <=2000ms gate, backward/CE-gradient remains bottleneck; see comment/artifacts.
+
+Comments (2):
+  [2026-05-28 13:23] atlasdflash2: review-required handoff:
+{
+  "summary": "Completed T7 follow-up audit on spark-2. Chunked Liger CE was made numerically equivalent and compile-safe, but measured far too slow for production; no-Liger path remains backward-bound and optimizer is not the bottleneck.",
+  "remote_artifacts": {
+    "final_summary": "/home/dnola/v18_throughput_audit/t7_followup_final_summary.md",
+    "results_json": "/home/dnola/v18_throughput_audit/t7_followup_results.json",
+    "diff": "/home/dnola/v18_throughput_audit/t7_followup_liger_chunked_ce_compile_fix.diff",
+    "logs_dir": "/home/dnola/v18_throughput_audit/followup_logs/",
+    "ckpts_dir": "/home/dnola/v18_throughput_audit/followup_ckpts/",
+    "scripts": [
+      "/home/dnola/v18_throughput_audit/t7_followup_run.sh",
+      "/home/dnola/v18_throughput_audit/t7_followup_run2.sh",
+      "/home/dnola/v18_throughput_audit/t7_followup_run3.sh",
+      "/home/dnola/v18_throughput_audit/make_t7_summary.py"
+    ]
+  },
+  "modified_remote_files": [
+    "/home/dnola/dflash-llama-c15/src/dflash_llama/training/liger_wrap.py"
+  ],
+  "backup_file": "/home/dnola/dflash-llama-c15/src/dflash_llama/training/liger_wrap.py.bak_t7_followup_20260528T195012Z",
+  "validation": [
+    "small-shape Liger full vs chunked: loss_diff=0, predicted tokens exact, hidden/lm-head grad maxdiff=0",
+    "f1 no-compile row reproduced flex_attention dense-score/OOM path, confirming compile preservation requirement",
+    "all throwaway follow-up rows finished; no remaining train.py/t7_followup process on spark-2"
+  ],
+  "measurements": {
+    "prior_baseline_no_liger_w2_p2": {"total_step_ms": 5974.5, "it_s": 0.167, "forward_ms": 916.1, "backward_ms": 4801.8, "optimizer_ms": 251.1},
+    "g1_liger_chunk2048_compiled_w2_steady": {"n": 3, "steady_n": 2, "total_mean_ms": 58425.8, "it_s": 0.017, "forward_mean_ms": 56352.3, "backward_mean_ms": 1807.4, "optimizer_mean_ms": 252.3},
+    "h1_adamw_fused_only_w2_steady": {"n": 23, "steady_n": 21, "total_mean_ms": 14554.6, "it_s": 0.069, "forward_mean_ms": 1152.1, "backward_mean_ms": 13110.0, "optimizer_mean_ms": 286.1},
+    "h2_compile_reduce_no_liger_w2_steady": {"n": 23, "steady_n": 21, "total_mean_ms": 11124.6, "it_s": 0.090, "forward_mean_ms": 1281.2, "backward_mean_ms": 9583.1, "optimizer_mean_ms": 254.7}
+  },
+  "conclusions": [
+    "Chunked Liger CE avoids the original ~72 GiB OOM and preserves @torch.compile, but Python/chunked Liger loop moves CE cost into forward and is unusably slow (~58.4 s/step steady).",
+    "No follow-up row met the <=2000 ms/step gate; best follow-up was h2 at ~11.1 s/step, slower than prior best 5.97 s/step.",
+    "Optimizer/AdamW is not the bottleneck (~250 ms/step); remaining path is backward/CE gradient dominated.",
+    "Do not deploy chunked Liger CE for speed; next target should be operator-level backward profiling and a custom/fused CE backward that avoids vocab-sized grad paths without Python chunk loops."
+  ]
+}
+  [2026-05-28 13:37] driver: driver review APPROVED: follow-up established current chunked Liger CE is correctness/compile-safe but unusably slow (58.4s/step); AdamW/compile no-Liger also regress; no ≤2000ms gate. Completing this audit and filing next Track A task for operator-level CE/backward profiling + custom fused CE backward design. T8 remains blocked until a real ≤2000ms row exists.
+
+Events (12):
+  [2026-05-28 12:32] created {'assignee': 'atlasdflash2', 'status': 'todo', 'parents': ['t_61455e7b'], 'tenant': None, 'branch_name': None, 'skills': ['dflash-c15-fp8-hybrid-winning-config-and-health-rules']}
+  [2026-05-28 12:46] promoted
+  [2026-05-28 12:46] [run 227] claimed {'lock': 'macmini.local:33401', 'expires': 1779998499, 'run_id': 227}
+  [2026-05-28 12:46] [run 227] spawned {'pid': 33404}
+  [2026-05-28 12:54] [run 227] heartbeat {'note': 'Patched throwaway dflash-llama Liger CE path to chunk over token dimension, verified small-shape chunked-vs-full Liger equality, and launched follow-up audit rows on spark-2 (chunked Liger, AdamW fused, compile no-Liger).'}
+  [2026-05-28 12:57] [run 227] heartbeat {'note': 'First chunked-Liger audit exposed a new root cause: replacing DFlash.forward with MethodType removed the original @torch.compile forward, so flex_attention warned it was materializing full scores. spark-2 SSH banner is currently timing out under that throwaway row; waiting/trying kill via SSH before patching apply_liger to compile the bound forward.'}
+  [2026-05-28 13:03] [run 227] heartbeat {'note': 'Patched Liger replacement to preserve @torch.compile semantics; follow-up compiled chunked-Liger row is running. It reached trainer epoch start and is in first-step Dynamo/Liger compilation (no AUDIT_STEP yet).'}
+  [2026-05-28 13:18] [run 227] claim_extended {'reason': 'pid_alive', 'worker_pid': 33404, 'claim_lock': 'macmini.local:33401', 'claim_expires_was': 1779999513, 'claim_expires_now': 1780000432, 'last_heartbeat_at': 1779998613}
+  [2026-05-28 13:23] commented {'author': 'atlasdflash2', 'len': 2936}
+  [2026-05-28 13:23] [run 227] blocked {'reason': 'review-required: T7 follow-up audit complete; chunked Liger CE is numerically/compile-safe but far too slow, no row met <=2000ms gate, backward/CE-gradient remains bottleneck; see comment/artifacts.'}
+  [2026-05-28 13:37] commented {'author': 'driver', 'len': 363}
+  [2026-05-28 13:37] completed {'result_len': 0, 'summary': None}
+
+Runs (1):
+  #227 blocked      @atlasdflash2  2235s  2026-05-28 12:46
+        → review-required: T7 follow-up audit complete; chunked Liger CE is numerically/compile-safe but far too slow, no row met <=2000ms gate, backward/CE-gradient rema
