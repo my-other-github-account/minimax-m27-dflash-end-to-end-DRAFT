@@ -28,7 +28,7 @@ from .gguf_export import (
     FP8_TOKENIZER_HASH,
 )
 from .server import LlamaServer
-from .benchmark import benchmark, DEFAULT_PROMPT
+from .benchmark import benchmark, benchmark_ar_vs_dflash, DEFAULT_PROMPT, DEFAULT_PROMPT_SUITE
 from .analyze import (
     SpeculativeReport,
     parse_speculative_log,
@@ -49,7 +49,9 @@ __all__ = [
     "LlamaServer",
     # Benchmark + report
     "benchmark",
+    "benchmark_ar_vs_dflash",
     "DEFAULT_PROMPT",
+    "DEFAULT_PROMPT_SUITE",
     "SpeculativeReport",
     "parse_speculative_log",
     "chain_pred_from_val",

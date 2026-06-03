@@ -4,11 +4,13 @@ SpeculativeReport with per-position + chain-cumulative accept rates.
 Public surface::
 
     benchmark(verifier_gguf, drafter_gguf, *, ...) -> SpeculativeReport
+    benchmark_ar_vs_dflash(verifier_gguf, drafter_gguf, *, prompts=...) -> list[dict]
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -162,7 +164,10 @@ def benchmark(
             binary,
             "-m", verifier_gguf,
             "-md", drafter_gguf,
-            "--spec-type", "dflash",
+            # PR #22105's llama.cpp-dflash uses bare --dflash; --spec-type is for
+            # upstream's draft-mode merge that has different semantics. If your
+            # binary is from a different lineage, override via extra_args.
+            "--dflash",
             "--draft-max", str(dmax),
             "-p", prompt,
             "-n", str(n_tokens),
@@ -208,4 +213,255 @@ def benchmark(
     return report
 
 
-__all__ = ["benchmark", "DEFAULT_PROMPT", "DEFAULT_BINARY"]
+# ---------------------------------------------------------------------------
+# AR-vs-DFlash apples-to-apples benchmark (multi-prompt suite)
+# ---------------------------------------------------------------------------
+
+# 8-prompt entropy-spectrum suite (validated on Kimi-K2.5 and MiniMax-M2.7).
+# Stable order; spans low→high output entropy.
+DEFAULT_PROMPT_SUITE = {
+    "pythag":    "Explain the Pythagorean theorem in one paragraph.",
+    "code_fib":  "Write a Python function to compute the nth Fibonacci number, memoized.",
+    "code_sort": "Implement quicksort in Rust with generics.",
+    "chain":     ("A farmer has 12 chickens and 8 cows. Each chicken lays 2 eggs per day. "
+                  "How many eggs in 30 days? Show work."),
+    "summary":   "Summarize the plot of Shakespeare's Hamlet in exactly 5 bullet points.",
+    "creative":  "Write the opening 150 words of a cyberpunk noir story set on Titan.",
+    "factual":   "List 10 notable open-weight LLMs released in 2024, with one sentence each.",
+    "translate": ("Translate this to formal French: 'Speculative decoding is a technique "
+                  "for accelerating inference...'"),
+}
+
+
+def _resolve_completion_binary(binary: Optional[str | Path], dflash_binary: str) -> str:
+    """Find llama-completion sibling of the dflash speculative binary."""
+    if binary:
+        return str(binary)
+    sibling = Path(dflash_binary).parent / "llama-completion"
+    if sibling.exists():
+        return str(sibling)
+    cli = shutil.which("llama-completion")
+    if cli:
+        return cli
+    raise FileNotFoundError(
+        "llama-completion not found. Pass ar_binary= explicitly. "
+        "(Newer llama.cpp builds rename llama-cli for non-conversation use.)"
+    )
+
+
+def benchmark_ar_vs_dflash(
+    verifier_gguf: str | Path,
+    drafter_gguf: str | Path,
+    *,
+    prompts: Optional[dict[str, str]] = None,
+    draft_max: int = 16,
+    n_tokens: int = 256,
+    ctx: int = 4096,
+    temperature: float = 0.0,
+    n_gpu_layers: int = 99,
+    n_gpu_layers_draft: int = 99,
+    override_tensor: Optional[str] = "exps=CPU",
+    draft_device: Optional[str] = "CUDA0",
+    flash_attn: bool = True,
+    seed: int = 42,
+    dflash_binary: Optional[str | Path] = None,
+    ar_binary: Optional[str | Path] = None,
+    log_dir: str | Path = "/tmp/dflash_ar_vs_dflash",
+    warmup: bool = True,
+    progress: bool = True,
+) -> list[dict]:
+    """Run AR baseline vs DFlash across a prompt suite and return per-prompt results.
+
+    AR baseline uses ``llama-completion`` (not ``llama-cli`` — that's deprecated for
+    one-shot in newer builds; see speculative-decode-benchmark-sweep skill Trap 3).
+    DFlash uses ``llama-speculative-simple --dflash``.
+
+    Both runs share verifier GGUF, ngl, ctx, n_tokens, temperature, top_k=1, seed —
+    the cleanest apples-to-apples comparison the skill recommends.
+
+    Parameters
+    ----------
+    verifier_gguf, drafter_gguf : path
+        Target + draft GGUFs.
+    prompts : dict[str, str], optional
+        Prompt name → prompt text. Default: ``DEFAULT_PROMPT_SUITE`` (8 prompts
+        spanning the entropy spectrum).
+    draft_max : int
+        DFlash --draft-max.
+    n_tokens : int
+        --n (tokens to generate per prompt per mode).
+    ctx, temperature, n_gpu_layers, n_gpu_layers_draft, override_tensor,
+    draft_device, flash_attn, seed : llama.cpp args (see binary --help).
+    dflash_binary : path
+        ``llama-speculative-simple`` binary. Default: spark cluster's
+        ``/home/dnola/llama.cpp-dflash/build/bin/llama-speculative-simple``,
+        else PATH.
+    ar_binary : path
+        ``llama-completion`` binary. Default: same dir as dflash_binary,
+        else PATH.
+    log_dir : path
+        Per-prompt logs land here.
+    warmup : bool
+        Run a small AR pass first to page-cache the verifier (avoids paying
+        cold mmap cost on the first measured prompt).
+    progress : bool
+        Show a tqdm bar across prompts.
+
+    Returns
+    -------
+    list of dicts, one per prompt::
+
+        {
+          "name": "pythag",
+          "prompt": "...",
+          "ar": {"decode_tps": 4.32, "wall_clock_sec": 65.1, "log_path": "..."},
+          "dflash": {"decode_tps": 4.81, "n_drafted": 469, "n_accept": 192,
+                     "accept_pct": 40.94, "wall_clock_sec": 98.3,
+                     "rej_per_pos": [...], "all_ok": 5, "log_path": "..."},
+          "speedup": 1.113,            # dflash / ar
+        }
+    """
+    dflash_binary = _resolve_binary(dflash_binary)
+    ar_binary = _resolve_completion_binary(ar_binary, dflash_binary)
+    verifier_gguf = str(verifier_gguf)
+    drafter_gguf = str(drafter_gguf)
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if prompts is None:
+        prompts = DEFAULT_PROMPT_SUITE
+
+    common = [
+        "-ngl", str(n_gpu_layers),
+        "-c", str(ctx),
+        "-n", str(n_tokens),
+        "--temp", str(temperature),
+        "--top-k", "1",
+        "--seed", str(seed),
+    ]
+    if flash_attn:
+        common += ["-fa", "on"]
+    if override_tensor:
+        common += ["-ot", override_tensor]
+
+    def _run(cmd: list[str], log_path: Path) -> float:
+        t0 = time.time()
+        with open(log_path, "w") as f:
+            f.write(f"=== cmd: {' '.join(cmd)}\n")
+            f.flush()
+            proc = subprocess.run(
+                cmd, stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
+            )
+        dt = time.time() - t0
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Run failed rc={proc.returncode}; see {log_path}"
+            )
+        return dt
+
+    # Warmup (page-cache the verifier shards)
+    if warmup:
+        warmup_prompt = log_dir / "warmup_prompt.txt"
+        warmup_prompt.write_text("warmup probe")
+        _run(
+            [ar_binary, "-m", verifier_gguf, *common, "-no-cnv",
+             "-f", str(warmup_prompt)],
+            log_dir / "warmup.log",
+        )
+
+    # Iterate prompts
+    items = list(prompts.items())
+    if progress:
+        try:
+            from tqdm.auto import tqdm
+            items = tqdm(items, desc="ar_vs_dflash", unit="prompt")
+        except ImportError:
+            pass
+
+    _AR_DECODE_RE = re.compile(
+        r"\beval time =\s+([\d.]+)\s+ms /\s+(\d+)\s+runs"
+    )
+
+    def _parse_ar_decode_tps(log_path: Path) -> Optional[float]:
+        """Parse decode t/s from llama-completion log. Returns None if not found."""
+        try:
+            text = log_path.read_text()
+        except Exception:
+            return None
+        # Prefer common_perf_print line (matches what llama-completion emits)
+        for m in _AR_DECODE_RE.finditer(text):
+            ms = float(m.group(1))
+            n = int(m.group(2))
+            if n > 1 and ms > 0:
+                return n / (ms / 1000.0)
+        return None
+
+    results: list[dict] = []
+    for name, prompt in items:
+        prompt_path = log_dir / f"{name}_prompt.txt"
+        prompt_path.write_text(prompt)
+
+        # AR (llama-completion)
+        ar_log = log_dir / f"{name}_ar.log"
+        ar_dt = _run(
+            [ar_binary, "-m", verifier_gguf, *common, "-no-cnv",
+             "-f", str(prompt_path)],
+            ar_log,
+        )
+        ar_decode = _parse_ar_decode_tps(ar_log)
+
+        # DFlash (llama-speculative-simple --dflash)
+        dflash_cmd = [
+            dflash_binary,
+            "-m", verifier_gguf,
+            "-md", drafter_gguf,
+            "--dflash", "--draft-max", str(draft_max),
+            "-ngld", str(n_gpu_layers_draft),
+            *common,
+            "-f", str(prompt_path),
+        ]
+        if draft_device:
+            dflash_cmd += ["-devd", draft_device]
+        dflash_log = log_dir / f"{name}_dflash.log"
+        df_dt = _run(dflash_cmd, dflash_log)
+
+        df_parsed = parse_speculative_log(dflash_log)
+        df_decode = None
+        # parse_speculative_log might give us throughput; if not, parse from same regex
+        df_decode = _parse_ar_decode_tps(dflash_log) or df_parsed.get("decode_tps")
+
+        speedup = (df_decode / ar_decode) if (ar_decode and df_decode) else None
+        results.append({
+            "name": name,
+            "prompt": prompt,
+            "ar": {
+                "decode_tps": ar_decode,
+                "wall_clock_sec": ar_dt,
+                "log_path": str(ar_log),
+            },
+            "dflash": {
+                "decode_tps": df_decode,
+                "n_drafted": df_parsed.get("n_drafted"),
+                "n_accept": df_parsed.get("n_accept"),
+                "accept_pct": (
+                    100.0 * df_parsed["n_accept"] / df_parsed["n_drafted"]
+                    if df_parsed.get("n_drafted") else None
+                ),
+                "wall_clock_sec": df_dt,
+                "rej_per_pos": df_parsed.get("rej"),
+                "all_ok": df_parsed.get("all_ok"),
+                "log_path": str(dflash_log),
+            },
+            "speedup": speedup,
+        })
+
+    return results
+
+
+__all__ = [
+    "benchmark",
+    "benchmark_ar_vs_dflash",
+    "DEFAULT_PROMPT",
+    "DEFAULT_PROMPT_SUITE",
+    "DEFAULT_BINARY",
+]

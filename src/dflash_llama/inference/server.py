@@ -159,7 +159,16 @@ class LlamaServer:
                 "--draft-max", str(self.draft_max),
                 "-ngld", str(self.n_gpu_layers_draft),
             ]
-            if self.spec_type:
+            if self.spec_type == "dflash":
+                # NOTE: in PR #22105's llama.cpp-dflash build, only
+                # llama-speculative-simple supports --dflash; llama-server
+                # does NOT. Speculative decoding via the OpenAI-compatible
+                # server falls back to upstream draft-mode (--spec-type draft)
+                # which uses target-vocab argmax sampling — not the DFlash
+                # diffusion-decoder code path. For real DFlash benchmarks,
+                # use benchmark_ar_vs_dflash() / llama-speculative-simple.
+                cmd += ["--spec-type", "draft"]
+            elif self.spec_type:
                 cmd += ["--spec-type", self.spec_type]
             if self.draft_device:
                 cmd += ["-devd", self.draft_device]

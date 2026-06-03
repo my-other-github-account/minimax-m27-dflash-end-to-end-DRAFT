@@ -100,7 +100,24 @@ def prep_for_buun_converter(
                 ok = "OK" if t_true == draft_vocab else "MISMATCH"
                 log(f"  t2d.sum() = {t_true} (expected {draft_vocab}: {ok})")
 
-            target_ids = torch.arange(draft_vocab, dtype=torch.long) + d2t.to(torch.long)
+            # Auto-detect d2t encoding: speculators-format trainers may store either
+            # OFFSETS (target_id = i + d2t[i], typical of older runs) or ABSOLUTE
+            # token ids (target_id = d2t[i], observed in newer runs e.g. v11+).
+            d2t_long = d2t.to(torch.long)
+            offset_ids = torch.arange(draft_vocab, dtype=torch.long) + d2t_long
+            absolute_ids = d2t_long
+            if 0 <= int(offset_ids.min()) and int(offset_ids.max()) < target_vocab:
+                log("  d2t encoding = OFFSET (target_id = i + d2t[i])")
+                target_ids = offset_ids
+            elif 0 <= int(absolute_ids.min()) and int(absolute_ids.max()) < target_vocab:
+                log("  d2t encoding = ABSOLUTE (target_id = d2t[i])")
+                target_ids = absolute_ids
+            else:
+                raise AssertionError(
+                    f"d2t neither valid offsets ({int(offset_ids.min())}..{int(offset_ids.max())}) "
+                    f"nor valid absolute ids ({int(absolute_ids.min())}..{int(absolute_ids.max())}) "
+                    f"for target_vocab={target_vocab}"
+                )
             assert target_ids.min() >= 0, f"negative target id {target_ids.min()}"
             assert target_ids.max() < target_vocab, (
                 f"target_id {target_ids.max()} >= vocab {target_vocab}"
