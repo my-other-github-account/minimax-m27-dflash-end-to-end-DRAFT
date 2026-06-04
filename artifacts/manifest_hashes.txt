@@ -1,0 +1,18 @@
+=== target shard 00001 ===
+019759eeec4be4931592eeefbd54d2ba  /home/<USER>/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf
+-rw-rw-r-- 1 dnola dnola 7.9M Apr 28 05:07 /home/<USER>/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00001-of-00004.gguf
+-rw-rw-r-- 1 dnola dnola  47G Apr 28 05:23 /home/<USER>/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00002-of-00004.gguf
+-rw-rw-r-- 1 dnola dnola  47G Apr 28 05:23 /home/<USER>/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00003-of-00004.gguf
+-rw-rw-r-- 1 dnola dnola 8.6G Apr 28 05:12 /home/<USER>/models/MiniMax-M2.7-GGUF/UD-IQ4_XS/MiniMax-M2.7-UD-IQ4_XS-00004-of-00004.gguf
+=== drafter md5 ===
+924758ef130170f01271b413154d626c  /home/<USER>/t_5567a42d/golden_step_00020000/model.safetensors
+30c27f646590b562608774bee82d2108  /home/<USER>/t_5567a42d/golden_step_00020000/model_lucebox_layout.safetensors
+cc1af41d15ce13b4568fcca2cc07e01e  /home/<USER>/t_5567a42d/golden_step_00020000/config.json
+9a907f2605b2fb9e4b2d011645c13d94  /home/<USER>/t_5567a42d/golden_step_00020000/config.py
+=== source fingerprints ===
+96f117ebcb2cd85dfba2aa83907ea835  src/qwen35/qwen35_backend.cpp.pre-draftpos-t_1da1242d
+e4c84ae816926dc7ec45ca0d6a177a61  src/common/dflash_spec_decode.cpp.pre-draftmaskfix-t_d81951a4
+8d5a88e2fc5f6ab6602ea4a723fb855e  src/draft/draft_graph.cpp.pre-draftmaskfix-t_d81951a4
+6070f39b7d37955d9f7b4122416f43de  src/draft/draft_graph.h.pre-draftmaskfix-t_d81951a4
+a0ee144266c1c8ca3c52961c18263f1e  src/common/step_graph.h.pre-draftmaskfix-t_d81951a4
+3484b2cee124c206a2c90e2c061076ce  src/common/dflash_draft_graph.cpp.pre-draftmaskfix-t_d81951a4

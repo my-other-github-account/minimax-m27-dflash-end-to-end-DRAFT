@@ -1,0 +1,74 @@
+--- a/server/src/common/dflash_draft_graph.cpp
++++ b/server/src/common/dflash_draft_graph.cpp
+@@ -71,19 +71,12 @@
+     ggml_set_name(sg.positions_k, "positions_k");
+     ggml_set_input(sg.positions_k);
+ 
+-    // Block-causal masks. Full layers need a full-context mask (ctx_len+q_len);
+-    // SWA layers, if present, use a windowed-context mask. Both share the same
+-    // within-block rule: context keys visible, synthetic/noise key j visible iff j <= q.
+-    sg.attn_mask_full = nullptr;
++    // Causal mask for SWA layers (if any).
++    // Shape: [kv_pad, q_len] F16 (directly, no cast needed — matches attn_masks.h pattern).
+     sg.attn_mask = nullptr;
+-    const int full_total_k = ctx_len + q_len;
+-    const int full_kv_pad = mask_align_up(full_total_k, MASK_KV_PAD);
+-    sg.attn_mask_full = ggml_new_tensor_2d(sg.ctx, GGML_TYPE_F16, full_kv_pad, q_len);
+-    ggml_set_name(sg.attn_mask_full, "causal_mask_full");
+-    ggml_set_input(sg.attn_mask_full);
+-
+     const bool has_swa = draft_has_swa_layers(dw);
+     if (has_swa) {
++        // SWA layers' effective KV length (windowed or full ctx)
+         const bool swa_active = dw.swa_window > 0 && ctx_len > dw.swa_window;
+         const int eff_ctx = swa_active ? dw.swa_window : ctx_len;
+         const int eff_total_k = eff_ctx + q_len;
+@@ -102,7 +95,6 @@
+     gi.positions_q       = sg.positions;
+     gi.positions_k       = sg.positions_k;
+     gi.lm_head           = lm_head;
+-    gi.causal_mask_full  = sg.attn_mask_full;
+     gi.causal_mask_swa   = sg.attn_mask;
+     DraftGraphOutputs go = build_draft_graph(sg.ctx, dw, gi);
+     sg.hidden_states = go.hidden_states;
+@@ -168,14 +160,19 @@
+         return false;
+     }
+ 
+-    // Fill block-causal mask data after allocation gives memory to the tensors.
+-    const int q_len = dw.block_size;
+-    static constexpr uint16_t ZERO = 0x0000;
+-    static constexpr uint16_t NEG_INF = 0xFC00;
+-    auto fill_block_causal_mask = [&](ggml_tensor * mask, int eff_ctx) {
+-        if (!mask) return;
++    // Fill causal mask data for SWA layers (after allocation gives memory to the tensor).
++    if (sg.attn_mask) {
++        const int q_len = dw.block_size;
++        const bool swa_active = dw.swa_window > 0 && ctx_len > dw.swa_window;
++        const int eff_ctx = swa_active ? dw.swa_window : ctx_len;
+         const int eff_total_k = eff_ctx + q_len;
+         const int kv_pad = mask_align_up(eff_total_k, MASK_KV_PAD);
++
++        // Build causal mask in F16 directly (same pattern as attn_masks.h):
++        // Context keys (k < eff_ctx): always visible.
++        // Noise keys (k = eff_ctx + j): visible if j <= q (causal).
++        static constexpr uint16_t ZERO = 0x0000;
++        static constexpr uint16_t NEG_INF = 0xFC00;
+         std::vector<uint16_t> mask_data((size_t)kv_pad * q_len, NEG_INF);
+         for (int q = 0; q < q_len; q++) {
+             for (int k = 0; k < eff_ctx; k++)
+@@ -183,13 +180,8 @@
+             for (int j = 0; j <= q; j++)
+                 mask_data[(size_t)q * kv_pad + (eff_ctx + j)] = ZERO;
+         }
+-        ggml_backend_tensor_set(mask, mask_data.data(), 0,
++        ggml_backend_tensor_set(sg.attn_mask, mask_data.data(), 0,
+                                 sizeof(uint16_t) * mask_data.size());
+-    };
+-    fill_block_causal_mask(sg.attn_mask_full, ctx_len);
+-    if (sg.attn_mask) {
+-        const bool swa_active = dw.swa_window > 0 && ctx_len > dw.swa_window;
+-        fill_block_causal_mask(sg.attn_mask, swa_active ? dw.swa_window : ctx_len);
+     }
+ 
+     return true;

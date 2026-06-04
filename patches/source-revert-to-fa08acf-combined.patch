@@ -1,0 +1,194 @@
+--- a/server/src/qwen35/qwen35_backend.cpp
++++ b/server/src/qwen35/qwen35_backend.cpp
+@@ -1339,28 +1339,11 @@
+                                     sizeof(float) * noise_embed.size());
+             pos_k.resize((size_t)draft_ctx + q_len);
+             for (int i = 0; i < q_len; i++) pos_q[i] = draft_ctx + i;
+-            for (int i = 0; i < draft_ctx; i++) pos_k[i] = i + 1;
+-            for (int i = 0; i < q_len; i++) pos_k[draft_ctx + i] = draft_ctx + i;
++            for (int i = 0; i < draft_ctx + q_len; i++) pos_k[i] = i;
+             ggml_backend_tensor_set(draft_sg.positions, pos_q.data(), 0,
+                                     sizeof(int32_t) * pos_q.size());
+             ggml_backend_tensor_set(draft_sg.positions_k, pos_k.data(), 0,
+                                     sizeof(int32_t) * pos_k.size());
+-            if (std::getenv("DFLASH_DRAFTATTN_PROBE") && (n_draft_steps == 0 || n_draft_steps == 3)) {
+-                std::fprintf(stderr,
+-                    "[draftattn-probe] step=%d committed=%d draft_ctx=%d q_len=%d pos_q_first=%d pos_q_last=%d pos_k_base_first=%d pos_k_base_last=%d pos_k_noise_first=%d pos_k_noise_last=%d zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n",
+-                    n_draft_steps, committed, draft_ctx, q_len,
+-                    pos_q.empty() ? -1 : pos_q.front(), pos_q.empty() ? -1 : pos_q.back(),
+-                    pos_k.empty() ? -1 : pos_k.front(), draft_ctx > 0 ? pos_k[(size_t)draft_ctx - 1] : -1,
+-                    (int)pos_k[(size_t)draft_ctx], pos_k.empty() ? -1 : pos_k.back());
+-                for (int il = 0; il < dw_.n_layer; il++) {
+-                    const bool is_swa = dw_.layers[(size_t)il].is_swa;
+-                    const char * mask_kind = is_swa ? (draft_sg.attn_mask ? "causal_mask_swa" : "nullptr") : (draft_sg.attn_mask_full ? "causal_mask_full" : "nullptr");
+-                    std::fprintf(stderr,
+-                        "[draftmask-probe] step=%d layer=%d kind=%s actual_mask=%s visible_keys=%s\n",
+-                        n_draft_steps, il, is_swa ? "swa" : "full", mask_kind,
+-                        is_swa ? "swa-window context + noise j<=q" : (draft_sg.attn_mask_full ? "full context + noise j<=q" : "ALL_KEYS (nullptr => future noise visible)"));
+-                }
+-            }
+ 
+             auto st = ggml_backend_graph_compute(draft_backend_, draft_sg.gf);
+             if (st != GGML_STATUS_SUCCESS) {
+
+--- a/server/src/common/dflash_spec_decode.cpp
++++ b/server/src/common/dflash_spec_decode.cpp
+@@ -136,8 +136,7 @@
+                                     sizeof(float) * noise_embed.size());
+             pos_k.resize((size_t)draft_ctx + q_len);
+             for (int i = 0; i < q_len; i++) pos_q[i] = draft_ctx + i;
+-            for (int i = 0; i < draft_ctx; i++) pos_k[i] = i + 1;
+-            for (int i = 0; i < q_len; i++) pos_k[draft_ctx + i] = draft_ctx + i;
++            for (int i = 0; i < draft_ctx + q_len; i++) pos_k[i] = i;
+             ggml_backend_tensor_set(draft_sg.positions, pos_q.data(), 0,
+                                     sizeof(int32_t) * pos_q.size());
+             ggml_backend_tensor_set(draft_sg.positions_k, pos_k.data(), 0,
+@@ -148,14 +147,14 @@
+                 std::fprintf(stderr,
+                     "[draftmask-probe] step=%d committed=%d draft_ctx=%d q_len=%d visible_full={ctx:0..%d,noise:j<=q} visible_swa={ctx:%d..%d,noise:j<=q} mask_tensor=%s\n",
+                     n_draft_steps, committed, draft_ctx, q_len, draft_ctx - 1,
+-                    draft_ctx - eff_ctx_swa, draft_ctx - 1, draft_sg.attn_mask_full ? "causal_mask_full" : "nullptr");
++                    draft_ctx - eff_ctx_swa, draft_ctx - 1, draft_sg.attn_mask ? "causal_mask_swa" : "nullptr");
+                 for (int il = 0; il < draft_weights.n_layer; il++) {
+                     const bool is_swa = draft_weights.layers[(size_t)il].is_swa;
+-                    const char * mask_kind = is_swa ? (draft_sg.attn_mask ? "causal_mask_swa" : "nullptr") : (draft_sg.attn_mask_full ? "causal_mask_full" : "nullptr");
++                    const char * mask_kind = (is_swa && draft_sg.attn_mask) ? "causal_mask_swa" : "nullptr";
+                     std::fprintf(stderr,
+                         "[draftmask-probe] step=%d layer=%d kind=%s actual_mask=%s visible_keys=%s\n",
+                         n_draft_steps, il, is_swa ? "swa" : "full", mask_kind,
+-                        is_swa ? "swa-window context + noise j<=q" : (draft_sg.attn_mask_full ? "full context + noise j<=q" : "ALL_KEYS (nullptr => future noise visible)"));
++                        is_swa ? "swa-window context + noise j<=q" : "ALL_KEYS (nullptr => future noise visible)");
+                 }
+             }
+             auto st = ggml_backend_graph_compute(draft_backend, draft_sg.gf);
+
+--- a/server/src/draft/draft_graph.cpp
++++ b/server/src/draft/draft_graph.cpp
+@@ -135,11 +135,9 @@
+         V = ggml_permute(ctx, V, 0, 2, 1, 3);  // [head_dim, eff_total_k,  n_kv,   1]
+         V = ggml_cont   (ctx, V);
+ 
+-        // ── 2f. Attention: SWA layers use the SWA-window block-causal mask;
+-        // full layers use the full-context block-causal mask so later draft/noise
+-        // positions cannot attend to future synthetic positions.
++        // ── 2f. Attention: causal for SWA layers, non-causal for full layers.
+         const float scale = 1.0f / std::sqrt((float)head_dim);
+-        ggml_tensor * mask = L.is_swa ? in.causal_mask_swa : in.causal_mask_full;
++        ggml_tensor * mask = (L.is_swa && in.causal_mask_swa) ? in.causal_mask_swa : nullptr;
+         ggml_tensor * attn = ggml_flash_attn_ext(ctx, Q, K, V, mask,
+                                                  scale, /*max_bias=*/0.0f,
+                                                  /*logit_softcap=*/0.0f);
+
+--- a/server/src/draft/draft_graph.h
++++ b/server/src/draft/draft_graph.h
+@@ -18,10 +18,8 @@
+     // hidden states. Used for DFlash integration where the draft shares the
+     // target's lm_head.
+     ggml_tensor * lm_head;
+-    // Optional: block-causal mask for full layers [kv_pad_full, q_len] F16.
+-    // Context keys are visible; synthetic/noise keys are causal within the block.
+-    ggml_tensor * causal_mask_full = nullptr;
+-    // Optional: causal mask for SWA layers [kv_pad_swa, q_len] F16.
++    // Optional: causal mask for SWA layers [kv_pad, q_len] F16.
++    // nullptr = all layers non-causal.
+     ggml_tensor * causal_mask_swa = nullptr;
+ };
+ 
+
+--- a/server/src/common/step_graph.h
++++ b/server/src/common/step_graph.h
+@@ -28,8 +28,7 @@
+     // Named inputs
+     ggml_tensor *   inp_embed = nullptr;
+     ggml_tensor *   positions = nullptr;
+-    ggml_tensor *   attn_mask = nullptr;     // SWA causal mask; may be null
+-    ggml_tensor *   attn_mask_full = nullptr; // full-layer block-causal mask; may be null
++    ggml_tensor *   attn_mask = nullptr;     // may be null
+     ggml_tensor *   parent_ids = nullptr;    // DDTree tree-mode; null for chain mode
+     ggml_tensor *   target_hidden_cat = nullptr;  // draft only
+     ggml_tensor *   positions_k = nullptr;        // draft only
+@@ -54,7 +53,7 @@
+ inline void step_graph_free(StepGraph & sg) {
+     if (sg.ctx)   { ggml_free(sg.ctx); sg.ctx = nullptr; }
+     sg.gf = nullptr;
+-    sg.inp_embed = sg.positions = sg.attn_mask = sg.attn_mask_full = nullptr;
++    sg.inp_embed = sg.positions = sg.attn_mask = nullptr;
+     sg.target_hidden_cat = sg.positions_k = nullptr;
+     sg.hidden_input = nullptr;
+     sg.parent_ids = nullptr;
+
+--- a/server/src/common/dflash_draft_graph.cpp
++++ b/server/src/common/dflash_draft_graph.cpp
+@@ -71,19 +71,12 @@
+     ggml_set_name(sg.positions_k, "positions_k");
+     ggml_set_input(sg.positions_k);
+ 
+-    // Block-causal masks. Full layers need a full-context mask (ctx_len+q_len);
+-    // SWA layers, if present, use a windowed-context mask. Both share the same
+-    // within-block rule: context keys visible, synthetic/noise key j visible iff j <= q.
+-    sg.attn_mask_full = nullptr;
++    // Causal mask for SWA layers (if any).
++    // Shape: [kv_pad, q_len] F16 (directly, no cast needed — matches attn_masks.h pattern).
+     sg.attn_mask = nullptr;
+-    const int full_total_k = ctx_len + q_len;
+-    const int full_kv_pad = mask_align_up(full_total_k, MASK_KV_PAD);
+-    sg.attn_mask_full = ggml_new_tensor_2d(sg.ctx, GGML_TYPE_F16, full_kv_pad, q_len);
+-    ggml_set_name(sg.attn_mask_full, "causal_mask_full");
+-    ggml_set_input(sg.attn_mask_full);
+-
+     const bool has_swa = draft_has_swa_layers(dw);
+     if (has_swa) {
++        // SWA layers' effective KV length (windowed or full ctx)
+         const bool swa_active = dw.swa_window > 0 && ctx_len > dw.swa_window;
+         const int eff_ctx = swa_active ? dw.swa_window : ctx_len;
+         const int eff_total_k = eff_ctx + q_len;
+@@ -102,7 +95,6 @@
+     gi.positions_q       = sg.positions;
+     gi.positions_k       = sg.positions_k;
+     gi.lm_head           = lm_head;
+-    gi.causal_mask_full  = sg.attn_mask_full;
+     gi.causal_mask_swa   = sg.attn_mask;
+     DraftGraphOutputs go = build_draft_graph(sg.ctx, dw, gi);
+     sg.hidden_states = go.hidden_states;
+@@ -168,14 +160,19 @@
+         return false;
+     }
+ 
+-    // Fill block-causal mask data after allocation gives memory to the tensors.
+-    const int q_len = dw.block_size;
+-    static constexpr uint16_t ZERO = 0x0000;
+-    static constexpr uint16_t NEG_INF = 0xFC00;
+-    auto fill_block_causal_mask = [&](ggml_tensor * mask, int eff_ctx) {
+-        if (!mask) return;
++    // Fill causal mask data for SWA layers (after allocation gives memory to the tensor).
++    if (sg.attn_mask) {
++        const int q_len = dw.block_size;
++        const bool swa_active = dw.swa_window > 0 && ctx_len > dw.swa_window;
++        const int eff_ctx = swa_active ? dw.swa_window : ctx_len;
+         const int eff_total_k = eff_ctx + q_len;
+         const int kv_pad = mask_align_up(eff_total_k, MASK_KV_PAD);
++
++        // Build causal mask in F16 directly (same pattern as attn_masks.h):
++        // Context keys (k < eff_ctx): always visible.
++        // Noise keys (k = eff_ctx + j): visible if j <= q (causal).
++        static constexpr uint16_t ZERO = 0x0000;
++        static constexpr uint16_t NEG_INF = 0xFC00;
+         std::vector<uint16_t> mask_data((size_t)kv_pad * q_len, NEG_INF);
+         for (int q = 0; q < q_len; q++) {
+             for (int k = 0; k < eff_ctx; k++)
+@@ -183,13 +180,8 @@
+             for (int j = 0; j <= q; j++)
+                 mask_data[(size_t)q * kv_pad + (eff_ctx + j)] = ZERO;
+         }
+-        ggml_backend_tensor_set(mask, mask_data.data(), 0,
++        ggml_backend_tensor_set(sg.attn_mask, mask_data.data(), 0,
+                                 sizeof(uint16_t) * mask_data.size());
+-    };
+-    fill_block_causal_mask(sg.attn_mask_full, ctx_len);
+-    if (sg.attn_mask) {
+-        const bool swa_active = dw.swa_window > 0 && ctx_len > dw.swa_window;
+-        fill_block_causal_mask(sg.attn_mask, swa_active ? dw.swa_window : ctx_len);
+     }
+ 
+     return true;
+

@@ -1,0 +1,32 @@
+--- a/server/src/qwen35/qwen35_backend.cpp
++++ b/server/src/qwen35/qwen35_backend.cpp
+@@ -1339,28 +1339,11 @@
+                                     sizeof(float) * noise_embed.size());
+             pos_k.resize((size_t)draft_ctx + q_len);
+             for (int i = 0; i < q_len; i++) pos_q[i] = draft_ctx + i;
+-            for (int i = 0; i < draft_ctx; i++) pos_k[i] = i + 1;
+-            for (int i = 0; i < q_len; i++) pos_k[draft_ctx + i] = draft_ctx + i;
++            for (int i = 0; i < draft_ctx + q_len; i++) pos_k[i] = i;
+             ggml_backend_tensor_set(draft_sg.positions, pos_q.data(), 0,
+                                     sizeof(int32_t) * pos_q.size());
+             ggml_backend_tensor_set(draft_sg.positions_k, pos_k.data(), 0,
+                                     sizeof(int32_t) * pos_k.size());
+-            if (std::getenv("DFLASH_DRAFTATTN_PROBE") && (n_draft_steps == 0 || n_draft_steps == 3)) {
+-                std::fprintf(stderr,
+-                    "[draftattn-probe] step=%d committed=%d draft_ctx=%d q_len=%d pos_q_first=%d pos_q_last=%d pos_k_base_first=%d pos_k_base_last=%d pos_k_noise_first=%d pos_k_noise_last=%d zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n",
+-                    n_draft_steps, committed, draft_ctx, q_len,
+-                    pos_q.empty() ? -1 : pos_q.front(), pos_q.empty() ? -1 : pos_q.back(),
+-                    pos_k.empty() ? -1 : pos_k.front(), draft_ctx > 0 ? pos_k[(size_t)draft_ctx - 1] : -1,
+-                    (int)pos_k[(size_t)draft_ctx], pos_k.empty() ? -1 : pos_k.back());
+-                for (int il = 0; il < dw_.n_layer; il++) {
+-                    const bool is_swa = dw_.layers[(size_t)il].is_swa;
+-                    const char * mask_kind = is_swa ? (draft_sg.attn_mask ? "causal_mask_swa" : "nullptr") : (draft_sg.attn_mask_full ? "causal_mask_full" : "nullptr");
+-                    std::fprintf(stderr,
+-                        "[draftmask-probe] step=%d layer=%d kind=%s actual_mask=%s visible_keys=%s\n",
+-                        n_draft_steps, il, is_swa ? "swa" : "full", mask_kind,
+-                        is_swa ? "swa-window context + noise j<=q" : (draft_sg.attn_mask_full ? "full context + noise j<=q" : "ALL_KEYS (nullptr => future noise visible)"));
+-                }
+-            }
+ 
+             auto st = ggml_backend_graph_compute(draft_backend_, draft_sg.gf);
+             if (st != GGML_STATUS_SUCCESS) {

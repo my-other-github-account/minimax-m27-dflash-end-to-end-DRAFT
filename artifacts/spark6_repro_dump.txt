@@ -1,0 +1,46 @@
+{
+  "tag": "repro6",
+  "model": "minimax-luce-golden-repro6",
+  "n_prompts": 7,
+  "total_tokens": 448,
+  "total_steps": 127,
+  "AL_true_mean_commit": 3.52755905511811,
+  "accepted": 326,
+  "draft_total": 1016,
+  "accept_rate": 0.32086614173228345,
+  "per_pos_argmax_match_weighted_p1_p7": [
+    0.6771653464566929,
+    0.5039369921259843,
+    0.35433083464566933,
+    0.19685030708661416,
+    0.22834636220472443,
+    0.21259853543307086,
+    0.17322849606299215
+  ],
+  "per_pos_prefix_accept_weighted_p1_p7": [
+    0.6771653464566929,
+    0.46456685826771654,
+    0.2598424566929134,
+    0.1259842283464567,
+    0.07874012598425197,
+    0.015748023622047243,
+    0.0
+  ]
+}
+2026-06-04 09:27 4310 /home/<USER>/t_1d157fda/run_measure_7.py
+2026-06-04 09:28 64 /home/<USER>/t_1d157fda/source_restore_info.txt
+2026-06-04 09:29 1065 /home/<USER>/t_1d157fda/server_8097_repro6_20260604T162911Z.log
+2026-06-04 09:29 515 /home/<USER>/t_1d157fda/server_cmd_repro6.sh
+2026-06-04 09:39 1492 /home/<USER>/t_1d157fda/server_8097_repro6_20260604T163921Z.log
+2026-06-04 09:52 578734 /home/<USER>/t_1d157fda/server_8097_repro6_20260604T163959Z.log
+2026-06-04 09:54 1041 /home/<USER>/t_1d157fda/server_8097_repro6_fixed_20260604T165410Z.log
+2026-06-04 09:56 3746 /home/<USER>/t_1d157fda/server_8097_repro6_fixed2_20260604T165542Z.log
+2026-06-04 09:57 4230 /home/<USER>/t_1d157fda/server_8097_repro6_final_20260604T165713Z.log
+2026-06-04 09:57 66 /home/<USER>/t_1d157fda/binary_md5.txt
+2026-06-04 09:58 75 /home/<USER>/t_1d157fda/server.log.path
+2026-06-04 09:58 7 /home/<USER>/t_1d157fda/server.pid
+2026-06-04 10:09 21849 /home/<USER>/t_1d157fda/measure_repro6_7prompts_summary.json
+2026-06-04 10:09 27696 /home/<USER>/t_1d157fda/measure_repro6_stdout.log
+2026-06-04 10:09 47873 /home/<USER>/t_1d157fda/raw_completions_repro6_7prompts.json
+2026-06-04 10:13 26003 /home/<USER>/t_1d157fda/REPRO6_RESULT.md
+2026-06-04 10:20 76927 /home/<USER>/t_1d157fda/server_8097_repro6_final_clean_20260604T165850Z.log

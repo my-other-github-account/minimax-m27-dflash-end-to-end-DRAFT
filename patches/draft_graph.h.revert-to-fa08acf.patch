@@ -1,0 +1,15 @@
+--- a/server/src/draft/draft_graph.h
++++ b/server/src/draft/draft_graph.h
+@@ -18,10 +18,8 @@
+     // hidden states. Used for DFlash integration where the draft shares the
+     // target's lm_head.
+     ggml_tensor * lm_head;
+-    // Optional: block-causal mask for full layers [kv_pad_full, q_len] F16.
+-    // Context keys are visible; synthetic/noise keys are causal within the block.
+-    ggml_tensor * causal_mask_full = nullptr;
+-    // Optional: causal mask for SWA layers [kv_pad_swa, q_len] F16.
++    // Optional: causal mask for SWA layers [kv_pad, q_len] F16.
++    // nullptr = all layers non-causal.
+     ggml_tensor * causal_mask_swa = nullptr;
+ };
+ 

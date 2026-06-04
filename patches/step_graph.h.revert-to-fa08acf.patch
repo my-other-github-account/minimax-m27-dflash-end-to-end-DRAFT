@@ -1,0 +1,21 @@
+--- a/server/src/common/step_graph.h
++++ b/server/src/common/step_graph.h
+@@ -28,8 +28,7 @@
+     // Named inputs
+     ggml_tensor *   inp_embed = nullptr;
+     ggml_tensor *   positions = nullptr;
+-    ggml_tensor *   attn_mask = nullptr;     // SWA causal mask; may be null
+-    ggml_tensor *   attn_mask_full = nullptr; // full-layer block-causal mask; may be null
++    ggml_tensor *   attn_mask = nullptr;     // may be null
+     ggml_tensor *   parent_ids = nullptr;    // DDTree tree-mode; null for chain mode
+     ggml_tensor *   target_hidden_cat = nullptr;  // draft only
+     ggml_tensor *   positions_k = nullptr;        // draft only
+@@ -54,7 +53,7 @@
+ inline void step_graph_free(StepGraph & sg) {
+     if (sg.ctx)   { ggml_free(sg.ctx); sg.ctx = nullptr; }
+     sg.gf = nullptr;
+-    sg.inp_embed = sg.positions = sg.attn_mask = sg.attn_mask_full = nullptr;
++    sg.inp_embed = sg.positions = sg.attn_mask = nullptr;
+     sg.target_hidden_cat = sg.positions_k = nullptr;
+     sg.hidden_input = nullptr;
+     sg.parent_ids = nullptr;

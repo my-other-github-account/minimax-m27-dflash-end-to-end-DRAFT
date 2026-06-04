@@ -1,0 +1,576 @@
+[
+  {
+    "i": 1,
+    "prompt": "train 60 miles 1.5 hours",
+    "seconds": 3.725184202194214,
+    "raw": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "message": {
+            "content": " 2.5 hours 3.5 hours 4.5 hours 5.5 hours 6.5 hours 7.5 hours 8.5 hours 9.5 hours 10.5 hours 11.5 hours 12.5 hours 13.5 hours 14.5",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1780579196,
+      "id": "cmpl_0000000000000000",
+      "model": "minimax-luce-golden-revert",
+      "object": "chat.completion",
+      "usage": {
+        "accept_rate": 0.5,
+        "completion_tokens": 64,
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_tokens": 10,
+        "timings": {
+          "decode_ms": 3286.7,
+          "decode_tokens_per_sec": 19.5,
+          "prefill_ms": 399.6
+        },
+        "total_tokens": 74
+      }
+    },
+    "telemetry": {
+      "spec": {
+        "tokens": 64,
+        "steps": 13,
+        "accepted": 52,
+        "draft_total": 104,
+        "accept_percent": 50.0,
+        "avg_commit": 4.9231,
+        "line": "[spec-decode] tokens=64 time=3.287 s speed=19.47 tok/s steps=13 accepted=52/104 (50.0%) avg_commit=4.9231"
+      },
+      "per_pos_argmax_match": [
+        1.0,
+        0.923077,
+        0.846154,
+        0.153846,
+        0.923077,
+        0.692308,
+        0.692308
+      ],
+      "per_pos_prefix_accept": [
+        1.0,
+        0.923077,
+        0.846154,
+        0.153846,
+        0.153846,
+        0.076923,
+        0.0
+      ],
+      "probes": [
+        "[draftattn-probe] step=0 committed=10 draft_ctx=10 q_len=8 pos_q_first=10 pos_q_last=17 pos_k_base_first=0 pos_k_base_last=9 pos_k_noise_first=10 pos_k_noise_last=17 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftattn-probe] step=3 committed=22 draft_ctx=22 q_len=8 pos_q_first=22 pos_q_last=29 pos_k_base_first=0 pos_k_base_last=21 pos_k_noise_first=22 pos_k_noise_last=29 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)"
+      ],
+      "log_excerpt": "mpl_0000000000000000 format=chat stream=false prompt_tokens=10 max_tokens=64 tools=0\n[server] chat CACHE cmpl_0000000000000000 restore=false slot=-1 prefix_len=0 effective_prompt=10 pflash=false disk_hit=false snap_slot=-1 snap_pos=0\n[draftattn-probe] step=0 committed=10 draft_ctx=10 q_len=8 pos_q_first=10 pos_q_last=17 pos_k_base_first=0 pos_k_base_last=9 pos_k_noise_first=10 pos_k_noise_last=17 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftattn-probe] step=3 committed=22 draft_ctx=22 q_len=8 pos_q_first=22 pos_q_last=29 pos_k_base_first=0 pos_k_base_last=21 pos_k_noise_first=22 pos_k_noise_last=29 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[spec-decode] tokens=64 time=3.287 s speed=19.47 tok/s steps=13 accepted=52/104 (50.0%) avg_commit=4.9231\n[spec-decode] per_pos_argmax_match p1..p7: 1.000000 0.923077 0.846154 0.153846 0.923077 0.692308 0.692308\n[spec-decode] per_pos_prefix_accept p1..p7: 1.000000 0.923077 0.846154 0.153846 0.153846 0.076923 0.000000\n[vram] released scratch buffers\n[server] chat DONE cmpl_0000000000000000 ok=true in=10 effective_in=10 out=64 3.7s 17.3 tok/s finish=stop restore=false slot=-1 prefix_len=0 prefill=0.4s decode=3.3s(19.5tok/s) error=-\n"
+    },
+    "text": " 2.5 hours 3.5 hours 4.5 hours 5.5 hours 6.5 hours 7.5 hours 8.5 hours 9.5 hours 10.5 hours 11.5 hours 12.5 hours 13.5 hours 14.5"
+  },
+  {
+    "i": 2,
+    "prompt": "Write a concise Python function that returns the nth Fibonacci number.",
+    "seconds": 5.360848665237427,
+    "raw": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "message": {
+            "content": " Use type hints and docstring. Use recursion. Use memoization via functools.lru_cache. Use type hints and docstring. Use recursion. Use memoization via functools.lru_cache. Use type hints and docstring. Use recursion. Use memoization via functools.lru_cache. Use type hints and docstring.",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1780579202,
+      "id": "cmpl_0000000000000001",
+      "model": "minimax-luce-golden-revert",
+      "object": "chat.completion",
+      "usage": {
+        "accept_rate": 0.2135416716337204,
+        "completion_tokens": 64,
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_tokens": 12,
+        "timings": {
+          "decode_ms": 5115.4,
+          "decode_tokens_per_sec": 12.5,
+          "prefill_ms": 243.0
+        },
+        "total_tokens": 76
+      }
+    },
+    "telemetry": {
+      "spec": {
+        "tokens": 64,
+        "steps": 24,
+        "accepted": 41,
+        "draft_total": 192,
+        "accept_percent": 21.4,
+        "avg_commit": 2.6667,
+        "line": "[spec-decode] tokens=64 time=5.115 s speed=12.51 tok/s steps=24 accepted=41/192 (21.4%) avg_commit=2.6667"
+      },
+      "per_pos_argmax_match": [
+        0.5,
+        0.375,
+        0.166667,
+        0.083333,
+        0.083333,
+        0.041667,
+        0.041667
+      ],
+      "per_pos_prefix_accept": [
+        0.5,
+        0.25,
+        0.083333,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "probes": [
+        "[draftattn-probe] step=0 committed=12 draft_ctx=12 q_len=8 pos_q_first=12 pos_q_last=19 pos_k_base_first=0 pos_k_base_last=11 pos_k_noise_first=12 pos_k_noise_last=19 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftattn-probe] step=3 committed=20 draft_ctx=20 q_len=8 pos_q_first=20 pos_q_last=27 pos_k_base_first=0 pos_k_base_last=19 pos_k_noise_first=20 pos_k_noise_last=27 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)"
+      ],
+      "log_excerpt": "mpl_0000000000000001 format=chat stream=false prompt_tokens=12 max_tokens=64 tools=0\n[server] chat CACHE cmpl_0000000000000001 restore=false slot=-1 prefix_len=0 effective_prompt=12 pflash=false disk_hit=false snap_slot=-1 snap_pos=0\n[draftattn-probe] step=0 committed=12 draft_ctx=12 q_len=8 pos_q_first=12 pos_q_last=19 pos_k_base_first=0 pos_k_base_last=11 pos_k_noise_first=12 pos_k_noise_last=19 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftattn-probe] step=3 committed=20 draft_ctx=20 q_len=8 pos_q_first=20 pos_q_last=27 pos_k_base_first=0 pos_k_base_last=19 pos_k_noise_first=20 pos_k_noise_last=27 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[spec-decode] tokens=64 time=5.115 s speed=12.51 tok/s steps=24 accepted=41/192 (21.4%) avg_commit=2.6667\n[spec-decode] per_pos_argmax_match p1..p7: 0.500000 0.375000 0.166667 0.083333 0.083333 0.041667 0.041667\n[spec-decode] per_pos_prefix_accept p1..p7: 0.500000 0.250000 0.083333 0.000000 0.000000 0.000000 0.000000\n[vram] released scratch buffers\n[server] chat DONE cmpl_0000000000000001 ok=true in=12 effective_in=12 out=64 5.4s 11.9 tok/s finish=stop restore=false slot=-1 prefix_len=0 prefill=0.2s decode=5.1s(12.5tok/s) error=-\n"
+    },
+    "text": " Use type hints and docstring. Use recursion. Use memoization via functools.lru_cache. Use type hints and docstring. Use recursion. Use memoization via functools.lru_cache. Use type hints and docstring. Use recursion. Use memoization via functools.lru_cache. Use type hints and docstring."
+  },
+  {
+    "i": 3,
+    "prompt": "Explain why the sky appears blue in one paragraph.",
+    "seconds": 5.088311433792114,
+    "raw": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "message": {
+            "content": " Use the following terms: scattering, wavelength, blue, violet, red, atmosphere, nitrogen, oxygen, Rayleigh scattering, visible spectrum, electromagnetic spectrum, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering,",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1780579208,
+      "id": "cmpl_0000000000000002",
+      "model": "minimax-luce-golden-revert",
+      "object": "chat.completion",
+      "usage": {
+        "accept_rate": 0.2135416716337204,
+        "completion_tokens": 64,
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_tokens": 10,
+        "timings": {
+          "decode_ms": 4868.2,
+          "decode_tokens_per_sec": 13.1,
+          "prefill_ms": 218.3
+        },
+        "total_tokens": 74
+      }
+    },
+    "telemetry": {
+      "spec": {
+        "tokens": 64,
+        "steps": 24,
+        "accepted": 41,
+        "draft_total": 192,
+        "accept_percent": 21.4,
+        "avg_commit": 2.6667,
+        "line": "[spec-decode] tokens=64 time=4.868 s speed=13.15 tok/s steps=24 accepted=41/192 (21.4%) avg_commit=2.6667"
+      },
+      "per_pos_argmax_match": [
+        0.458333,
+        0.375,
+        0.125,
+        0.125,
+        0.0,
+        0.041667,
+        0.0
+      ],
+      "per_pos_prefix_accept": [
+        0.458333,
+        0.333333,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "probes": [
+        "[draftattn-probe] step=0 committed=10 draft_ctx=10 q_len=8 pos_q_first=10 pos_q_last=17 pos_k_base_first=0 pos_k_base_last=9 pos_k_noise_first=10 pos_k_noise_last=17 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftattn-probe] step=3 committed=18 draft_ctx=18 q_len=8 pos_q_first=18 pos_q_last=25 pos_k_base_first=0 pos_k_base_last=17 pos_k_noise_first=18 pos_k_noise_last=25 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)"
+      ],
+      "log_excerpt": "mpl_0000000000000002 format=chat stream=false prompt_tokens=10 max_tokens=64 tools=0\n[server] chat CACHE cmpl_0000000000000002 restore=false slot=-1 prefix_len=0 effective_prompt=10 pflash=false disk_hit=false snap_slot=-1 snap_pos=0\n[draftattn-probe] step=0 committed=10 draft_ctx=10 q_len=8 pos_q_first=10 pos_q_last=17 pos_k_base_first=0 pos_k_base_last=9 pos_k_noise_first=10 pos_k_noise_last=17 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftattn-probe] step=3 committed=18 draft_ctx=18 q_len=8 pos_q_first=18 pos_q_last=25 pos_k_base_first=0 pos_k_base_last=17 pos_k_noise_first=18 pos_k_noise_last=25 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[spec-decode] tokens=64 time=4.868 s speed=13.15 tok/s steps=24 accepted=41/192 (21.4%) avg_commit=2.6667\n[spec-decode] per_pos_argmax_match p1..p7: 0.458333 0.375000 0.125000 0.125000 0.000000 0.041667 0.000000\n[spec-decode] per_pos_prefix_accept p1..p7: 0.458333 0.333333 0.000000 0.000000 0.000000 0.000000 0.000000\n[vram] released scratch buffers\n[server] chat DONE cmpl_0000000000000002 ok=true in=10 effective_in=10 out=64 5.1s 12.6 tok/s finish=stop restore=false slot=-1 prefix_len=0 prefill=0.2s decode=4.9s(13.1tok/s) error=-\n"
+    },
+    "text": " Use the following terms: scattering, wavelength, blue, violet, red, atmosphere, nitrogen, oxygen, Rayleigh scattering, visible spectrum, electromagnetic spectrum, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering, scattering,"
+  },
+  {
+    "i": 4,
+    "prompt": "Q: If a rectangle has width 8 and height 13, what is its area? A:",
+    "seconds": 3.8331897258758545,
+    "raw": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "message": {
+            "content": " 104\n\nQuestion: If a rectangle has width 1 and height 1, what is its area? A: 1\n\nQuestion: If a rectangle has width 1 and height 1, what is its area? A: 1\n\nQuestion: If a rectangle has width 1 and height 1",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1780579212,
+      "id": "cmpl_0000000000000003",
+      "model": "minimax-luce-golden-revert",
+      "object": "chat.completion",
+      "usage": {
+        "accept_rate": 0.4464285671710968,
+        "completion_tokens": 64,
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_tokens": 22,
+        "timings": {
+          "decode_ms": 3313.1,
+          "decode_tokens_per_sec": 19.3,
+          "prefill_ms": 518.2
+        },
+        "total_tokens": 86
+      }
+    },
+    "telemetry": {
+      "spec": {
+        "tokens": 64,
+        "steps": 14,
+        "accepted": 50,
+        "draft_total": 112,
+        "accept_percent": 44.6,
+        "avg_commit": 4.5714,
+        "line": "[spec-decode] tokens=64 time=3.313 s speed=19.32 tok/s steps=14 accepted=50/112 (44.6%) avg_commit=4.5714"
+      },
+      "per_pos_argmax_match": [
+        0.785714,
+        0.714286,
+        0.571429,
+        0.5,
+        0.285714,
+        0.285714,
+        0.214286
+      ],
+      "per_pos_prefix_accept": [
+        0.785714,
+        0.714286,
+        0.5,
+        0.428571,
+        0.142857,
+        0.0,
+        0.0
+      ],
+      "probes": [
+        "[draftattn-probe] step=0 committed=22 draft_ctx=22 q_len=8 pos_q_first=22 pos_q_last=29 pos_k_base_first=0 pos_k_base_last=21 pos_k_noise_first=22 pos_k_noise_last=29 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftattn-probe] step=3 committed=28 draft_ctx=28 q_len=8 pos_q_first=28 pos_q_last=35 pos_k_base_first=0 pos_k_base_last=27 pos_k_noise_first=28 pos_k_noise_last=35 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)"
+      ],
+      "log_excerpt": "mpl_0000000000000003 format=chat stream=false prompt_tokens=22 max_tokens=64 tools=0\n[server] chat CACHE cmpl_0000000000000003 restore=false slot=-1 prefix_len=0 effective_prompt=22 pflash=false disk_hit=false snap_slot=-1 snap_pos=0\n[draftattn-probe] step=0 committed=22 draft_ctx=22 q_len=8 pos_q_first=22 pos_q_last=29 pos_k_base_first=0 pos_k_base_last=21 pos_k_noise_first=22 pos_k_noise_last=29 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftattn-probe] step=3 committed=28 draft_ctx=28 q_len=8 pos_q_first=28 pos_q_last=35 pos_k_base_first=0 pos_k_base_last=27 pos_k_noise_first=28 pos_k_noise_last=35 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[spec-decode] tokens=64 time=3.313 s speed=19.32 tok/s steps=14 accepted=50/112 (44.6%) avg_commit=4.5714\n[spec-decode] per_pos_argmax_match p1..p7: 0.785714 0.714286 0.571429 0.500000 0.285714 0.285714 0.214286\n[spec-decode] per_pos_prefix_accept p1..p7: 0.785714 0.714286 0.500000 0.428571 0.142857 0.000000 0.000000\n[vram] released scratch buffers\n[server] chat DONE cmpl_0000000000000003 ok=true in=22 effective_in=22 out=64 3.8s 16.7 tok/s finish=stop restore=false slot=-1 prefix_len=0 prefill=0.5s decode=3.3s(19.3tok/s) error=-\n"
+    },
+    "text": " 104\n\nQuestion: If a rectangle has width 1 and height 1, what is its area? A: 1\n\nQuestion: If a rectangle has width 1 and height 1, what is its area? A: 1\n\nQuestion: If a rectangle has width 1 and height 1"
+  },
+  {
+    "i": 5,
+    "prompt": "Complete the sentence: The fastest way to improve inference throughput is",
+    "seconds": 3.8547327518463135,
+    "raw": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "message": {
+            "content": " to increase the number of GPUs.\n\nThe fastest way to improve inference throughput is to increase the number of GPUs.\n\nThe fastest way to improve inference throughput is to increase the number of GPUs.\n\nThe fastest way to improve inference throughput is to increase the number of GPUs.\n\nThe fastest way to improve inference throughput is to increase the number",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1780579216,
+      "id": "cmpl_0000000000000004",
+      "model": "minimax-luce-golden-revert",
+      "object": "chat.completion",
+      "usage": {
+        "accept_rate": 0.375,
+        "completion_tokens": 64,
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_tokens": 12,
+        "timings": {
+          "decode_ms": 3603.8,
+          "decode_tokens_per_sec": 17.8,
+          "prefill_ms": 238.9
+        },
+        "total_tokens": 76
+      }
+    },
+    "telemetry": {
+      "spec": {
+        "tokens": 64,
+        "steps": 16,
+        "accepted": 48,
+        "draft_total": 128,
+        "accept_percent": 37.5,
+        "avg_commit": 4.0,
+        "line": "[spec-decode] tokens=64 time=3.604 s speed=17.76 tok/s steps=16 accepted=48/128 (37.5%) avg_commit=4.0000"
+      },
+      "per_pos_argmax_match": [
+        0.6875,
+        0.5,
+        0.4375,
+        0.25,
+        0.25,
+        0.4375,
+        0.1875
+      ],
+      "per_pos_prefix_accept": [
+        0.6875,
+        0.5,
+        0.3125,
+        0.25,
+        0.1875,
+        0.0625,
+        0.0
+      ],
+      "probes": [
+        "[draftattn-probe] step=0 committed=12 draft_ctx=12 q_len=8 pos_q_first=12 pos_q_last=19 pos_k_base_first=0 pos_k_base_last=11 pos_k_noise_first=12 pos_k_noise_last=19 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftattn-probe] step=3 committed=18 draft_ctx=18 q_len=8 pos_q_first=18 pos_q_last=25 pos_k_base_first=0 pos_k_base_last=17 pos_k_noise_first=18 pos_k_noise_last=25 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)"
+      ],
+      "log_excerpt": "mpl_0000000000000004 format=chat stream=false prompt_tokens=12 max_tokens=64 tools=0\n[server] chat CACHE cmpl_0000000000000004 restore=false slot=-1 prefix_len=0 effective_prompt=12 pflash=false disk_hit=false snap_slot=-1 snap_pos=0\n[draftattn-probe] step=0 committed=12 draft_ctx=12 q_len=8 pos_q_first=12 pos_q_last=19 pos_k_base_first=0 pos_k_base_last=11 pos_k_noise_first=12 pos_k_noise_last=19 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftattn-probe] step=3 committed=18 draft_ctx=18 q_len=8 pos_q_first=18 pos_q_last=25 pos_k_base_first=0 pos_k_base_last=17 pos_k_noise_first=18 pos_k_noise_last=25 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[spec-decode] tokens=64 time=3.604 s speed=17.76 tok/s steps=16 accepted=48/128 (37.5%) avg_commit=4.0000\n[spec-decode] per_pos_argmax_match p1..p7: 0.687500 0.500000 0.437500 0.250000 0.250000 0.437500 0.187500\n[spec-decode] per_pos_prefix_accept p1..p7: 0.687500 0.500000 0.312500 0.250000 0.187500 0.062500 0.000000\n[vram] released scratch buffers\n[server] chat DONE cmpl_0000000000000004 ok=true in=12 effective_in=12 out=64 3.8s 16.7 tok/s finish=stop restore=false slot=-1 prefix_len=0 prefill=0.2s decode=3.6s(17.8tok/s) error=-\n"
+    },
+    "text": " to increase the number of GPUs.\n\nThe fastest way to improve inference throughput is to increase the number of GPUs.\n\nThe fastest way to improve inference throughput is to increase the number of GPUs.\n\nThe fastest way to improve inference throughput is to increase the number of GPUs.\n\nThe fastest way to improve inference throughput is to increase the number"
+  },
+  {
+    "i": 6,
+    "prompt": "Translate to Spanish: The new compiler pass reduced latency without changing model outputs.",
+    "seconds": 3.822763442993164,
+    "raw": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "message": {
+            "content": " The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1780579221,
+      "id": "cmpl_0000000000000005",
+      "model": "minimax-luce-golden-revert",
+      "object": "chat.completion",
+      "usage": {
+        "accept_rate": 0.4166666567325592,
+        "completion_tokens": 64,
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_tokens": 15,
+        "timings": {
+          "decode_ms": 3544.4,
+          "decode_tokens_per_sec": 18.1,
+          "prefill_ms": 276.1
+        },
+        "total_tokens": 79
+      }
+    },
+    "telemetry": {
+      "spec": {
+        "tokens": 64,
+        "steps": 15,
+        "accepted": 50,
+        "draft_total": 120,
+        "accept_percent": 41.7,
+        "avg_commit": 4.2667,
+        "line": "[spec-decode] tokens=64 time=3.544 s speed=18.06 tok/s steps=15 accepted=50/120 (41.7%) avg_commit=4.2667"
+      },
+      "per_pos_argmax_match": [
+        0.866667,
+        0.6,
+        0.466667,
+        0.4,
+        0.4,
+        0.2,
+        0.266667
+      ],
+      "per_pos_prefix_accept": [
+        0.866667,
+        0.6,
+        0.4,
+        0.266667,
+        0.2,
+        0.0,
+        0.0
+      ],
+      "probes": [
+        "[draftattn-probe] step=0 committed=15 draft_ctx=15 q_len=8 pos_q_first=15 pos_q_last=22 pos_k_base_first=0 pos_k_base_last=14 pos_k_noise_first=15 pos_k_noise_last=22 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftattn-probe] step=3 committed=22 draft_ctx=22 q_len=8 pos_q_first=22 pos_q_last=29 pos_k_base_first=0 pos_k_base_last=21 pos_k_noise_first=22 pos_k_noise_last=29 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)"
+      ],
+      "log_excerpt": "mpl_0000000000000005 format=chat stream=false prompt_tokens=15 max_tokens=64 tools=0\n[server] chat CACHE cmpl_0000000000000005 restore=false slot=-1 prefix_len=0 effective_prompt=15 pflash=false disk_hit=false snap_slot=-1 snap_pos=0\n[draftattn-probe] step=0 committed=15 draft_ctx=15 q_len=8 pos_q_first=15 pos_q_last=22 pos_k_base_first=0 pos_k_base_last=14 pos_k_noise_first=15 pos_k_noise_last=22 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftattn-probe] step=3 committed=22 draft_ctx=22 q_len=8 pos_q_first=22 pos_q_last=29 pos_k_base_first=0 pos_k_base_last=21 pos_k_noise_first=22 pos_k_noise_last=29 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[spec-decode] tokens=64 time=3.544 s speed=18.06 tok/s steps=15 accepted=50/120 (41.7%) avg_commit=4.2667\n[spec-decode] per_pos_argmax_match p1..p7: 0.866667 0.600000 0.466667 0.400000 0.400000 0.200000 0.266667\n[spec-decode] per_pos_prefix_accept p1..p7: 0.866667 0.600000 0.400000 0.266667 0.200000 0.000000 0.000000\n[vram] released scratch buffers\n[server] chat DONE cmpl_0000000000000005 ok=true in=15 effective_in=15 out=64 3.8s 16.7 tok/s finish=stop restore=false slot=-1 prefix_len=0 prefill=0.3s decode=3.5s(18.1tok/s) error=-\n"
+    },
+    "text": " The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model outputs. The new compiler pass reduced latency without changing model"
+  },
+  {
+    "i": 7,
+    "prompt": "In two sentences, compare depth-first search and breadth-first search for graph traversal.",
+    "seconds": 4.852820158004761,
+    "raw": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "index": 0,
+          "message": {
+            "content": " Depth-first search explores a graph by going as deep as possible along each branch before backtracking, while breadth-first search explores a graph by visiting all neighbors of a node before moving to the next level of nodes. Depth-first search uses a stack (LIFO) and breadth-first search uses a queue (FIFO). Depth",
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1780579226,
+      "id": "cmpl_0000000000000006",
+      "model": "minimax-luce-golden-revert",
+      "object": "chat.completion",
+      "usage": {
+        "accept_rate": 0.261904776096344,
+        "completion_tokens": 64,
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_tokens": 16,
+        "timings": {
+          "decode_ms": 4592.0,
+          "decode_tokens_per_sec": 13.9,
+          "prefill_ms": 258.6
+        },
+        "total_tokens": 80
+      }
+    },
+    "telemetry": {
+      "spec": {
+        "tokens": 64,
+        "steps": 21,
+        "accepted": 44,
+        "draft_total": 168,
+        "accept_percent": 26.2,
+        "avg_commit": 3.0476,
+        "line": "[spec-decode] tokens=64 time=4.592 s speed=13.94 tok/s steps=21 accepted=44/168 (26.2%) avg_commit=3.0476"
+      },
+      "per_pos_argmax_match": [
+        0.714286,
+        0.333333,
+        0.238095,
+        0.047619,
+        0.047619,
+        0.095238,
+        0.095238
+      ],
+      "per_pos_prefix_accept": [
+        0.714286,
+        0.285714,
+        0.095238,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "probes": [
+        "[draftattn-probe] step=0 committed=16 draft_ctx=16 q_len=8 pos_q_first=16 pos_q_last=23 pos_k_base_first=0 pos_k_base_last=15 pos_k_noise_first=16 pos_k_noise_last=23 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftattn-probe] step=3 committed=23 draft_ctx=23 q_len=8 pos_q_first=23 pos_q_last=30 pos_k_base_first=0 pos_k_base_last=22 pos_k_noise_first=23 pos_k_noise_last=30 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]",
+        "[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)",
+        "[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)"
+      ],
+      "log_excerpt": "mpl_0000000000000006 format=chat stream=false prompt_tokens=16 max_tokens=64 tools=0\n[server] chat CACHE cmpl_0000000000000006 restore=false slot=-1 prefix_len=0 effective_prompt=16 pflash=false disk_hit=false snap_slot=-1 snap_pos=0\n[draftattn-probe] step=0 committed=16 draft_ctx=16 q_len=8 pos_q_first=16 pos_q_last=23 pos_k_base_first=0 pos_k_base_last=15 pos_k_noise_first=16 pos_k_noise_last=23 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=0 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=0 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftattn-probe] step=3 committed=23 draft_ctx=23 q_len=8 pos_q_first=23 pos_q_last=30 pos_k_base_first=0 pos_k_base_last=22 pos_k_noise_first=23 pos_k_noise_last=30 zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n[draftmask-probe] step=3 layer=0 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=1 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=2 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=3 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=4 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[draftmask-probe] step=3 layer=5 kind=full actual_mask=nullptr visible_keys=ALL_KEYS (nullptr => future noise visible)\n[spec-decode] tokens=64 time=4.592 s speed=13.94 tok/s steps=21 accepted=44/168 (26.2%) avg_commit=3.0476\n[spec-decode] per_pos_argmax_match p1..p7: 0.714286 0.333333 0.238095 0.047619 0.047619 0.095238 0.095238\n[spec-decode] per_pos_prefix_accept p1..p7: 0.714286 0.285714 0.095238 0.000000 0.000000 0.000000 0.000000\n[vram] released scratch buffers\n[server] chat DONE cmpl_0000000000000006 ok=true in=16 effective_in=16 out=64 4.9s 13.2 tok/s finish=stop restore=false slot=-1 prefix_len=0 prefill=0.3s decode=4.6s(13.9tok/s) error=-\n"
+    },
+    "text": " Depth-first search explores a graph by going as deep as possible along each branch before backtracking, while breadth-first search explores a graph by visiting all neighbors of a node before moving to the next level of nodes. Depth-first search uses a stack (LIFO) and breadth-first search uses a queue (FIFO). Depth"
+  }
+]
