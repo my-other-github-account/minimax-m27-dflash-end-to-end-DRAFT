@@ -1,0 +1,35 @@
+{
+  "AL_log_mean": 4.493644,
+  "AL_true": 4.170739654610623,
+  "accepted": 12800,
+  "binary_md5_after": "49d9a23d4eb2a655c4f35a18a7a1905a",
+  "binary_md5_before": "49d9a23d4eb2a655c4f35a18a7a1905a",
+  "cmdline": "$WORK/lucebox-latest-20260603/server.pre_hshandoff_20260607_044845/build-sm121/dflash_server $WORK/models/Qwen3.6-35B-A3B-GGUF/UD-IQ4_XS/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf --draft $WORK/models/Qwen3.6-35B-A3B-DFlash/model.safetensors --port 18730 --host <ip> --max-ctx 8192 --default-max-tokens 512 --think-max-tokens 256 --hard-limit-reply-budget 0 --model-name dflash --prefix-cache-slots 0",
+  "decode_s_total": 149.839,
+  "decode_tok_s": 85.42502285786745,
+  "drafted": 24552,
+  "full_wall_tok_s": 78.89851807005338,
+  "host": "<host>",
+  "n_requests": 50,
+  "per_pos": [
+    0.6995764705115671,
+    0.5689150039100684,
+    0.4881068804170739,
+    0.42619740632127706,
+    0.3812316327794068,
+    0.33854688595633753,
+    0.3186705897686543
+  ],
+  "reasoning_tokens_total": 0,
+  "responses_path": "$WORK/t_TRADEOFF_LADDER/w8_responses.jsonl",
+  "server_log": "$WORK/t_TRADEOFF_LADDER/server_w8.log",
+  "statuses": [
+    200
+  ],
+  "steps": 3069,
+  "tokens": 12800,
+  "visible_nonempty_count": 50,
+  "visible_text_nonempty_ok": true,
+  "wall_sum_s": 162.2337188720703,
+  "width": 8
+}
