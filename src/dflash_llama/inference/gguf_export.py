@@ -1,13 +1,14 @@
 """Export a trained DFlash drafter checkpoint to a buun-loadable GGUF.
 
-The recipe applied here is the proven path validated on spark-1
-(2026-04-30 / 2026-05-02). See ``repro/03-inference.md`` for the full
-narrative and the ``dflash-minimax-buun-gguf-spark1`` skill for the
-manual command sequence.
+The recipe applied here is the proven path validated for MiniMax-class
+DFlash drafters. See ``repro/03-inference.md`` and
+``repro/05-typaccept-1.18x.md`` for reproducible command sequences.
 
 Public surface::
 
     export_to_gguf(checkpoint, output_path, *, ...) -> Path
+    export_lucebox_to_gguf(checkpoint_or_safetensors, output_path, *, ...) -> Path
+    normalize_lucebox_checkpoint(checkpoint_or_safetensors) -> Path
     prep_for_buun_converter(src_dir, out_dir, ...)  -> Path  (re-exported)
 """
 from __future__ import annotations
@@ -73,6 +74,38 @@ def register_minimax_fp8_tokenizer_hash(buun_repo: str | Path,
     return True
 
 
+# --- Lucebox checkpoint normalization ----------------------------------------
+
+def normalize_lucebox_checkpoint(checkpoint: str | Path) -> Path:
+    """Return the checkpoint directory expected by the GGUF staging code.
+
+    The banked Lucebox adapter may be referenced either as the checkpoint
+    directory or directly as its ``model_lucebox_layout.safetensors`` file.
+    The converter itself works at directory granularity, so file inputs are
+    normalized to their parent directory.
+    """
+    path = Path(checkpoint)
+    if path.is_file():
+        if path.suffix != ".safetensors":
+            raise ValueError(f"expected a .safetensors checkpoint file, got {path}")
+        return path.parent
+    return path
+
+
+def export_lucebox_to_gguf(
+    checkpoint: str | Path,
+    output_path: str | Path,
+    **kwargs,
+) -> Path:
+    """Convert a Lucebox-layout DFlash adapter checkpoint to GGUF.
+
+    ``checkpoint`` may be either the checkpoint directory or the adapter
+    safetensors file inside it. All keyword arguments are forwarded to
+    :func:`export_to_gguf`.
+    """
+    return export_to_gguf(normalize_lucebox_checkpoint(checkpoint), output_path, **kwargs)
+
+
 # --- main API -------------------------------------------------------
 
 def export_to_gguf(
@@ -80,11 +113,12 @@ def export_to_gguf(
     output_path: str | Path,
     *,
     verifier_meta_dir: Optional[str | Path] = None,
-    buun_repo: str | Path = "/home/dnola/buun-llama-cpp",
+    buun_repo: str | Path = "buun-llama-cpp",
     venv_python: Optional[str | Path] = None,
     outtype: str = "bf16",
     rebake_floor: float = -65504.0,
     prepped_dir: Optional[str | Path] = None,
+    force_block_size: Optional[int] = None,
     register_tokenizer_hash: bool = True,
     verbose: bool = True,
 ) -> Path:
@@ -102,11 +136,10 @@ def export_to_gguf(
     buun_repo : path
         Path to a buun-llama-cpp checkout containing ``convert_hf_to_gguf.py``
         with the DFlashDraftModel converter class registered. Default
-        matches spark-1 layout.
+        is the relative path ``buun-llama-cpp``.
     venv_python : path, optional
         Python interpreter to invoke buun's converter with. Default:
-        autodetect (``/home/dnola/venvs/vllm/bin/python3`` on spark-1, else
-        ``sys.executable``).
+        ``sys.executable``.
     outtype : {"bf16", "f16", "f32"}
         Quantization for the output GGUF (passed to buun's converter).
     rebake_floor : float
@@ -116,6 +149,10 @@ def export_to_gguf(
     prepped_dir : path, optional
         Where to stage the prepped checkpoint. Default:
         ``<output_path>.prep/``.
+    force_block_size : int, optional
+        Lucebox compatibility hint used by wrappers and metadata checks. The
+        staged checkpoint normally carries the block size already; pass 8 for
+        the public MiniMax typaccept adapter.
     register_tokenizer_hash : bool
         If True (default), idempotently whitelist the FP8 tokenizer hash
         in buun's converter. Set False on systems where you've already
@@ -127,12 +164,14 @@ def export_to_gguf(
     -------
     pathlib.Path : the GGUF path that was written.
     """
-    checkpoint = Path(checkpoint)
+    checkpoint = normalize_lucebox_checkpoint(checkpoint)
     output_path = Path(output_path)
     buun_repo = Path(buun_repo)
 
     if not checkpoint.exists():
         raise FileNotFoundError(f"checkpoint dir not found: {checkpoint}")
+    if force_block_size is not None and force_block_size <= 0:
+        raise ValueError("force_block_size must be positive when provided")
     if not (buun_repo / "convert_hf_to_gguf.py").exists():
         raise FileNotFoundError(
             f"buun converter not found: {buun_repo}/convert_hf_to_gguf.py. "
@@ -140,10 +179,7 @@ def export_to_gguf(
         )
 
     if venv_python is None:
-        for cand in ("/home/dnola/venvs/vllm/bin/python3", sys.executable):
-            if cand and Path(cand).exists():
-                venv_python = cand
-                break
+        venv_python = sys.executable
     venv_python = str(venv_python)
 
     if prepped_dir is None:
@@ -264,6 +300,8 @@ def verify_gguf_metadata(gguf_path: str | Path,
 
 __all__ = [
     "export_to_gguf",
+    "export_lucebox_to_gguf",
+    "normalize_lucebox_checkpoint",
     "prep_for_buun_converter",
     "register_minimax_fp8_tokenizer_hash",
     "verify_gguf_metadata",

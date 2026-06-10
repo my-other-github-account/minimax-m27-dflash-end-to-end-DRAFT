@@ -228,10 +228,32 @@ def cmd_export_gguf(args) -> int:
         outtype=args.outtype,
         rebake_floor=args.rebake_floor,
         prepped_dir=args.prepped_dir,
+        force_block_size=getattr(args, "force_block_size", None),
         register_tokenizer_hash=not args.no_register_hash,
     )
     if args.verify:
         meta = verify_gguf_metadata(out)
+        print(json.dumps(meta, indent=2))
+    return 0
+
+
+def cmd_export_lucebox(args) -> int:
+    from .inference import export_lucebox_to_gguf, verify_gguf_metadata
+
+    out = export_lucebox_to_gguf(
+        checkpoint=args.checkpoint,
+        output_path=args.output,
+        verifier_meta_dir=args.verifier_meta_dir,
+        buun_repo=args.buun_repo,
+        venv_python=args.venv_python,
+        outtype=args.outtype,
+        rebake_floor=args.rebake_floor,
+        prepped_dir=args.prepped_dir,
+        force_block_size=args.force_block_size,
+        register_tokenizer_hash=not args.no_register_hash,
+    )
+    if args.verify:
+        meta = verify_gguf_metadata(out, expected_block_size=args.force_block_size)
         print(json.dumps(meta, indent=2))
     return 0
 
@@ -259,6 +281,41 @@ def cmd_serve(args) -> int:
     server.start()
     print(f"DFlash llama-server up: {server.url}")
     print("Endpoints: /v1/chat/completions, /v1/completions, /v1/models")
+    print("Press Ctrl-C to stop.")
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        print("\nstopping...")
+    finally:
+        server.stop()
+    return 0
+
+
+def cmd_serve_lucebox(args) -> int:
+    import time
+    from .inference import LuceboxDFlashServer
+
+    server = LuceboxDFlashServer(
+        target_gguf=args.target,
+        draft_gguf=args.draft,
+        binary=args.binary,
+        host=args.host,
+        port=args.port,
+        max_ctx=args.max_ctx,
+        default_max_tokens=args.default_max_tokens,
+        think_max_tokens=args.think_max_tokens,
+        hard_limit_reply_budget=args.hard_limit_reply_budget,
+        model_name=args.model_name,
+        prefix_cache_slots=args.prefix_cache_slots,
+        accept_mode=args.accept_mode,
+        accept_eta=args.accept_eta,
+        accept_topk=args.accept_topk,
+        log_path=args.log,
+    )
+    server.start()
+    print(f"Lucebox dflash_server up: {server.url}")
+    print("Endpoints: /v1/chat/completions, /v1/models")
     print("Press Ctrl-C to stop.")
     try:
         while True:
@@ -480,7 +537,7 @@ def build_parser() -> argparse.ArgumentParser:
     sx.add_argument("--output", required=True, help="path to write the GGUF")
     sx.add_argument("--verifier-meta-dir", default=None,
                     help="directory holding tokenizer.json etc (default: read from config)")
-    sx.add_argument("--buun-repo", default="/home/dnola/buun-llama-cpp",
+    sx.add_argument("--buun-repo", default="buun-llama-cpp",
                     help="buun-llama-cpp checkout containing convert_hf_to_gguf.py")
     sx.add_argument("--venv-python", default=None,
                     help="python interpreter to invoke buun's converter (default: autodetect)")
@@ -489,11 +546,39 @@ def build_parser() -> argparse.ArgumentParser:
                     help="floor for non-mapped rows in rebaked lm_head (default: -65504)")
     sx.add_argument("--prepped-dir", default=None,
                     help="staging dir for the prepped checkpoint (default: <output>.prep)")
+    sx.add_argument("--force-block-size", type=int, default=None,
+                    help="optional block-size hint for Lucebox-compatible exports")
     sx.add_argument("--no-register-hash", action="store_true",
                     help="don't auto-whitelist the FP8 tokenizer hash in buun")
     sx.add_argument("--verify", action="store_true",
                     help="after conversion, print GGUF metadata sanity-check")
     sx.set_defaults(func=cmd_export_gguf)
+
+    # export-lucebox
+    sl = sub.add_parser("export-lucebox",
+                        help="convert a Lucebox-layout DFlash adapter checkpoint to GGUF")
+    sl.add_argument("--checkpoint", required=True,
+                    help="checkpoint dir or model_lucebox_layout.safetensors file")
+    sl.add_argument("--out", "--output", dest="output", required=True,
+                    help="path to write the GGUF")
+    sl.add_argument("--verifier-meta-dir", default=None,
+                    help="directory holding tokenizer.json etc (default: read from config)")
+    sl.add_argument("--buun-repo", default="buun-llama-cpp",
+                    help="buun-llama-cpp checkout containing convert_hf_to_gguf.py")
+    sl.add_argument("--venv-python", default=None,
+                    help="python interpreter to invoke buun's converter (default: current Python)")
+    sl.add_argument("--outtype", default="bf16", choices=["bf16", "f16", "f32"])
+    sl.add_argument("--rebake-floor", type=float, default=-65504.0,
+                    help="floor for non-mapped rows in rebaked lm_head (default: -65504)")
+    sl.add_argument("--prepped-dir", default=None,
+                    help="staging dir for the prepped checkpoint (default: <output>.prep)")
+    sl.add_argument("--force-block-size", type=int, default=8,
+                    help="expected Lucebox DFlash block size (default: 8)")
+    sl.add_argument("--no-register-hash", action="store_true",
+                    help="don't auto-whitelist the FP8 tokenizer hash in buun")
+    sl.add_argument("--verify", action="store_true",
+                    help="after conversion, print GGUF metadata sanity-check")
+    sl.set_defaults(func=cmd_export_lucebox)
 
     # serve (OpenAI-compat)
     ss = sub.add_parser("serve",
@@ -514,6 +599,26 @@ def build_parser() -> argparse.ArgumentParser:
     ss.add_argument("--binary", default=None)
     ss.add_argument("--log", default=None, help="optional log file path")
     ss.set_defaults(func=cmd_serve)
+
+    # serve-lucebox (native Lucebox dflash_server)
+    sls = sub.add_parser("serve-lucebox",
+                         help="run Lucebox dflash_server with typical/top-k accept knobs")
+    sls.add_argument("--target", required=True, help="target GGUF path")
+    sls.add_argument("--draft", required=True, help="drafter GGUF path")
+    sls.add_argument("--binary", default=None, help="dflash_server binary (default: PATH lookup)")
+    sls.add_argument("--host", default="0.0.0.0")
+    sls.add_argument("--port", type=int, default=8080)
+    sls.add_argument("--max-ctx", type=int, default=2304)
+    sls.add_argument("--default-max-tokens", type=int, default=256)
+    sls.add_argument("--think-max-tokens", type=int, default=256)
+    sls.add_argument("--hard-limit-reply-budget", type=int, default=0)
+    sls.add_argument("--model-name", default="dflash")
+    sls.add_argument("--prefix-cache-slots", type=int, default=0)
+    sls.add_argument("--accept-mode", default="strict", choices=["strict", "eta", "topk"])
+    sls.add_argument("--accept-eta", type=float, default=None)
+    sls.add_argument("--accept-topk", type=int, default=None)
+    sls.add_argument("--log", default=None, help="optional log file path")
+    sls.set_defaults(func=cmd_serve_lucebox)
 
     # benchmark (speculative-decode sweep)
     sb = sub.add_parser("benchmark",

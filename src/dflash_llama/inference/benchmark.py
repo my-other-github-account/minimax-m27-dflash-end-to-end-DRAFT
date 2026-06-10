@@ -29,7 +29,7 @@ DEFAULT_PROMPT = (
     "space complexity."
 )
 
-DEFAULT_BINARY = "/home/dnola/dflash_clean_repro/build_clean/bin/llama-speculative-simple"
+DEFAULT_BINARY = "llama-speculative-simple"
 
 
 def _resolve_binary(binary: Optional[str | Path]) -> str:
@@ -41,8 +41,8 @@ def _resolve_binary(binary: Optional[str | Path]) -> str:
     if found:
         return found
     raise FileNotFoundError(
-        f"Could not locate llama-speculative-simple. Pass binary= or build buun-llama-cpp. "
-        f"Tried: {DEFAULT_BINARY}"
+        f"Could not locate llama-speculative-simple. Pass binary= or put it on PATH. "
+        f"Tried command: {DEFAULT_BINARY}"
     )
 
 
@@ -104,7 +104,7 @@ def benchmark(
     draft_device : str, optional
         Pass-through to ``--device-draft``. Default ``CUDA0``.
     binary : path, optional
-        llama-speculative-simple binary. Defaults to spark-1's clean build.
+        llama-speculative-simple binary. Defaults to PATH lookup.
     log_dir : path
         Where to write per-dmax logs. Created if missing.
     drafter_label : str, optional
@@ -293,9 +293,7 @@ def benchmark_ar_vs_dflash(
     ctx, temperature, n_gpu_layers, n_gpu_layers_draft, override_tensor,
     draft_device, flash_attn, seed : llama.cpp args (see binary --help).
     dflash_binary : path
-        ``llama-speculative-simple`` binary. Default: spark cluster's
-        ``/home/dnola/llama.cpp-dflash/build/bin/llama-speculative-simple``,
-        else PATH.
+        ``llama-speculative-simple`` binary. Default: PATH lookup.
     ar_binary : path
         ``llama-completion`` binary. Default: same dir as dflash_binary,
         else PATH.
@@ -458,9 +456,102 @@ def benchmark_ar_vs_dflash(
     return results
 
 
+# ---------------------------------------------------------------------------
+# Typical/top-k accept 50-prompt reporting helpers
+# ---------------------------------------------------------------------------
+
+def al_true(n_pred: int | float, n_acc: int | float) -> Optional[float]:
+    """Return verifier-authoritative accepted length: n_pred/(n_pred-n_acc)."""
+    if n_pred == 0:
+        return None
+    denom = n_pred - n_acc
+    if denom == 0:
+        return float("inf")
+    return n_pred / denom
+
+
+def has_verbatim_repeat_loop(text: str, *, min_ngram: int = 9) -> bool:
+    """Detect a repeated contiguous n-gram loop in whitespace-tokenized text."""
+    words = text.split()
+    if min_ngram <= 0 or len(words) < 2 * min_ngram:
+        return False
+    seen: set[tuple[str, ...]] = set()
+    for i in range(0, len(words) - min_ngram + 1):
+        gram = tuple(words[i:i + min_ngram])
+        if gram in seen:
+            return True
+        seen.add(gram)
+    return False
+
+
+def quality_gate_passes(row: dict, *, min_ngram: int = 9) -> bool:
+    """Quality gate for the typaccept protocol.
+
+    Required: nonempty response content, positive reasoning token count, and no
+    repeated >8-gram verbatim loop.
+    """
+    content = str(row.get("content") or "").strip()
+    reasoning_tokens = row.get("reasoning_tokens") or 0
+    if not content:
+        return False
+    if reasoning_tokens <= 0:
+        return False
+    if has_verbatim_repeat_loop(content, min_ngram=min_ngram):
+        return False
+    return True
+
+
+def summarize_ar_vs_spec_50(rows: Iterable[dict]) -> dict:
+    """Aggregate the public 50-prompt AR-vs-spec protocol.
+
+    Each row may use flat keys (``ar_wall_sec``, ``spec_wall_sec``, ``n_pred``,
+    ``n_acc``) or nested benchmark output (``ar.wall_clock_sec`` and
+    ``dflash.wall_clock_sec`` / ``dflash.n_drafted`` / ``dflash.n_accept``).
+    """
+    rows = list(rows)
+
+    def get(row: dict, flat: str, nested_obj: str, nested_key: str):
+        if flat in row:
+            return row.get(flat)
+        nested = row.get(nested_obj) or {}
+        return nested.get(nested_key)
+
+    total_ar = 0.0
+    total_spec = 0.0
+    total_pred = 0.0
+    total_acc = 0.0
+    quality_passed = 0
+    for row in rows:
+        ar_wall = get(row, "ar_wall_sec", "ar", "wall_clock_sec") or 0.0
+        spec_wall = get(row, "spec_wall_sec", "dflash", "wall_clock_sec") or 0.0
+        n_pred = get(row, "n_pred", "dflash", "n_drafted") or 0.0
+        n_acc = get(row, "n_acc", "dflash", "n_accept") or 0.0
+        total_ar += float(ar_wall)
+        total_spec += float(spec_wall)
+        total_pred += float(n_pred)
+        total_acc += float(n_acc)
+        if quality_gate_passes(row):
+            quality_passed += 1
+    return {
+        "prompt_count": len(rows),
+        "quality_passed": quality_passed,
+        "quality_failed": len(rows) - quality_passed,
+        "full_wall_speedup": (total_ar / total_spec) if total_spec else None,
+        "al_true": al_true(total_pred, total_acc),
+        "n_pred": total_pred,
+        "n_acc": total_acc,
+        "ar_wall_sec": total_ar,
+        "spec_wall_sec": total_spec,
+    }
+
+
 __all__ = [
     "benchmark",
     "benchmark_ar_vs_dflash",
+    "al_true",
+    "has_verbatim_repeat_loop",
+    "quality_gate_passes",
+    "summarize_ar_vs_spec_50",
     "DEFAULT_PROMPT",
     "DEFAULT_PROMPT_SUITE",
     "DEFAULT_BINARY",

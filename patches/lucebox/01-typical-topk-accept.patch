@@ -1,0 +1,988 @@
+MiniMax DFlash strict accept patch for Lucebox public bdc706a.
+
+What this does:
+- Preserves strict mode as the shipped/default behavior: the original
+  argmax-match / longest target-argmax-prefix rule remains active when the
+  environment is unset or DFLASH_ACCEPT_MODE=strict.
+- Retains eta and top-k as experimental, non-default provenance knobs from the
+  banked typical/top-k investigation.
+- Eta mode additionally accepts draft token t at position k when
+  p_target(t) >= eta * max_j p_target(j).
+- Top-k mode additionally accepts when draft token t is in the target top-k.
+- When a draft token is accepted, the verifier token stream is still committed
+  from the target-side verification path; the drafter only proposes candidates.
+
+Knobs:
+- DFLASH_ACCEPT_MODE=strict|eta|topk (default strict; env unset is strict)
+- DFLASH_ACCEPT_ETA=<float> for eta mode
+- DFLASH_ACCEPT_TOPK=<int> for top-k mode
+- The dflash_llama serve-lucebox wrapper exposes --accept-mode, --accept-eta,
+  and --accept-topk and maps experimental modes to the environment variables
+  above. Strict mode leaves the accept environment unset.
+
+Verifier-authoritative note:
+- The target/verifier remains authoritative. Lossy modes only widen which draft
+  proposals can be committed after target-side verification.
+
+Provenance:
+- Generated as a clean unified diff against github.com/Luce-Org/lucebox-hub
+  at commit bdc706a.
+- Touches only the DFlash target interface and Qwen/MiniMax DFlash backend.
+
+diff --git a/server/src/common/dflash_target.h b/server/src/common/dflash_target.h
+index 56fd4be..d6dc683 100644
+--- a/server/src/common/dflash_target.h
++++ b/server/src/common/dflash_target.h
+@@ -42,6 +42,13 @@ struct DFlashTarget {
+     // Restore KV cache to the last snapshot (undo speculative forward).
+     virtual bool restore_kv() = 0;
+ 
++    // Keep a verified prefix and discard speculative tail by moving the logical
++    // target cache frontier back to new_pos. For attention KV this is a
++    // logical trim: future forwards address only [0, new_pos), so stale cells
++    // in [new_pos, old_cur_pos) are overwritten before reuse. Backends with
++    // recurrent state must also roll back/commit their non-attention state.
++    virtual bool truncate_kv(int new_pos) = 0;
++
+     // ── Token utilities ─────────────────────────────────────────────
+ 
+     // Check if a token is end-of-sequence for this model.
+@@ -61,6 +68,49 @@ struct DFlashTarget {
+                                           int n_tokens,
+                                           std::vector<int32_t> & tokens_out) = 0;
+ 
++    // Ratio-trace extension: also return the softmax probability assigned by
++    // the draft LM-head projection to each argmax token.  Backends that do not
++    // implement probability telemetry return false when probs_out is non-null.
++    virtual bool project_hidden_to_tokens_with_probs(const float * hidden,
++                                                     int n_tokens,
++                                                     std::vector<int32_t> & tokens_out,
++                                                     std::vector<float> * probs_out) {
++        return probs_out ? false : project_hidden_to_tokens(hidden, n_tokens, tokens_out);
++    }
++
++    // Ratio-trace extension: verify tokens and return softmax probabilities for
++    // caller-specified next-token candidates at each verified position.
++    virtual bool verify_batch_with_candidate_probs(const std::vector<int32_t> & tokens,
++                                                   int base_pos,
++                                                   int & last_tok,
++                                                   std::vector<int32_t> * all_argmax,
++                                                   const std::vector<int32_t> & candidate_tokens,
++                                                   std::vector<float> * candidate_probs) {
++        (void) candidate_tokens;
++        return candidate_probs ? false : verify_batch(tokens, base_pos, last_tok, all_argmax);
++    }
++
++    // Lossy typical/ratio accept extension: verify tokens and
++    // return, per verified position, the softmax probability of the caller's
++    // candidate next-token, the max softmax probability (prob of the argmax
++    // token), and optionally the top-k token ids of the target distribution
++    // (topk_tokens filled with n_tokens * topk entries, row-major, logit-
++    // descending). Backends without host logits access return false so the
++    // caller can fall back to strict argmax acceptance.
++    virtual bool verify_batch_with_accept_info(const std::vector<int32_t> & tokens,
++                                               int base_pos,
++                                               int & last_tok,
++                                               std::vector<int32_t> * all_argmax,
++                                               const std::vector<int32_t> & candidate_tokens,
++                                               std::vector<float> * candidate_probs,
++                                               std::vector<float> * max_probs,
++                                               int topk,
++                                               std::vector<int32_t> * topk_tokens) {
++        (void) candidate_tokens; (void) topk;
++        if (candidate_probs || max_probs || topk_tokens) return false;
++        return verify_batch(tokens, base_pos, last_tok, all_argmax);
++    }
++
+     // ── Configuration for draft model ───────────────────────────────
+ 
+     // Target's hidden dimension (draft model must match).
+diff --git a/server/src/qwen35/qwen35_backend.cpp b/server/src/qwen35/qwen35_backend.cpp
+index 4a3d967..433750d 100644
+--- a/server/src/qwen35/qwen35_backend.cpp
++++ b/server/src/qwen35/qwen35_backend.cpp
+@@ -18,10 +18,13 @@
+ 
+ #include <algorithm>
+ #include <chrono>
++#include <cmath>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstdint>
+ #include <cstring>
++#include <cmath>
++#include <vector>
+ 
+ namespace dflash::common {
+ 
+@@ -34,6 +37,16 @@ static float bf16_bits_to_f32(uint16_t bits) {
+     v.u = (uint32_t)bits << 16;
+     return v.f;
+ }
++
++static float qwen35_softmax_prob_for_token(const float * logits, int vocab, int token) {
++    if (token < 0 || token >= vocab || vocab <= 0) return 0.0f;
++    float max_v = logits[0];
++    for (int i = 1; i < vocab; ++i) max_v = std::max(max_v, logits[i]);
++    double denom = 0.0;
++    for (int i = 0; i < vocab; ++i) denom += std::exp((double)logits[i] - (double)max_v);
++    if (denom <= 0.0) return 0.0f;
++    return (float)(std::exp((double)logits[token] - (double)max_v) / denom);
++}
+ }  // namespace
+ 
+ #define IS_EOS_TOK(tok, w)                                         \
+@@ -110,6 +123,14 @@ bool Qwen35Backend::init() {
+             return false;
+         }
+         std::printf("[draft]  loaded\n");
++        if (const char * force_block = std::getenv("DFLASH_FORCE_DRAFT_BLOCK_SIZE")) {
++            const int forced = std::atoi(force_block);
++            if (forced > 0 && forced != dw_.block_size) {
++                std::printf("[draft]  forcing block_size %d -> %d via DFLASH_FORCE_DRAFT_BLOCK_SIZE\n",
++                            dw_.block_size, forced);
++                dw_.block_size = forced;
++            }
++        }
+ 
+         if (cfg_.draft_swa_window > 0) {
+             dw_.swa_window = cfg_.draft_swa_window;
+@@ -793,14 +814,20 @@ int Qwen35Backend::do_prefill(const std::vector<int32_t> & tokens,
+         ggml_backend_tensor_set(sg_.inp_embed, embed_buf.data(), 0,
+                                 sizeof(float) * (size_t)hidden * n_tokens);
+ 
+-        // Positions (M-RoPE)
++        // Positions: Qwen3.5 uses M-RoPE (4 ints/token); MiniMax-M2 uses
++        // contiguous NEOX position ids and build_full_attn_block views the first
++        // n_tokens entries.
+         std::vector<int32_t> pos_buf((size_t)4 * n_tokens, 0);
+         for (int i = 0; i < n_tokens; i++) {
+             const int p = kv_pos + i;
+-            pos_buf[4 * i + 0] = p;
+-            pos_buf[4 * i + 1] = p;
+-            pos_buf[4 * i + 2] = p;
+-            pos_buf[4 * i + 3] = 0;
++            if (w_.is_minimax_m2) {
++                pos_buf[(size_t)i] = p;
++            } else {
++                pos_buf[4 * i + 0] = p;
++                pos_buf[4 * i + 1] = p;
++                pos_buf[4 * i + 2] = p;
++                pos_buf[4 * i + 3] = 0;
++            }
+         }
+         ggml_backend_tensor_set(sg_.positions, pos_buf.data(), 0,
+                                 sizeof(int32_t) * pos_buf.size());
+@@ -1181,10 +1208,46 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+     int n_accept_sum    = 0;
+     int n_hint_proposed = 0;
+     int n_hint_accepted = 0;
++    std::vector<int> per_pos_match(q_len > 1 ? (size_t)(q_len - 1) : 0, 0);
++    std::vector<int> per_pos_total(q_len > 1 ? (size_t)(q_len - 1) : 0, 0);
++    std::vector<int> per_pos_prefix(q_len > 1 ? (size_t)(q_len - 1) : 0, 0);
++    std::vector<double> per_pos_ratio_sum(q_len > 1 ? (size_t)(q_len - 1) : 0, 0.0);
++    std::vector<int> per_pos_ratio_total(q_len > 1 ? (size_t)(q_len - 1) : 0, 0);
+ 
+     auto t_dec0 = std::chrono::steady_clock::now();
++    const bool qwen35_verify_trace = std::getenv("DFLASH_QWEN35_VERIFY_TRACE") != nullptr;
++    const bool ratio_trace = std::getenv("DFLASH_VERIFY_RATIO_TRACE") != nullptr;
++
++    // Lossy typical/ratio accept axis. Env-gated; default off
++    // (strict argmax-prefix acceptance, bit-identical to prior behaviour).
++    //   DFLASH_ACCEPT_MODE=eta  + DFLASH_ACCEPT_ETA=<float in (0,1]>:
++    //     accept draft token t at pos k if p_target(t) >= eta * max_j p_target(j)
++    //   DFLASH_ACCEPT_MODE=topk + DFLASH_ACCEPT_TOPK=<int >= 2>:
++    //     accept draft token t at pos k if t is in the target's top-k tokens
++    // Strict argmax match always satisfies both rules (argmax has max prob and
++    // is top-1), so lossy acceptance is a strict superset of argmax acceptance.
++    bool lossy_eta = false, lossy_topk = false;
++    double accept_eta = 0.0;
++    int accept_topk = 0;
++    if (const char * am = std::getenv("DFLASH_ACCEPT_MODE")) {
++        if (std::strcmp(am, "eta") == 0) {
++            if (const char * e = std::getenv("DFLASH_ACCEPT_ETA")) accept_eta = std::atof(e);
++            lossy_eta = accept_eta > 0.0 && accept_eta <= 1.0;
++        } else if (std::strcmp(am, "topk") == 0) {
++            if (const char * e = std::getenv("DFLASH_ACCEPT_TOPK")) accept_topk = std::atoi(e);
++            lossy_topk = accept_topk >= 2;
++        }
++    }
++    const bool lossy_accept = lossy_eta || lossy_topk;
++    long n_lossy_extra_accepts = 0;
++    std::vector<int> per_pos_lossy(q_len > 1 ? (size_t)(q_len - 1) : 0, 0);
++    if (lossy_accept) {
++        std::fprintf(stderr, "[spec-decode] lossy_accept enabled mode=%s eta=%.4f topk=%d\n",
++                     lossy_eta ? "eta" : "topk", accept_eta, accept_topk);
++    }
+ 
+     while (n_generated < n_gen) {
++        const auto step_t0 = std::chrono::steady_clock::now();
+         const int need_commit_budget = n_gen - n_generated;
+ 
+         // Budget tail-off: when remaining budget is within the spec-decode
+@@ -1230,6 +1293,12 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+         }
+ 
+         // 1. Build noise input for draft
++        const auto draft_t0 = std::chrono::steady_clock::now();
++        if (last_tok < 0) {
++            std::fprintf(stderr, "spec-decode: stop on last_tok=%d after %d generated tokens\n",
++                         last_tok, n_generated);
++            break;
++        }
+         noise_ids[0] = last_tok;
+         for (int i = 1; i < q_len; i++) noise_ids[i] = target->mask_token_id();
+         if (!target->embed_tokens(noise_ids.data(), q_len, noise_embed.data())) {
+@@ -1250,6 +1319,58 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+             !use_remote_draft &&
+             draft_feature_mirror_can_view(feature_mirror_, committed, draft_ctx, mirror_slot0);
+ 
++        // Debug-only fc/ring localization: compare the exact draft-side fc input
++        // rows consumed from feature_mirror_ with the target-side BF16 target_feat
++        // rows that verify/replay captured for the same absolute token positions.
++        // Enabled only with DFLASH_FCRING_PROBE=1 and only on draft steps 0 and 3.
++        const char * fcring_probe = std::getenv("DFLASH_FCRING_PROBE");
++        if (fcring_probe && std::atoi(fcring_probe) != 0 &&
++            !use_remote_draft && (n_draft_steps == 0 || n_draft_steps == 3) &&
++            feature_mirror_.target_feat && cache_.target_feat) {
++            const int fc_in_probe = dw_.n_target_layers * hidden;
++            const int probe_tokens = std::min(draft_ctx, 16);
++            const int probe_start = committed - probe_tokens;
++            std::vector<float> mirror_row((size_t)fc_in_probe);
++            std::vector<uint16_t> cache_row((size_t)fc_in_probe);
++            int first_abs = -1, first_slice = -1, first_dim = -1;
++            float first_mirror = 0.0f, first_expected = 0.0f, max_abs = 0.0f;
++            for (int t = 0; t < probe_tokens; ++t) {
++                const int abs_pos = probe_start + t;
++                const int mslot = abs_pos % feature_mirror_.cap;
++                const int cslot = abs_pos % cache_.target_feat_cap;
++                const size_t moff = (size_t)mslot * feature_mirror_.target_feat->nb[1];
++                const size_t coff = (size_t)cslot * cache_.target_feat->nb[1];
++                ggml_backend_tensor_get(feature_mirror_.target_feat, mirror_row.data(), moff,
++                                        sizeof(float) * (size_t)fc_in_probe);
++                ggml_backend_tensor_get(cache_.target_feat, cache_row.data(), coff,
++                                        sizeof(uint16_t) * (size_t)fc_in_probe);
++                for (int j = 0; j < fc_in_probe; ++j) {
++                    const float exp = bf16_bits_to_f32(cache_row[(size_t)j]);
++                    float d = mirror_row[(size_t)j] - exp;
++                    if (d < 0.0f) d = -d;
++                    if (d > max_abs) max_abs = d;
++                    if (first_abs < 0 && d > 0.0f) {
++                        first_abs = abs_pos;
++                        first_slice = j / hidden;
++                        first_dim = j % hidden;
++                        first_mirror = mirror_row[(size_t)j];
++                        first_expected = exp;
++                    }
++                }
++            }
++            if (first_abs < 0) {
++                std::fprintf(stderr,
++                    "[fcring-probe] step=%d committed=%d draft_ctx=%d start=%d tokens=%d view=%d: mirror == target_feat for all %d fc values checked (max_abs=0)\n",
++                    n_draft_steps, committed, draft_ctx, draft_start, probe_tokens,
++                    use_mirror_view ? 1 : 0, probe_tokens * fc_in_probe);
++            } else {
++                std::fprintf(stderr,
++                    "[fcring-probe] FIRST_MISMATCH step=%d committed=%d draft_ctx=%d start=%d abs_pos=%d slice=%d dim=%d mirror=%g expected_bf16=%g max_abs=%g (capture order target_layer_ids assumed [2,16,30,45,59])\n",
++                    n_draft_steps, committed, draft_ctx, draft_start, first_abs,
++                    first_slice, first_dim, first_mirror, first_expected, max_abs);
++            }
++        }
++
+         if (use_remote_draft) {
+             local_hidden.clear();
+             if (!remote_draft_.propose(committed, draft_ctx, noise_embed, local_hidden)) {
+@@ -1258,7 +1379,7 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+                 return false;
+             }
+         } else {
+-            if (!build_draft_step(draft_sg, dw_, /*lm_head=*/nullptr, draft_backend_,
++            if (!build_draft_step(draft_sg, dw_, dw_.lm_head, draft_backend_,
+                                   draft_ctx, use_mirror_view ? &feature_mirror_ : nullptr,
+                                   committed,
+                                   /*ctx_len_max=*/std::min(ring_cap, std::max(DRAFT_CTX_MAX_DEFAULT, cfg_.draft_ctx_max)))) {
+@@ -1275,13 +1396,142 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+             }
+             ggml_backend_tensor_set(draft_sg.inp_embed, noise_embed.data(), 0,
+                                     sizeof(float) * noise_embed.size());
++
++            // Debug-only target_hidden_cat probe: dump actual rows handed to
++            // the draft for the last q_len committed context slots.
++            if (const char * hs_slot_dump_path = std::getenv("HS_SLOT_DUMP")) {
++                int hs_slot_dump_steps = 1;
++                if (const char * lim = std::getenv("HS_SLOT_DUMP_STEPS")) {
++                    hs_slot_dump_steps = std::max(0, std::atoi(lim));
++                }
++                if (n_draft_steps < hs_slot_dump_steps && draft_sg.target_hidden_cat && draft_ctx > 0) {
++                    FILE * hf = std::fopen(hs_slot_dump_path, "a");
++                    if (hf) {
++                        const int n_layers_for_dump = dw_.n_target_layers;
++                        std::vector<float> row((size_t)hidden);
++                        for (int slot = 0; slot < q_len; ++slot) {
++                            const int ctx_col = std::max(0, draft_ctx - q_len + slot);
++                            const int abs_pos = draft_start + ctx_col;
++                            for (int li = 0; li < n_layers_for_dump; ++li) {
++                                const int layer_id = w_.n_capture_layers > 0 ? w_.capture_layer_ids[li] : li;
++                                const size_t off = ((size_t)ctx_col * (size_t)draft_sg.target_hidden_cat->nb[1])
++                                    + (size_t)li * (size_t)hidden * sizeof(float);
++                                ggml_backend_tensor_get(draft_sg.target_hidden_cat, row.data(), off,
++                                                         (size_t)hidden * sizeof(float));
++                                double ss = 0.0, sum = 0.0, max_abs = 0.0;
++                                for (int k = 0; k < hidden; ++k) {
++                                    const double v = (double)row[(size_t)k];
++                                    ss += v * v; sum += v; max_abs = std::max(max_abs, std::fabs(v));
++                                }
++                                std::fprintf(hf,
++                                    R"json({"probe":"target_hidden_cat","file":"server/src/qwen35/qwen35_backend.cpp","draft_step":%d,"mode":"%s","draft_slot":%d,"ctx_col":%d,"abs_pos":%d,"q_len":%d,"committed":%d,"draft_start":%d,"draft_ctx":%d,"layer_index":%d,"layer_id":%d,"hidden":%d,"l2_norm":%.9g,"mean":%.9g,"max_abs":%.9g,"first8":[%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g]}
++)json",
++                                    n_draft_steps, use_mirror_view ? "mirror_view" : "copy_feature_ring_range_to_tensor",
++                                    slot, ctx_col, abs_pos, q_len, committed, draft_start, draft_ctx,
++                                    li, layer_id, hidden, std::sqrt(ss), sum / std::max(1, hidden), max_abs,
++                                    hidden > 0 ? row[0] : 0.0f, hidden > 1 ? row[1] : 0.0f,
++                                    hidden > 2 ? row[2] : 0.0f, hidden > 3 ? row[3] : 0.0f,
++                                    hidden > 4 ? row[4] : 0.0f, hidden > 5 ? row[5] : 0.0f,
++                                    hidden > 6 ? row[6] : 0.0f, hidden > 7 ? row[7] : 0.0f);
++                            }
++                        }
++                        std::fclose(hf);
++                    }
++                }
++            }
++
+             pos_k.resize((size_t)draft_ctx + q_len);
+             for (int i = 0; i < q_len; i++) pos_q[i] = draft_ctx + i;
+             for (int i = 0; i < draft_ctx + q_len; i++) pos_k[i] = i;
++
++            // Debug-only hidden-state handoff instrumentation.
++            // Emits one JSONL row per draft/noise slot and target-feature layer,
++            // naming the exact feature-ring rows/byte offsets visible as
++            // target_hidden_cat for that slot. Gated by env.
++            if (const char * hs_handoff_path = std::getenv("DFLASH_HS_HANDOFF_JSONL")) {
++                int hs_handoff_limit = 1;
++                if (const char * lim = std::getenv("DFLASH_HS_HANDOFF_STEPS")) {
++                    hs_handoff_limit = std::max(0, std::atoi(lim));
++                }
++                if (n_draft_steps < hs_handoff_limit) {
++                    FILE * hf = std::fopen(hs_handoff_path, "a");
++                    if (hf) {
++                        const int fc_in = dw_.n_target_layers * hidden;
++                        const size_t row_bytes = (size_t)fc_in * sizeof(float);
++                        const size_t src_stride = feature_mirror_.target_feat ? feature_mirror_.target_feat->nb[1] : 0;
++                        const size_t dst_stride = draft_sg.target_hidden_cat ? draft_sg.target_hidden_cat->nb[1] : 0;
++                        const int src_slot0 = feature_mirror_.cap > 0 ? (draft_start % feature_mirror_.cap) : -1;
++                        const int wrap_after = (feature_mirror_.cap > 0 && draft_ctx > 0)
++                            ? std::min(draft_ctx, feature_mirror_.cap - src_slot0) : 0;
++                        const int fallback_layer_ids[5] = {1, 10, 19, 28, 37};
++                        const int n_layers_for_dump = w_.n_capture_layers > 0 ? w_.n_capture_layers : 5;
++                        for (int slot_k = 0; slot_k < q_len; ++slot_k) {
++                            for (int li = 0; li < n_layers_for_dump; ++li) {
++                                const int layer_id = w_.n_capture_layers > 0 ? w_.capture_layer_ids[li] : fallback_layer_ids[li];
++                                const size_t layer_off = (size_t)li * (size_t)hidden * sizeof(float);
++                                std::fprintf(hf,
++                                    "{\"probe\":\"hs_handoff\",\"file\":\"server/src/qwen35/qwen35_backend.cpp\",\"callsite_line\":1348,\"copy_impl\":\"server/src/common/dflash_feature_ring.cpp:198-236\",\"draft_step\":%d,\"draft_slot_k\":%d,\"q_len\":%d,\"committed\":%d,\"draft_start\":%d,\"draft_ctx\":%d,\"mode\":\"%s\",\"copy_fn_called\":%s,\"layer_index\":%d,\"layer_id\":%d,\"src_ring_slot0\":%d,\"src_offset_row\":%d,\"src_offset_bytes_layer0\":%zu,\"src_offset_bytes_layer\":%zu,\"dst_col0\":0,\"dst_offset_bytes_layer0\":0,\"dst_offset_bytes_layer\":%zu,\"count_rows\":%d,\"row_bytes_all_layers\":%zu,\"src_stride_bytes\":%zu,\"dst_stride_bytes\":%zu,\"contiguous_first_run_rows\":%d,\"wraps\":%s,\"pos_q\":%d,\"pos_k_ctx_first\":%d,\"pos_k_ctx_last\":%d,\"pos_k_noise_self\":%d,\"verdict_hint\":\"slot sees identical committed-context target_hidden_cat rows; future/noise hidden is not copied from ring\"}\n",
++                                    n_draft_steps, slot_k, q_len, committed, draft_start, draft_ctx,
++                                    use_mirror_view ? "mirror_view" : "copy_feature_ring_range_to_tensor",
++                                    use_mirror_view ? "false" : "true", li, layer_id, src_slot0, draft_start,
++                                    (size_t)src_slot0 * src_stride, (size_t)src_slot0 * src_stride + layer_off,
++                                    layer_off, draft_ctx, row_bytes, src_stride, dst_stride, wrap_after,
++                                    (wrap_after < draft_ctx) ? "true" : "false",
++                                    pos_q[(size_t)slot_k], draft_ctx > 0 ? pos_k[0] : -1,
++                                    draft_ctx > 0 ? pos_k[(size_t)draft_ctx - 1] : -1,
++                                    pos_k[(size_t)draft_ctx + slot_k]);
++                            }
++                        }
++                        std::fclose(hf);
++                    }
++                }
++            }
++
++            if (std::getenv("DFLASH_HS_REFDIFF_DUMP") && n_draft_steps == 0) {
++                std::fprintf(stderr,
++                    "[hs-refdiff] impl=qwen35_backend.cpp step=%d committed=%d draft_start=%d draft_ctx=%d q_len=%d copy_src_abs=[%d..%d] target_hidden_cat_cols=[0..%d] consumer=src/draft/draft_graph.cpp:57,88-101\n",
++                    n_draft_steps, committed, draft_start, draft_ctx, q_len,
++                    draft_start, committed - 1, draft_ctx - 1);
++                std::fprintf(stderr,
++                    "[hs-refdiff] reference=vLLM PR40898 utils.py:489-527 query_pos=last_pos+1+slot; SGLang PR20547 dflash_worker_v2.py:451-469 target_hidden=verify_hidden.reshape(bs,block,-1) loc2d=verify_out_cache_loc.view(bs,block)\n");
++                for (int slot = 0; slot < q_len; ++slot) {
++                    const int ref_verify_hidden_row = slot;
++                    const int ref_abs_pos = committed + slot;
++                    const int buun_noise_token = (slot == 0) ? last_tok : target->mask_token_id();
++                    const int buun_pos_q = pos_q[(size_t)slot];
++                    const int buun_pos_k_ctx_first = draft_ctx > 0 ? pos_k[0] : -1;
++                    const int buun_pos_k_ctx_last = draft_ctx > 0 ? pos_k[(size_t)draft_ctx - 1] : -1;
++                    const int buun_pos_k_noise_self = pos_k[(size_t)draft_ctx + slot];
++                    std::fprintf(stderr,
++                        "[hs-refdiff-slot] slot=%02d ref_verify_hidden_row=%02d ref_abs_pos=%d ref_query_pos=%d buun_noise_token=%d buun_target_hidden_visible_abs=[%d..%d] buun_target_hidden_cols=[0..%d] buun_pos_q=%d buun_pos_k_ctx=[%d..%d] buun_pos_k_noise_self=%d expected_pos_k_ctx=[1..%d] expected_pos_k_noise_self=%d\n",
++                        slot, ref_verify_hidden_row, ref_abs_pos, ref_abs_pos, buun_noise_token,
++                        draft_start, committed - 1, draft_ctx - 1, buun_pos_q,
++                        buun_pos_k_ctx_first, buun_pos_k_ctx_last, buun_pos_k_noise_self,
++                        draft_ctx, draft_ctx + slot);
++                }
++                std::fflush(stderr);
++            }
+             ggml_backend_tensor_set(draft_sg.positions, pos_q.data(), 0,
+                                     sizeof(int32_t) * pos_q.size());
+             ggml_backend_tensor_set(draft_sg.positions_k, pos_k.data(), 0,
+                                     sizeof(int32_t) * pos_k.size());
++            if (std::getenv("DFLASH_DRAFTATTN_PROBE") && (n_draft_steps == 0 || n_draft_steps == 3)) {
++                std::fprintf(stderr,
++                    "[draftattn-probe] step=%d committed=%d draft_ctx=%d q_len=%d pos_q_first=%d pos_q_last=%d pos_k_base_first=%d pos_k_base_last=%d pos_k_noise_first=%d pos_k_noise_last=%d zlab_expected_K=[base 1..ctx, noise ctx..ctx+q-1]\n",
++                    n_draft_steps, committed, draft_ctx, q_len,
++                    pos_q.empty() ? -1 : pos_q.front(), pos_q.empty() ? -1 : pos_q.back(),
++                    pos_k.empty() ? -1 : pos_k.front(), draft_ctx > 0 ? pos_k[(size_t)draft_ctx - 1] : -1,
++                    (int)pos_k[(size_t)draft_ctx], pos_k.empty() ? -1 : pos_k.back());
++                for (int il = 0; il < dw_.n_layer; il++) {
++                    const bool is_swa = dw_.layers[(size_t)il].is_swa;
++                    const char * mask_kind = (is_swa && draft_sg.attn_mask_swa) ? "block_causal_mask_swa" :
++                        (draft_sg.attn_mask ? "block_causal_mask_full" : "nullptr");
++                    std::fprintf(stderr,
++                        "[draftmask-probe] step=%d layer=%d kind=%s actual_mask=%s visible_keys=%s\n",
++                        n_draft_steps, il, is_swa ? "swa" : "full", mask_kind,
++                        is_swa ? "swa-window context + noise j<=q (future noise excluded)" : "all context + noise j<=q (future noise excluded)");
++                }
++            }
+ 
+             auto st = ggml_backend_graph_compute(draft_backend_, draft_sg.gf);
+             if (st != GGML_STATUS_SUCCESS) {
+@@ -1290,18 +1540,60 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+                 return false;
+             }
+ 
+-            // Read draft hidden states to host for LM-head projection.
+-            local_hidden.resize((size_t)hidden * q_len);
+-            ggml_backend_tensor_get(draft_sg.hidden_states, local_hidden.data(), 0,
+-                                    sizeof(float) * local_hidden.size());
++            if (dw_.lm_head) {
++                std::vector<int32_t> draft_vocab_tok(q_len);
++                ggml_backend_tensor_get(draft_sg.argmax_tokens, draft_vocab_tok.data(), 0,
++                                        sizeof(int32_t) * draft_vocab_tok.size());
++                draft_tok.resize(q_len);
++                for (int i = 0; i < q_len; i++) {
++                    const int id = draft_vocab_tok[i];
++                    if (id < 0 || id >= (int)dw_.d2t.size()) {
++                        std::fprintf(stderr, "spec-decode: draft vocab id out of range %d (vocab=%zu)\n", id, dw_.d2t.size());
++                        step_graph_destroy(draft_sg);
++                        return false;
++                    }
++                    draft_tok[i] = dw_.d2t[(size_t)id];
++                }
++            } else {
++                // Read draft hidden states to host for target LM-head projection.
++                local_hidden.resize((size_t)hidden * q_len);
++                ggml_backend_tensor_get(draft_sg.hidden_states, local_hidden.data(), 0,
++                                        sizeof(float) * local_hidden.size());
++            }
+         }
+ 
+-        // 3. Project draft hidden → token IDs via target LM head
+-        if (!target->project_hidden_to_tokens(local_hidden.data(), q_len, draft_tok)) {
+-            std::fprintf(stderr, "spec-decode: projection failed\n");
+-            step_graph_destroy(draft_sg);
+-            return false;
++        const auto draft_t1 = std::chrono::steady_clock::now();
++
++        // 3. Project draft hidden → token IDs.  Own-head drafts produce target
++        const auto project_t0 = std::chrono::steady_clock::now();
++        // token ids via d2t above; legacy shared-head drafts still use target LM head.
++        std::vector<float> draft_probs;
++        if (!dw_.lm_head) {
++            if (ratio_trace) {
++                if (!target->project_hidden_to_tokens_with_probs(local_hidden.data(), q_len, draft_tok, &draft_probs)) {
++                    std::fprintf(stderr, "spec-decode: projection+ratio failed\n");
++                    step_graph_destroy(draft_sg);
++                    return false;
++                }
++            } else if (!target->project_hidden_to_tokens(local_hidden.data(), q_len, draft_tok)) {
++                std::fprintf(stderr, "spec-decode: projection failed\n");
++                step_graph_destroy(draft_sg);
++                return false;
++            }
++        } else if (ratio_trace && draft_sg.logits) {
++            const int dvocab = (int)dw_.d2t.size();
++            std::vector<float> draft_logits((size_t)dvocab * (size_t)q_len);
++            ggml_backend_tensor_get(draft_sg.logits, draft_logits.data(), 0, sizeof(float) * draft_logits.size());
++            draft_probs.assign((size_t)q_len, 0.0f);
++            for (int i = 0; i < q_len; ++i) {
++                int draft_vocab_id = 0;
++                for (int j = 0; j < dvocab; ++j) {
++                    if (dw_.d2t[(size_t)j] == draft_tok[(size_t)i]) { draft_vocab_id = j; break; }
++                }
++                draft_probs[(size_t)i] = qwen35_softmax_prob_for_token(draft_logits.data() + (size_t)i * dvocab, dvocab, draft_vocab_id);
++            }
+         }
++        const auto project_t1 = std::chrono::steady_clock::now();
+         draft_tok[0] = last_tok;
+ 
+         // 3b. Tool call hint injection: override draft tokens with pre-known
+@@ -1322,50 +1614,153 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+         }
+ 
+         int verify_last_tok = -1;
+-        if (!target->verify_batch(draft_tok, committed, verify_last_tok, &target_tok)) {
++        const int verify_n_tokens = (int)draft_tok.size();
++        std::vector<float> target_candidate_probs;
++        std::vector<float> target_max_probs;
++        std::vector<int32_t> target_topk_tokens;
++        std::vector<int32_t> ratio_candidates;
++        if (ratio_trace || lossy_accept) {
++            ratio_candidates.assign((size_t)q_len, -1);
++            for (int i = 0; i < q_len - 1; ++i) ratio_candidates[(size_t)i] = draft_tok[(size_t)i + 1];
++        }
++        const auto verify_t0 = std::chrono::steady_clock::now();
++        bool verify_ok;
++        if (lossy_accept) {
++            verify_ok = target->verify_batch_with_accept_info(
++                draft_tok, committed, verify_last_tok, &target_tok, ratio_candidates,
++                &target_candidate_probs,
++                lossy_eta ? &target_max_probs : nullptr,
++                lossy_topk ? accept_topk : 0,
++                lossy_topk ? &target_topk_tokens : nullptr);
++            if (!verify_ok) {
++                // Backend lacks accept-info support; fall back to strict verify
++                // so the request still completes (acceptance degrades to argmax).
++                std::fprintf(stderr, "spec-decode: accept_info unsupported, falling back to strict verify\n");
++                target_candidate_probs.clear();
++                target_max_probs.clear();
++                target_topk_tokens.clear();
++                verify_ok = target->verify_batch(draft_tok, committed, verify_last_tok, &target_tok);
++            }
++        } else {
++            verify_ok = ratio_trace
++                ? target->verify_batch_with_candidate_probs(draft_tok, committed, verify_last_tok, &target_tok, ratio_candidates, &target_candidate_probs)
++                : target->verify_batch(draft_tok, committed, verify_last_tok, &target_tok);
++        }
++        if (!verify_ok) {
+             std::fprintf(stderr, "spec-decode: verify failed\n");
+             target->restore_kv();
+             step_graph_destroy(draft_sg);
+             return false;
+         }
+-
+-        // 5. Acceptance: longest matching prefix between draft and target argmax
++        const auto verify_t1 = std::chrono::steady_clock::now();
++
++        // 5. Acceptance: longest matching prefix between draft and target argmax.
++        // When lossy accept is enabled, an argmax mismatch can
++        // still be accepted if the draft token passes the eta-ratio or top-k
++        // rule against the target distribution at that position. The committed
++        // token is the DRAFT token; the next-step seed remains the target
++        // argmax conditioned on the full accepted prefix (target_tok[accept_n-1]),
++        // so rejected continuations always hand control back to the target.
+         int accept_n = 1;
++        bool prefix_ok = true;
+         for (int i = 0; i < q_len - 1; i++) {
+-            if (draft_tok[i + 1] == target_tok[i]) accept_n++;
+-            else break;
++            const bool match = (draft_tok[i + 1] == target_tok[i]);
++            per_pos_total[(size_t)i]++;
++            if (match) per_pos_match[(size_t)i]++;
++            bool accept_here = match;
++            if (lossy_accept && !match) {
++                bool lossy_ok = false;
++                if (lossy_eta && i < (int)target_candidate_probs.size() && i < (int)target_max_probs.size()) {
++                    const double pc = (double)target_candidate_probs[(size_t)i];
++                    const double pm = (double)target_max_probs[(size_t)i];
++                    lossy_ok = pm > 0.0 && std::isfinite(pc) && std::isfinite(pm) && pc >= accept_eta * pm;
++                } else if (lossy_topk && (size_t)(i + 1) * (size_t)accept_topk <= target_topk_tokens.size()) {
++                    const int cand = draft_tok[(size_t)i + 1];
++                    for (int t = 0; t < accept_topk; ++t) {
++                        if (target_topk_tokens[(size_t)i * (size_t)accept_topk + (size_t)t] == cand) { lossy_ok = true; break; }
++                    }
++                }
++                if (lossy_ok) {
++                    accept_here = true;
++                    per_pos_lossy[(size_t)i]++;
++                    if (prefix_ok) n_lossy_extra_accepts++;
++                }
++            }
++            if (ratio_trace && i + 1 < (int)draft_probs.size() && i < (int)target_candidate_probs.size()) {
++                const double pd = (double)draft_probs[(size_t)i + 1];
++                const double pt = (double)target_candidate_probs[(size_t)i];
++                if (pd > 0.0 && std::isfinite(pd) && std::isfinite(pt)) {
++                    const double r = std::min(1.0, pt / pd);
++                    per_pos_ratio_sum[(size_t)i] += r;
++                    per_pos_ratio_total[(size_t)i]++;
++                    std::fprintf(stderr, "[dflash-ratio-trace] step=%d pos=%d token=%d p_target=%.9g p_draft=%.9g ratio=%.9g argmax_match=%d\n",
++                                 n_draft_steps, i + 1, draft_tok[(size_t)i + 1], pt, pd, r, match ? 1 : 0);
++                }
++            }
++            if (prefix_ok && accept_here) {
++                per_pos_prefix[(size_t)i]++;
++                accept_n++;
++            } else {
++                prefix_ok = false;
++            }
+         }
+         // Track hint acceptance telemetry.
+         if (hint_fill > 0) {
+             n_hint_proposed += hint_fill;
+             n_hint_accepted += std::min(hint_fill, accept_n - 1);
+         }
+-        int bonus_tok = (accept_n < q_len) ? target_tok[accept_n - 1] : -1;
+-        int commit_n  = accept_n + (bonus_tok >= 0 ? 1 : 0);
++        // Do not commit the classic speculative-decoding bonus token on this
++        // path. The verified target forward materializes KV/features for the
++        // accepted draft input rows draft_tok[0..accept_n); the argmax bonus
++        // target_tok[accept_n-1] is not guaranteed to be an input row when the
++        // first mismatch occurs, so committing it requires a second target
++        // forward. Stop at the accepted prefix to keep exactly one target
++        // forward per spec step and let the next step propose from last_tok.
++        int bonus_tok = -1;
++        int commit_n  = accept_n;
+         if (commit_n > need_commit_budget) {
+             commit_n = need_commit_budget;
+-            if (commit_n <= accept_n) bonus_tok = -1;
+-        }
+-
+-        // 6. Replay: roll back KV and re-run only accepted tokens
+-        if (!target->restore_kv()) {
+-            step_graph_destroy(draft_sg);
+-            return false;
+         }
+ 
++        // 6. Commit verified prefix without replaying it. The target verify
++        // forward above already wrote KV/features for draft_tok[0..accept_n).
++        // Keep those cells and logically trim the rejected tail.
+         std::vector<int32_t> replay_tok((size_t)commit_n);
+         for (int i = 0; i < commit_n; i++) {
+             replay_tok[i] = (i < accept_n) ? draft_tok[i] : bonus_tok;
+         }
+-        int replay_last_tok = -1;
+-        if (!target->verify_batch(replay_tok, committed, replay_last_tok, nullptr)) {
+-            std::fprintf(stderr, "spec-decode: replay failed\n");
++
++        const int verified_commit_n = std::min(commit_n, accept_n);
++        if (!target->truncate_kv(committed + verified_commit_n)) {
++            std::fprintf(stderr, "spec-decode: truncate verified KV failed (pos=%d)\n",
++                         committed + verified_commit_n);
+             step_graph_destroy(draft_sg);
+             return false;
+         }
+-        last_tok = replay_last_tok;
+ 
+-        // 7. Sync features for replayed range to mirror (needed for next draft step)
++        int replay_last_tok = -1;
++        int replay_n_tokens = 0;
++        auto replay_t0 = std::chrono::steady_clock::now();
++        auto replay_t1 = replay_t0;
++        if (commit_n > accept_n) {
++            const std::vector<int32_t> bonus_vec{bonus_tok};
++            replay_n_tokens = 1;
++            replay_t0 = std::chrono::steady_clock::now();
++            if (!target->verify_batch(bonus_vec, committed + accept_n, replay_last_tok, nullptr)) {
++                std::fprintf(stderr, "spec-decode: bonus commit failed\n");
++                step_graph_destroy(draft_sg);
++                return false;
++            }
++            replay_t1 = std::chrono::steady_clock::now();
++            last_tok = replay_last_tok;
++        } else {
++            // Next-token seed after the last emitted accepted draft token.
++            const int last_emitted_idx = std::max(0, commit_n - 1);
++            last_tok = target_tok[(size_t)last_emitted_idx];
++        }
++
++        // 7. Sync features for committed range to mirror (verify pass supplied
++        // accepted-prefix rows; optional bonus forward supplied the bonus row).
+         if (use_remote_draft && cache_.target_feat) {
+             if (!sync_remote_draft_features(committed, commit_n)) {
+                 step_graph_destroy(draft_sg);
+@@ -1390,6 +1785,19 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+         cache_.cur_pos = committed;
+         n_generated += emitted;
+         n_accept_sum += std::min(accept_n, emitted);
++        if (qwen35_verify_trace) {
++            const auto step_t1 = std::chrono::steady_clock::now();
++            const double draft_ms = std::chrono::duration<double, std::milli>(draft_t1 - draft_t0).count();
++            const double project_ms = std::chrono::duration<double, std::milli>(project_t1 - project_t0).count();
++            const double verify_ms = std::chrono::duration<double, std::milli>(verify_t1 - verify_t0).count();
++            const double replay_ms = std::chrono::duration<double, std::milli>(replay_t1 - replay_t0).count();
++            const double step_ms = std::chrono::duration<double, std::milli>(step_t1 - step_t0).count();
++            std::fprintf(stderr,
++                "[qwen35-verify-trace] step=%d committed=%d q_len=%d verify_n_tokens=%d replay_n_tokens=%d accept_n=%d commit_n=%d emitted=%d draft_ms=%.3f project_ms=%.3f verify_ms=%.3f replay_ms=%.3f step_ms=%.3f\n",
++                n_draft_steps, committed, q_len, verify_n_tokens, replay_n_tokens, accept_n, commit_n, emitted,
++                draft_ms, project_ms, verify_ms, replay_ms, step_ms);
++            std::fflush(stderr);
++        }
+         n_draft_steps++;
+         if (io.cancelled) break;
+         if (hit_eos) break;
+@@ -1403,11 +1811,41 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
+     const double accept_pct = 100.0 * (double)n_accept_sum / (double)total_draft_pos;
+     out_accept_rate = (float)((double)n_accept_sum / (double)total_draft_pos);
+     std::fprintf(stderr, "[spec-decode] tokens=%d time=%.3f s speed=%.2f tok/s "
+-                 "steps=%d accepted=%d/%d (%.1f%%) avg_commit=%.2f\n",
++                 "steps=%d accepted=%d/%d (%.1f%%) avg_commit=%.4f\n",
+                  n_generated, decode_s,
+                  n_generated > 0 ? n_generated / decode_s : 0.0,
+                  n_draft_steps, n_accept_sum, total_draft_pos, accept_pct,
+                  n_draft_steps > 0 ? (double)n_generated / (double)n_draft_steps : 0.0);
++    std::fprintf(stderr, "[spec-decode] per_pos_argmax_match p1..p%d:", q_len - 1);
++    for (int i = 0; i < q_len - 1; i++) {
++        const double v = per_pos_total[(size_t)i] > 0 ? (double)per_pos_match[(size_t)i] / (double)per_pos_total[(size_t)i] : 0.0;
++        std::fprintf(stderr, " %.6f", v);
++    }
++    std::fprintf(stderr, "\n");
++    std::fprintf(stderr, "[spec-decode] per_pos_prefix_accept p1..p%d:", q_len - 1);
++    for (int i = 0; i < q_len - 1; i++) {
++        const double v = per_pos_total[(size_t)i] > 0 ? (double)per_pos_prefix[(size_t)i] / (double)per_pos_total[(size_t)i] : 0.0;
++        std::fprintf(stderr, " %.6f", v);
++    }
++    std::fprintf(stderr, "\n");
++    if (ratio_trace) {
++        std::fprintf(stderr, "[spec-decode] per_pos_eagle_ratio p1..p%d:", q_len - 1);
++        for (int i = 0; i < q_len - 1; i++) {
++            const double v = per_pos_ratio_total[(size_t)i] > 0 ? per_pos_ratio_sum[(size_t)i] / (double)per_pos_ratio_total[(size_t)i] : 0.0;
++            std::fprintf(stderr, " %.6f", v);
++        }
++        std::fprintf(stderr, "\n");
++    }
++    if (lossy_accept) {
++        std::fprintf(stderr, "[spec-decode] lossy_accept mode=%s eta=%.4f topk=%d extra_prefix_accepts=%ld\n",
++                     lossy_eta ? "eta" : "topk", accept_eta, accept_topk, n_lossy_extra_accepts);
++        std::fprintf(stderr, "[spec-decode] per_pos_lossy_accept p1..p%d:", q_len - 1);
++        for (int i = 0; i < q_len - 1; i++) {
++            const double v = per_pos_total[(size_t)i] > 0 ? (double)per_pos_lossy[(size_t)i] / (double)per_pos_total[(size_t)i] : 0.0;
++            std::fprintf(stderr, " %.6f", v);
++        }
++        std::fprintf(stderr, "\n");
++    }
+     if (n_hint_proposed > 0) {
+         std::fprintf(stderr, "[spec-decode] hint tokens: %d/%d accepted (%.1f%%)\n",
+                      n_hint_accepted, n_hint_proposed,
+diff --git a/server/src/qwen35/qwen35_dflash_target.cpp b/server/src/qwen35/qwen35_dflash_target.cpp
+index 65713d1..00f3a2c 100644
+--- a/server/src/qwen35/qwen35_dflash_target.cpp
++++ b/server/src/qwen35/qwen35_dflash_target.cpp
+@@ -5,8 +5,25 @@
+ #include "step_graph.h"
+ #include "attn_masks.h"
+ 
++#include <algorithm>
++#include <cmath>
++
+ namespace dflash::common {
+ 
++namespace {
++
++static float softmax_prob_for_token(const float * logits, int vocab, int token) {
++    if (token < 0 || token >= vocab) return 0.0f;
++    float max_v = logits[0];
++    for (int i = 1; i < vocab; ++i) max_v = std::max(max_v, logits[i]);
++    double denom = 0.0;
++    for (int i = 0; i < vocab; ++i) denom += std::exp((double)logits[i] - (double)max_v);
++    if (denom <= 0.0) return 0.0f;
++    return (float)(std::exp((double)logits[token] - (double)max_v) / denom);
++}
++
++} // namespace
++
+ Qwen35DFlashTarget::~Qwen35DFlashTarget() {
+     step_graph_destroy(proj_sg_);
+ }
+@@ -55,13 +72,19 @@ bool Qwen35DFlashTarget::verify_batch(
+     ggml_backend_tensor_set(sg_.inp_embed, embed.data(), 0,
+                             sizeof(float) * embed.size());
+ 
+-    // Qwen35 uses interleaved positions: 4 ints per token.
+-    std::vector<int32_t> pos(4 * n_tokens);
++    // Positions: Qwen35 uses interleaved M-RoPE (4 ints/token); MiniMax-M2
++    // uses contiguous NEOX ids in the first n_tokens entries.
++    std::vector<int32_t> pos(4 * n_tokens, 0);
+     for (int i = 0; i < n_tokens; i++) {
+-        pos[4 * i + 0] = base_pos + i;
+-        pos[4 * i + 1] = base_pos + i;
+-        pos[4 * i + 2] = base_pos + i;
+-        pos[4 * i + 3] = 0;
++        const int p = base_pos + i;
++        if (w_.is_minimax_m2) {
++            pos[(size_t)i] = p;
++        } else {
++            pos[4 * i + 0] = p;
++            pos[4 * i + 1] = p;
++            pos[4 * i + 2] = p;
++            pos[4 * i + 3] = 0;
++        }
+     }
+     ggml_backend_tensor_set(sg_.positions, pos.data(), 0,
+                             sizeof(int32_t) * pos.size());
+@@ -99,6 +122,93 @@ bool Qwen35DFlashTarget::verify_batch(
+     return true;
+ }
+ 
++bool Qwen35DFlashTarget::verify_batch_with_candidate_probs(
++        const std::vector<int32_t> & tokens,
++        int base_pos,
++        int & last_tok,
++        std::vector<int32_t> * all_argmax,
++        const std::vector<int32_t> & candidate_tokens,
++        std::vector<float> * candidate_probs) {
++    if (!candidate_probs) return verify_batch(tokens, base_pos, last_tok, all_argmax);
++    if (!verify_batch(tokens, base_pos, last_tok, all_argmax)) return false;
++    const int n_tokens = (int)tokens.size();
++    const int vocab = w_.n_vocab;
++    if ((int)candidate_tokens.size() < n_tokens || !sg_.logits || vocab <= 0) return false;
++    std::vector<float> logits((size_t)vocab * (size_t)n_tokens);
++    ggml_backend_tensor_get(sg_.logits, logits.data(), 0, sizeof(float) * logits.size());
++    candidate_probs->assign((size_t)n_tokens, 0.0f);
++    for (int i = 0; i < n_tokens; ++i) {
++        (*candidate_probs)[(size_t)i] = softmax_prob_for_token(logits.data() + (size_t)i * vocab, vocab, candidate_tokens[(size_t)i]);
++    }
++    return true;
++}
++
++bool Qwen35DFlashTarget::verify_batch_with_accept_info(
++        const std::vector<int32_t> & tokens,
++        int base_pos,
++        int & last_tok,
++        std::vector<int32_t> * all_argmax,
++        const std::vector<int32_t> & candidate_tokens,
++        std::vector<float> * candidate_probs,
++        std::vector<float> * max_probs,
++        int topk,
++        std::vector<int32_t> * topk_tokens) {
++    if (!candidate_probs && !max_probs && !topk_tokens) {
++        return verify_batch(tokens, base_pos, last_tok, all_argmax);
++    }
++    if (!verify_batch(tokens, base_pos, last_tok, all_argmax)) return false;
++    const int n_tokens = (int)tokens.size();
++    const int vocab = w_.n_vocab;
++    if ((int)candidate_tokens.size() < n_tokens || !sg_.logits || vocab <= 0) return false;
++    std::vector<float> logits((size_t)vocab * (size_t)n_tokens);
++    ggml_backend_tensor_get(sg_.logits, logits.data(), 0, sizeof(float) * logits.size());
++    if (candidate_probs) candidate_probs->assign((size_t)n_tokens, 0.0f);
++    if (max_probs) max_probs->assign((size_t)n_tokens, 0.0f);
++    if (topk_tokens) topk_tokens->assign((size_t)n_tokens * (size_t)std::max(0, topk), -1);
++    for (int i = 0; i < n_tokens; ++i) {
++        const float * row = logits.data() + (size_t)i * vocab;
++        // single-pass softmax denominator
++        float max_v = row[0];
++        int arg = 0;
++        for (int j = 1; j < vocab; ++j) {
++            if (row[j] > max_v) { max_v = row[j]; arg = j; }
++        }
++        double denom = 0.0;
++        for (int j = 0; j < vocab; ++j) denom += std::exp((double)row[j] - (double)max_v);
++        if (denom <= 0.0) denom = 1.0;
++        if (candidate_probs) {
++            const int cand = candidate_tokens[(size_t)i];
++            (*candidate_probs)[(size_t)i] = (cand >= 0 && cand < vocab)
++                ? (float)(std::exp((double)row[cand] - (double)max_v) / denom) : 0.0f;
++        }
++        if (max_probs) {
++            (*max_probs)[(size_t)i] = (float)(1.0 / denom);  // exp(0)/denom
++        }
++        if (topk_tokens && topk > 0) {
++            // partial selection of topk indices by logit
++            std::vector<int> idx;
++            idx.reserve((size_t)topk);
++            idx.push_back(arg);
++            for (int t = 1; t < topk; ++t) {
++                float best_v = -1e30f;
++                int best_j = -1;
++                for (int j = 0; j < vocab; ++j) {
++                    bool used = false;
++                    for (int u : idx) if (u == j) { used = true; break; }
++                    if (used) continue;
++                    if (row[j] > best_v) { best_v = row[j]; best_j = j; }
++                }
++                if (best_j < 0) break;
++                idx.push_back(best_j);
++            }
++            for (size_t t = 0; t < idx.size(); ++t) {
++                (*topk_tokens)[(size_t)i * (size_t)topk + t] = idx[t];
++            }
++        }
++    }
++    return true;
++}
++
+ bool Qwen35DFlashTarget::snapshot_kv() {
+     snapshot_ssm_state(cache_);
+     return true;
+@@ -109,6 +219,12 @@ bool Qwen35DFlashTarget::restore_kv() {
+     return true;
+ }
+ 
++bool Qwen35DFlashTarget::truncate_kv(int new_pos) {
++    if (new_pos < 0 || new_pos > cache_.max_ctx) return false;
++    cache_.cur_pos = new_pos;
++    return true;
++}
++
+ bool Qwen35DFlashTarget::is_eos(int token) const {
+     return is_eos_tok(token, w_);
+ }
+@@ -122,6 +238,14 @@ bool Qwen35DFlashTarget::project_hidden_to_tokens(
+         const float * hidden,
+         int n_tokens,
+         std::vector<int32_t> & tokens_out) {
++    return project_hidden_to_tokens_with_probs(hidden, n_tokens, tokens_out, nullptr);
++}
++
++bool Qwen35DFlashTarget::project_hidden_to_tokens_with_probs(
++        const float * hidden,
++        int n_tokens,
++        std::vector<int32_t> & tokens_out,
++        std::vector<float> * probs_out) {
+     if (n_tokens <= 0) return false;
+ 
+     if (!build_lm_head_projection_step(proj_sg_, w_, backend_, n_tokens)) {
+@@ -134,10 +258,18 @@ bool Qwen35DFlashTarget::project_hidden_to_tokens(
+     auto st = ggml_backend_graph_compute(backend_, proj_sg_.gf);
+     if (st != GGML_STATUS_SUCCESS) return false;
+ 
+-    // Read argmax results from GPU.
+     tokens_out.resize(n_tokens);
+     ggml_backend_tensor_get(proj_sg_.argmax_tokens, tokens_out.data(), 0,
+                             sizeof(int32_t) * n_tokens);
++    if (probs_out) {
++        const int vocab = w_.n_vocab;
++        std::vector<float> logits((size_t)vocab * (size_t)n_tokens);
++        ggml_backend_tensor_get(proj_sg_.logits, logits.data(), 0, sizeof(float) * logits.size());
++        probs_out->assign((size_t)n_tokens, 0.0f);
++        for (int i = 0; i < n_tokens; ++i) {
++            (*probs_out)[(size_t)i] = softmax_prob_for_token(logits.data() + (size_t)i * vocab, vocab, tokens_out[(size_t)i]);
++        }
++    }
+     return true;
+ }
+ 
+diff --git a/server/src/qwen35/qwen35_dflash_target.h b/server/src/qwen35/qwen35_dflash_target.h
+index 6a72e48..2c6eda9 100644
+--- a/server/src/qwen35/qwen35_dflash_target.h
++++ b/server/src/qwen35/qwen35_dflash_target.h
+@@ -39,6 +39,7 @@ public:
+ 
+     bool snapshot_kv() override;
+     bool restore_kv() override;
++    bool truncate_kv(int new_pos) override;
+ 
+     bool is_eos(int token) const override;
+ 
+@@ -48,6 +49,25 @@ public:
+     bool project_hidden_to_tokens(const float * hidden,
+                                   int n_tokens,
+                                   std::vector<int32_t> & tokens_out) override;
++    bool project_hidden_to_tokens_with_probs(const float * hidden,
++                                             int n_tokens,
++                                             std::vector<int32_t> & tokens_out,
++                                             std::vector<float> * probs_out) override;
++    bool verify_batch_with_candidate_probs(const std::vector<int32_t> & tokens,
++                                           int base_pos,
++                                           int & last_tok,
++                                           std::vector<int32_t> * all_argmax,
++                                           const std::vector<int32_t> & candidate_tokens,
++                                           std::vector<float> * candidate_probs) override;
++    bool verify_batch_with_accept_info(const std::vector<int32_t> & tokens,
++                                       int base_pos,
++                                       int & last_tok,
++                                       std::vector<int32_t> * all_argmax,
++                                       const std::vector<int32_t> & candidate_tokens,
++                                       std::vector<float> * candidate_probs,
++                                       std::vector<float> * max_probs,
++                                       int topk,
++                                       std::vector<int32_t> * topk_tokens) override;
+ 
+     int hidden_size() const override { return w_.n_embd; }
+     int mask_token_id() const override;

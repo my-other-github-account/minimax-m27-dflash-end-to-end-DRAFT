@@ -22,13 +22,18 @@ from __future__ import annotations
 
 from .gguf_export import (
     export_to_gguf,
+    export_lucebox_to_gguf,
+    normalize_lucebox_checkpoint,
     prep_for_buun_converter,
     register_minimax_fp8_tokenizer_hash,
     verify_gguf_metadata,
     FP8_TOKENIZER_HASH,
 )
-from .server import LlamaServer
-from .benchmark import benchmark, benchmark_ar_vs_dflash, DEFAULT_PROMPT, DEFAULT_PROMPT_SUITE
+from .server import LlamaServer, LuceboxDFlashServer
+from .benchmark import (
+    benchmark, benchmark_ar_vs_dflash, DEFAULT_PROMPT, DEFAULT_PROMPT_SUITE,
+    al_true, has_verbatim_repeat_loop, quality_gate_passes, summarize_ar_vs_spec_50,
+)
 from .analyze import (
     SpeculativeReport,
     parse_speculative_log,
@@ -41,15 +46,22 @@ from .analyze import (
 __all__ = [
     # GGUF export
     "export_to_gguf",
+    "export_lucebox_to_gguf",
+    "normalize_lucebox_checkpoint",
     "prep_for_buun_converter",
     "register_minimax_fp8_tokenizer_hash",
     "verify_gguf_metadata",
     "FP8_TOKENIZER_HASH",
     # Server
     "LlamaServer",
+    "LuceboxDFlashServer",
     # Benchmark + report
     "benchmark",
     "benchmark_ar_vs_dflash",
+    "al_true",
+    "has_verbatim_repeat_loop",
+    "quality_gate_passes",
+    "summarize_ar_vs_spec_50",
     "DEFAULT_PROMPT",
     "DEFAULT_PROMPT_SUITE",
     "SpeculativeReport",
