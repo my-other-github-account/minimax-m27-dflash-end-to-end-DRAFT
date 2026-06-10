@@ -223,6 +223,7 @@ def cmd_export_gguf(args) -> int:
         checkpoint=args.checkpoint,
         output_path=args.output,
         verifier_meta_dir=args.verifier_meta_dir,
+        d2t_path=getattr(args, "d2t_path", None),
         buun_repo=args.buun_repo,
         venv_python=args.venv_python,
         outtype=args.outtype,
@@ -244,6 +245,7 @@ def cmd_export_lucebox(args) -> int:
         checkpoint=args.checkpoint,
         output_path=args.output,
         verifier_meta_dir=args.verifier_meta_dir,
+        d2t_path=args.d2t_path,
         buun_repo=args.buun_repo,
         venv_python=args.venv_python,
         outtype=args.outtype,
@@ -537,6 +539,8 @@ def build_parser() -> argparse.ArgumentParser:
     sx.add_argument("--output", required=True, help="path to write the GGUF")
     sx.add_argument("--verifier-meta-dir", default=None,
                     help="directory holding tokenizer.json etc (default: read from config)")
+    sx.add_argument("--d2t-path", default=None,
+                    help="draft-to-target vocab map .npy for adapter-only output-head rebake")
     sx.add_argument("--buun-repo", default="buun-llama-cpp",
                     help="buun-llama-cpp checkout containing convert_hf_to_gguf.py")
     sx.add_argument("--venv-python", default=None,
@@ -563,6 +567,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="path to write the GGUF")
     sl.add_argument("--verifier-meta-dir", default=None,
                     help="directory holding tokenizer.json etc (default: read from config)")
+    sl.add_argument("--d2t-path", default=None,
+                    help="draft-to-target vocab map .npy for sparse served-drafter output head")
     sl.add_argument("--buun-repo", default="buun-llama-cpp",
                     help="buun-llama-cpp checkout containing convert_hf_to_gguf.py")
     sl.add_argument("--venv-python", default=None,

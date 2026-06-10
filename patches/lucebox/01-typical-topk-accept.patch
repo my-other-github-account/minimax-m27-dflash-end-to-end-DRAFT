@@ -27,13 +27,22 @@ Verifier-authoritative note:
 Provenance:
 - Generated as a clean unified diff against github.com/Luce-Org/lucebox-hub
   at commit bdc706a.
-- Touches only the DFlash target interface and Qwen/MiniMax DFlash backend.
+- Touches only the DFlash target interface, shared weight compatibility structs,
+  and Qwen/MiniMax DFlash backend.
+- The shared struct additions are default-false/default-empty compatibility
+  fields required because the public patch is cut from a later internal tree;
+  they preserve stock public Qwen3.5 behavior and make the patch compile on
+  public bdc706a.
+- The new truncate_kv hook is a safe default (returns false) in the interface,
+  so non-Qwen DFlashTarget implementers in the public tree remain concrete and
+  compile; Qwen/MiniMax overrides it with the real logical KV trim used by this
+  patch's no-replay verified-prefix commit path.
 
 diff --git a/server/src/common/dflash_target.h b/server/src/common/dflash_target.h
-index 56fd4be..d6dc683 100644
+index 56fd4be..3ac51f6 100644
 --- a/server/src/common/dflash_target.h
 +++ b/server/src/common/dflash_target.h
-@@ -42,6 +42,13 @@ struct DFlashTarget {
+@@ -42,6 +42,16 @@ struct DFlashTarget {
      // Restore KV cache to the last snapshot (undo speculative forward).
      virtual bool restore_kv() = 0;
  
@@ -42,12 +51,15 @@ index 56fd4be..d6dc683 100644
 +    // logical trim: future forwards address only [0, new_pos), so stale cells
 +    // in [new_pos, old_cur_pos) are overwritten before reuse. Backends with
 +    // recurrent state must also roll back/commit their non-attention state.
-+    virtual bool truncate_kv(int new_pos) = 0;
++    virtual bool truncate_kv(int new_pos) {
++        (void) new_pos;
++        return false;
++    }
 +
      // ── Token utilities ─────────────────────────────────────────────
  
      // Check if a token is end-of-sequence for this model.
-@@ -61,6 +68,49 @@ struct DFlashTarget {
+@@ -61,6 +71,49 @@ struct DFlashTarget {
                                            int n_tokens,
                                            std::vector<int32_t> & tokens_out) = 0;
  
@@ -97,8 +109,36 @@ index 56fd4be..d6dc683 100644
      // ── Configuration for draft model ───────────────────────────────
  
      // Target's hidden dimension (draft model must match).
+diff --git a/server/src/internal.h b/server/src/internal.h
+index f9a890f..8e6c73b 100644
+--- a/server/src/internal.h
++++ b/server/src/internal.h
+@@ -178,6 +178,10 @@ struct TargetWeights {
+     float expert_weights_scale  = 1.0f;
+     int expert_gating_func      = 1;    // 1=softmax, 2=sigmoid (llama.cpp enum values)
+     bool is_moe                 = false;
++    // Public bdc706a does not carry the later MiniMax-M2 target flag.  Keep a
++    // default-false compatibility field so the public typaccept patch can share
++    // the same prefill position path without changing Qwen3.5 behavior.
++    bool is_minimax_m2          = false;
+     int ssm_d_conv              = 4;
+     int ssm_d_inner             = 6144;
+     int ssm_d_state             = 128;
+@@ -252,6 +256,12 @@ struct DraftWeights {
+ 
+     ggml_tensor *          fc          = nullptr;   // [5*hidden, hidden]
+     ggml_tensor *          hidden_norm = nullptr;   // [hidden]
++    // Optional served-drafter output head and draft-vocab -> target-vocab map.
++    // The public MiniMax GGUF repro rebakes the adapter to target-vocab shape,
++    // so legacy checkpoints leave these empty and still use the target lm_head
++    // projection path.
++    ggml_tensor *          lm_head     = nullptr;   // [hidden, draft_vocab/target_vocab]
++    std::vector<int32_t>   d2t;
+     std::vector<DraftLayer> layers;                 // size = n_layer
+     ggml_tensor *          out_norm    = nullptr;   // [hidden]
+ 
 diff --git a/server/src/qwen35/qwen35_backend.cpp b/server/src/qwen35/qwen35_backend.cpp
-index 4a3d967..433750d 100644
+index 4a3d967..4954dee 100644
 --- a/server/src/qwen35/qwen35_backend.cpp
 +++ b/server/src/qwen35/qwen35_backend.cpp
 @@ -18,10 +18,13 @@
@@ -433,7 +473,7 @@ index 4a3d967..433750d 100644
 +                    (int)pos_k[(size_t)draft_ctx], pos_k.empty() ? -1 : pos_k.back());
 +                for (int il = 0; il < dw_.n_layer; il++) {
 +                    const bool is_swa = dw_.layers[(size_t)il].is_swa;
-+                    const char * mask_kind = (is_swa && draft_sg.attn_mask_swa) ? "block_causal_mask_swa" :
++                    const char * mask_kind = (is_swa && draft_sg.attn_mask) ? "block_causal_mask_swa" :
 +                        (draft_sg.attn_mask ? "block_causal_mask_full" : "nullptr");
 +                    std::fprintf(stderr,
 +                        "[draftmask-probe] step=%d layer=%d kind=%s actual_mask=%s visible_keys=%s\n",

@@ -113,6 +113,7 @@ def export_to_gguf(
     output_path: str | Path,
     *,
     verifier_meta_dir: Optional[str | Path] = None,
+    d2t_path: Optional[str | Path] = None,
     buun_repo: str | Path = "buun-llama-cpp",
     venv_python: Optional[str | Path] = None,
     outtype: str = "bf16",
@@ -133,6 +134,10 @@ def export_to_gguf(
     verifier_meta_dir : path, optional
         Directory holding tokenizer files. Default: read from
         ``checkpoint/config.json["speculators_config"]["verifier"]["name_or_path"]``.
+    d2t_path : path, optional
+        Draft-to-target vocab map sidecar. For adapter-only Lucebox checkpoints,
+        this lets the exporter reconstruct the sparse served-drafter output head
+        instead of copying the verifier lm_head densely.
     buun_repo : path
         Path to a buun-llama-cpp checkout containing ``convert_hf_to_gguf.py``
         with the DFlashDraftModel converter class registered. Default
@@ -198,6 +203,7 @@ def export_to_gguf(
         src_dir=checkpoint,
         out_dir=prepped_dir,
         verifier_meta_dir=verifier_meta_dir,
+        d2t_path=d2t_path,
         rebake_floor=rebake_floor,
         verbose=verbose,
     )

@@ -1,46 +1,68 @@
 From: my-other-github-account
-Subject: [PATCH 3/3] convert_hf_to_gguf.py: drop drafter-only tensors for DFlash GGUF export
+Subject: [PATCH 3/4] dflash converter: keep verifier-owned embedding/output tensors
 
-The PR #22105 DFlash loader operates on a drafter GGUF that contains ONLY
-the transformer block weights, the DFlash-specific feature-fusion tensors
-(fc, hidden_norm), and the final output norm. The drafter's own:
+The Lucebox MiniMax public repro uses an adapter-only checkpoint plus a tiny
+verifier metadata directory that carries the verifier-owned shared
+`model.embed_tokens.weight` and `lm_head.weight` tensors.  The served drafter
+GGUF gate is byte-identical only when those two tensors are preserved in the
+GGUF as:
 
-  - embed_tokens.weight  (drafter has full target vocab embeddings of its own)
-  - lm_head.weight       (drafter has draft_vocab logits head)
-  - d2t, t2d             (drafter-vocab <-> target-vocab projection tables)
+  - token_embd.weight
+  - output.weight
 
-are NOT used at runtime: PR #22105 reuses the target's embed_tokens and
-lm_head, and feeds raw hidden states through the target's vocab projection.
-The DFLASH arch tensor whitelist in gguf-py/gguf/constants.py reflects
-this — TOKEN_EMBD and OUTPUT are absent — so the converter's
-map_tensor_name() rejects those tensors with "Can not map tensor".
-
-This patch makes the DFlashModel.modify_tensors() override drop those
-four tensor families (under both their bare names and the "model." prefix
-variant emitted by the speculators trainer).
-
-Without this patch, conversion of any speculators-trained DFlash drafter
-fails on the first non-fc/non-hidden_norm top-level tensor.
+An older public patch dropped `embed_tokens.weight` and `lm_head.weight` as
+"unused", which made the converter emit a 69-tensor adapter-only GGUF.  The
+banked served-drafter artifact is 71 tensors and has md5
+63cdd84c69ef6086a9d15820b866ef8b.  Do not drop the shared I/O tensors;
+strip a leading `model.` prefix so verifier-meta safetensors map through the
+normal tensor-name mapper, and force the explicit output head to BF16/F16 so a
+mostly-quantized export path cannot accidentally quantize it.
 
 ---
- convert_hf_to_gguf.py | 5 +++++
- 1 file changed, 5 insertions(+)
+ convert_hf_to_gguf.py        | 16 ++++++++++++++++
+ gguf-py/gguf/constants.py    |  2 ++
+ 2 files changed, 18 insertions(+)
 
 diff --git a/convert_hf_to_gguf.py b/convert_hf_to_gguf.py
-index 6a5ac25..efdc865 100755
 --- a/convert_hf_to_gguf.py
 +++ b/convert_hf_to_gguf.py
-@@ -4917,6 +4917,11 @@ class DFlashModel(Qwen3Model):
-             self.gguf_writer.add_uint32(f"{self.gguf_writer.arch}.mask_token_id", mask_token_id)
+@@ -4769,6 +4769,22 @@ class DFlashDraftModel(TextModel):
+             if pattern:
+                 self.gguf_writer.add_sliding_window_pattern(pattern)
  
-     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
-+        # Drop drafter-only tensors that PR #22105 does not consume
-+        # (target lm_head supplies vocab projection; d2t/t2d unused in upstream loader)
-+        if name in ("d2t", "t2d", "lm_head.weight", "embed_tokens.weight", "model.d2t", "model.t2d", "model.lm_head.weight", "model.embed_tokens.weight"):
-+            logger.info(f"DFLASH: dropping unused tensor {name}")
-+            return
-         if name == "fc.weight":
-             yield (name, data_torch)
-             return
++    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
++        # Verifier-meta checkpoints use Hugging Face names such as
++        # model.embed_tokens.weight.  Strip only the leading model. prefix and
++        # let the normal mapper preserve embed_tokens.weight -> token_embd.weight
++        # and lm_head.weight -> output.weight.  d2t/t2d stay absent because the
++        # public Lucebox prep script never writes them into the staged checkpoint.
++        if name.startswith("model."):
++            name = name[len("model."):]
++        yield from super().modify_tensors(data_torch, name, bid)
++
++    def tensor_force_quant(self, name: str, new_name: str, bid: int | None, n_dims: int) -> gguf.GGMLQuantizationType | bool:
++        # Keep the explicit verifier output head in a lossless type.  It is part
++        # of the md5-gated served-drafter GGUF and must not be quantized away by
++        # a mostly-quantized converter run.
++        if name == "lm_head.weight" or new_name == "output.weight":
++            return gguf.GGMLQuantizationType.F16 if self.ftype == gguf.LlamaFileType.MOSTLY_F16 else gguf.GGMLQuantizationType.BF16
++        return super().tensor_force_quant(name, new_name, bid, n_dims)
++
+ 
+ @ModelBase.register("Qwen3MoeForCausalLM")
+ class Qwen3MoeModel(Qwen2MoeModel):
+diff --git a/gguf-py/gguf/constants.py b/gguf-py/gguf/constants.py
+--- a/gguf-py/gguf/constants.py
++++ b/gguf-py/gguf/constants.py
+@@ -3866,7 +3866,9 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
+         MODEL_TENSOR.FFN_UP_SHEXP,
+     ],
+     MODEL_ARCH.DFLASH_DRAFT: [
++        MODEL_TENSOR.TOKEN_EMBD,
+         MODEL_TENSOR.OUTPUT_NORM,
++        MODEL_TENSOR.OUTPUT,
+         MODEL_TENSOR.ATTN_NORM,
+         MODEL_TENSOR.ATTN_Q,
+         MODEL_TENSOR.ATTN_Q_NORM,
 -- 
-2.39.5
+2.50.1 (Apple Git-155)

@@ -29,7 +29,8 @@ The verifier remains authoritative. Accepted draft tokens are committed only thr
 
 | artifact | md5 |
 | --- | --- |
-| patched `dflash_server` binary | `30af929df903978121e3cd4323981d52` |
+| historical banked `dflash_server` binary | `30af929df903978121e3cd4323981d52` |
+| public bdc706a+patch validation build (CUDA 13.0.88, sm_121) | `098119a47809342e65ceca581997b9a9` |
 | served drafter GGUF | `63cdd84c69ef6086a9d15820b866ef8b` |
 | target first GGUF shard | `019759eeec4be4931592eeefbd54d2ba` |
 | 50-prompt set | `4af2fbf40afcc97af9633a2ff49a4139` |
@@ -63,18 +64,18 @@ git submodule update --init --recursive
 
 git apply /path/to/minimax-m27-dflash-end-to-end-DRAFT/patches/lucebox/01-typical-topk-accept.patch
 
-cmake -S server -B server/build-sm121 \
+CUDACXX=/usr/local/cuda/bin/nvcc cmake -S server -B server/build-sm121 \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON \
   -DCMAKE_CUDA_ARCHITECTURES=121
 cmake --build server/build-sm121 --target dflash_server -j
 ```
 
-If building on a non-sm121 GPU, adjust `CMAKE_CUDA_ARCHITECTURES` for that device. The banked numbers above were measured on a GB10/DGX-Spark class system.
+If `nvcc` is already on `PATH`, `CUDACXX=...` may be omitted. If building on a non-sm121 GPU, adjust `CMAKE_CUDA_ARCHITECTURES` for that device. The banked numbers above were measured on a GB10/DGX-Spark class system.
 
 ## 2. Convert the trained adapter checkpoint to GGUF
 
-The checkpoint argument can be either the checkpoint directory or its `model_lucebox_layout.safetensors` file. The command is generic over training step; it is not hardcoded to step 20000.
+The checkpoint argument can be either the checkpoint directory or its `model_lucebox_layout.safetensors` file. The command is generic over training step; it is not hardcoded to step 20000. The `--buun-repo` checkout must have this branch's `patches/llama.cpp/` series applied in order; patch 03 preserves the verifier-owned `token_embd.weight` and `output.weight` tensors required for the 71-tensor/md5 gate.
 
 ```bash
 cd /path/to/minimax-m27-dflash-end-to-end-DRAFT
@@ -82,6 +83,7 @@ PYTHONPATH=src dflash-llama export-lucebox \
   --checkpoint /path/to/adapter_checkpoint/model_lucebox_layout.safetensors \
   --out /path/to/output/draft.gguf \
   --verifier-meta-dir /path/to/verifier_meta \
+  --d2t-path /path/to/iq4_v17_consolidated/prompts/d2t.npy \
   --buun-repo /path/to/buun-llama-cpp \
   --force-block-size 8 \
   --verify
@@ -96,6 +98,7 @@ gguf = export_lucebox_to_gguf(
     checkpoint="/path/to/adapter_checkpoint/model_lucebox_layout.safetensors",
     output_path="/path/to/output/draft.gguf",
     verifier_meta_dir="/path/to/verifier_meta",
+    d2t_path="/path/to/iq4_v17_consolidated/prompts/d2t.npy",
     buun_repo="/path/to/buun-llama-cpp",
     force_block_size=8,
 )

@@ -9,10 +9,15 @@ Steps:
    from the ``dflash-gguf-conversion`` skill — without it, runtime chain-pos-2
    measures ~5x lower than the training prediction)
 3. Drop d2t and t2d from output
-4. Flatten config: hoist ``transformer_layer_config.*`` keys to top level,
+4. Copy verifier-owned token embedding/output tensors when the verifier meta
+   directory includes a tiny ``model.safetensors`` with those shared tensors.
+   The Lucebox adapter checkpoint itself is adapter-only, but the banked GGUF
+   gate is a served drafter GGUF that carries ``token_embd.weight`` and
+   ``output.weight`` for byte-identical load compatibility.
+5. Flatten config: hoist ``transformer_layer_config.*`` keys to top level,
    rename ``aux_hidden_state_layer_ids`` → ``target_layer_ids``,
    set ``draft_vocab_size`` = ``target_vocab_size``
-5. Copy tokenizer files from the verifier directory
+6. Copy tokenizer files from the verifier directory
 
 Usage::
 
@@ -33,15 +38,176 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
+
+
+def _resolve_verifier_path(cfg: dict, verifier_meta_dir: Optional[str | Path]) -> Path:
+    """Resolve the verifier metadata directory used for tokenizer/shared tensors."""
+    if verifier_meta_dir is not None:
+        verifier_path = Path(verifier_meta_dir)
+    else:
+        candidate = cfg.get("speculators_config", {}).get("verifier", {}).get("name_or_path")
+        verifier_path = Path(candidate) if candidate else Path("")
+    return verifier_path
+
+
+def _resolve_d2t_path(
+    src_dir: Path,
+    verifier_path: Path,
+    d2t_path: Optional[str | Path],
+) -> Optional[Path]:
+    """Resolve the draft-to-target vocabulary map used for sparse output heads."""
+    if d2t_path is not None:
+        path = Path(d2t_path)
+        if not path.exists():
+            raise FileNotFoundError(f"--d2t-path does not exist: {path}")
+        return path
+
+    candidates = [
+        src_dir / "d2t.npy",
+        src_dir / "prompts" / "d2t.npy",
+        verifier_path / "d2t.npy",
+        verifier_path / "prompts" / "d2t.npy",
+    ]
+    # Historical MiniMax public repro layout: verifier_meta_v11 lives under the
+    # run root, while the matching vocab-map sidecar is under
+    # iq4_v17_consolidated/prompts/.  Prefer this over generic prompts/ maps
+    # because the latter may belong to a different training run.
+    run_root = verifier_path.parent
+    candidates.extend([
+        run_root / "iq4_v17_consolidated" / "prompts" / "d2t.npy",
+        run_root / "prompts" / "d2t.npy",
+        run_root / "prompts_dense" / "d2t.npy",
+        run_root / "prompts_dense_v2" / "d2t.npy",
+    ])
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _target_ids_from_d2t(
+    d2t_path: Path,
+    draft_vocab: int,
+    target_vocab: int,
+) -> torch.Tensor:
+    d2t_np = np.load(d2t_path)
+    if d2t_np.shape != (draft_vocab,):
+        raise ValueError(f"{d2t_path} shape {d2t_np.shape} != ({draft_vocab},)")
+    d2t_long = torch.from_numpy(d2t_np.astype(np.int64, copy=False)).to(torch.long)
+    offset_ids = torch.arange(draft_vocab, dtype=torch.long) + d2t_long
+    absolute_ids = d2t_long
+
+    def valid(ids: torch.Tensor) -> bool:
+        return (
+            int(ids.min()) >= 0
+            and int(ids.max()) < target_vocab
+            and int(torch.unique(ids).numel()) == draft_vocab
+        )
+
+    if valid(offset_ids):
+        return offset_ids
+    if valid(absolute_ids):
+        return absolute_ids
+    raise ValueError(
+        f"{d2t_path} is neither valid offsets nor valid absolute ids for "
+        f"draft_vocab={draft_vocab}, target_vocab={target_vocab}"
+    )
+
+
+def _copy_verifier_io_tensors(
+    new_tensors: dict,
+    src_dir: Path,
+    verifier_path: Path,
+    target_vocab: int,
+    draft_vocab: int,
+    hidden_size: int,
+    d2t_path: Optional[str | Path] = None,
+    rebake_floor: float = -65504.0,
+    verbose: bool = True,
+) -> list[str]:
+    """Copy verifier token embedding/output tensors into the prepped checkpoint.
+
+    Lucebox adapter banks may be adapter-only and omit token embeddings and the
+    sparse DFlash output head. The served drafter GGUF gate still carries
+    ``token_embd.weight`` plus ``output.weight``. ``token_embd.weight`` is the
+    verifier embedding. ``output.weight`` is sparse: rows outside the draft
+    vocabulary map are the rebake floor and mapped rows copy the verifier
+    ``lm_head.weight``. A full verifier lm_head is only used as a fallback when
+    no d2t sidecar can be resolved.
+    """
+    def log(*a):
+        if verbose:
+            print(*a, flush=True)
+
+    verifier_st = verifier_path / "model.safetensors"
+    if not verifier_st.exists():
+        log(f"Verifier shared tensor file absent: {verifier_st} (skipping token_embd/output copy)")
+        return []
+
+    copied: list[str] = []
+    with safe_open(str(verifier_st), "pt") as vf:
+        keys = set(vf.keys())
+
+        if "embed_tokens.weight" not in new_tensors:
+            src_key = "model.embed_tokens.weight"
+            if src_key in keys:
+                tensor = vf.get_tensor(src_key)
+                if list(tensor.shape) != [target_vocab, hidden_size]:
+                    raise ValueError(
+                        f"verifier tensor {src_key} has shape {list(tensor.shape)}, "
+                        f"expected [{target_vocab}, {hidden_size}]"
+                    )
+                new_tensors["embed_tokens.weight"] = tensor
+                copied.append("embed_tokens.weight")
+                log(f"  copied verifier {src_key} -> embed_tokens.weight {list(tensor.shape)}")
+            else:
+                log(f"  verifier tensor {src_key} absent in {verifier_st}")
+        else:
+            log("  keeping checkpoint-provided embed_tokens.weight")
+
+        if "lm_head.weight" in new_tensors:
+            log("  keeping checkpoint-provided lm_head.weight")
+        elif "lm_head.weight" in keys:
+            verifier_lm_head = vf.get_tensor("lm_head.weight")
+            if list(verifier_lm_head.shape) != [target_vocab, hidden_size]:
+                raise ValueError(
+                    f"verifier tensor lm_head.weight has shape {list(verifier_lm_head.shape)}, "
+                    f"expected [{target_vocab}, {hidden_size}]"
+                )
+            resolved_d2t = _resolve_d2t_path(src_dir, verifier_path, d2t_path)
+            if resolved_d2t is not None:
+                target_ids = _target_ids_from_d2t(resolved_d2t, draft_vocab, target_vocab)
+                sparse_head = torch.full(
+                    (target_vocab, hidden_size),
+                    float(rebake_floor),
+                    dtype=verifier_lm_head.dtype,
+                )
+                sparse_head[target_ids] = verifier_lm_head[target_ids]
+                new_tensors["lm_head.weight"] = sparse_head
+                copied.append("lm_head.weight")
+                log(
+                    f"  rebaked verifier lm_head.weight -> sparse lm_head.weight "
+                    f"using {resolved_d2t} ({draft_vocab}/{target_vocab} rows)"
+                )
+            else:
+                new_tensors["lm_head.weight"] = verifier_lm_head
+                copied.append("lm_head.weight")
+                log("  copied full verifier lm_head.weight -> lm_head.weight (no d2t sidecar found)")
+        else:
+            log(f"  verifier tensor lm_head.weight absent in {verifier_st}")
+
+    return copied
 
 
 def prep_for_buun_converter(
     src_dir: str | Path,
     out_dir: str | Path,
     verifier_meta_dir: Optional[str | Path] = None,
+    d2t_path: Optional[str | Path] = None,
     rebake_floor: float = -65504.0,
     verbose: bool = True,
 ) -> Path:
@@ -57,8 +223,10 @@ def prep_for_buun_converter(
     verifier_meta_dir : path, optional
         Directory containing tokenizer files (``tokenizer.json``,
         ``tokenizer_config.json``, etc). If omitted, falls back to
-        ``cfg["speculators_config"]["verifier"]["name_or_path"]`` then
-        ``/home/dnola/models/MiniMax-M2.7-FP8``.
+        ``cfg["speculators_config"]["verifier"]["name_or_path"]``.
+    d2t_path : path, optional
+        Draft-to-target vocabulary map sidecar. Needed to reconstruct the sparse
+        served-drafter output head when the source checkpoint is adapter-only.
     rebake_floor : float
         Value used for non-mapped rows of the rebaked lm_head. ``-65504.0``
         (largest-magnitude finite bf16 negative) is the documented correct
@@ -83,8 +251,22 @@ def prep_for_buun_converter(
     log(f"target_vocab={target_vocab}, draft_vocab={draft_vocab}, hidden={hidden_size}")
     log(f"target_layer_ids={target_layer_ids}")
 
-    # 2. Load tensors, rebake lm_head, drop d2t/t2d
+    verifier_path = _resolve_verifier_path(cfg, verifier_meta_dir)
+
+    # 2. Load tensors, rebake lm_head, drop d2t/t2d.
+    # Lucebox adapter banks may store the adapter under the explicit
+    # model_lucebox_layout.safetensors name; standard speculators checkpoints
+    # use model.safetensors.  Accept both so a file-path Lucebox export does not
+    # require manual renaming before conversion.
     src_st = src / "model.safetensors"
+    if not src_st.exists():
+        lucebox_st = src / "model_lucebox_layout.safetensors"
+        if lucebox_st.exists():
+            src_st = lucebox_st
+        else:
+            raise FileNotFoundError(
+                f"expected {src / 'model.safetensors'} or {lucebox_st}"
+            )
     new_tensors = {}
     with safe_open(str(src_st), "pt") as f:
         keys = list(f.keys())
@@ -141,6 +323,20 @@ def prep_for_buun_converter(
                 continue
             new_tensors[k] = f.get_tensor(k)
 
+    copied_io = _copy_verifier_io_tensors(
+        new_tensors,
+        src_dir=src,
+        verifier_path=verifier_path,
+        target_vocab=target_vocab,
+        draft_vocab=draft_vocab,
+        hidden_size=hidden_size,
+        d2t_path=d2t_path,
+        rebake_floor=rebake_floor,
+        verbose=verbose,
+    )
+    if copied_io:
+        log(f"Added verifier shared tensors: {', '.join(copied_io)}")
+
     log(f"Output tensors: {len(new_tensors)} (was {len(keys)})")
 
     # 3. Save flattened safetensors
@@ -169,19 +365,7 @@ def prep_for_buun_converter(
         shutil.copy2(src / "val_metrics.json", out / "val_metrics.json")
         log("  copied val_metrics.json")
 
-    # 5. Resolve tokenizer source and copy
-    if verifier_meta_dir is not None:
-        verifier_path = Path(verifier_meta_dir)
-    else:
-        candidate = cfg.get("speculators_config", {}).get("verifier", {}).get("name_or_path")
-        verifier_path = Path(candidate) if candidate else Path("")
-        if not verifier_path.exists():
-            for fallback in ("/home/dnola/models/MiniMax-M2.7-FP8",
-                             "/home/dnola/models/MiniMax-M2.7"):
-                if Path(fallback).exists():
-                    verifier_path = Path(fallback)
-                    break
-
+    # 5. Copy tokenizer source files from the same verifier metadata directory.
     log(f"Verifier path for tokenizer: {verifier_path}")
     copied = []
     for tk in ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
@@ -208,11 +392,14 @@ def _cli():
     ap.add_argument("out_dir")
     ap.add_argument("--verifier-meta-dir", default=None,
                     help="Directory holding tokenizer.json etc (default: read from config)")
+    ap.add_argument("--d2t-path", default=None,
+                    help="draft-to-target vocab map .npy for adapter-only Lucebox output-head rebake")
     ap.add_argument("--rebake-floor", type=float, default=-65504.0,
                     help="Floor value for non-mapped rows in rebaked lm_head (default: -65504.0)")
     args = ap.parse_args()
     prep_for_buun_converter(args.src_dir, args.out_dir,
                              verifier_meta_dir=args.verifier_meta_dir,
+                             d2t_path=args.d2t_path,
                              rebake_floor=args.rebake_floor)
 
 
